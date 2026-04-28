@@ -1,0 +1,33 @@
+# TTP Integration Test Environment (Fedora)
+FROM fedora:41
+
+ENV container docker
+
+# Install systemd, python, tor, nftables, curl, iproute
+RUN dnf update -y && dnf install -y \
+    systemd \
+    python3 python3-pip \
+    nftables tor procps-ng curl iptables iproute \
+    && dnf clean all
+
+# Fedora uses systemd by default, but we should mask the same things
+RUN systemctl mask systemd-udevd.service \
+                   systemd-udevd-kernel.socket \
+                   systemd-udevd-control.socket \
+                   systemd-modules-load.service \
+                   sys-kernel-debug.mount \
+                   sys-kernel-tracing.mount
+
+# Set up virtual environment
+RUN python3 -m venv /venv
+ENV PATH="/venv/bin:$PATH"
+
+COPY . /app
+WORKDIR /app
+
+# Install TTP with dev dependencies
+RUN pip install -e .[dev]
+
+STOPSIGNAL SIGRTMIN+3
+
+CMD ["/usr/lib/systemd/systemd"]

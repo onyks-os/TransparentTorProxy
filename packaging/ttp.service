@@ -1,0 +1,40 @@
+# The [Unit] section provides metadata and dependencies for the service.
+[Unit]
+Description=Transparent Tor Proxy (TTP)
+
+# Ordering: This tells systemd not to start TTP until the network is up
+# AND the Tor daemon is running. This prevents errors if TTP tries to route
+# traffic to Tor before Tor itself has started. 
+# (Includes 'tor@default.service' for Debian multi-instance compatibility).
+After=network.target tor.service tor@default.service
+
+# The [Service] section defines how the program is executed.
+[Service]
+# 'oneshot' means the command runs once and exits.
+# TTP just applies nftables rules and modifies DNS,
+# it doesn't need a continuous background process taking up RAM.
+Type=oneshot
+
+# Even though the 'start' command finishes and exits, 'RemainAfterExit=yes' tells systemd 
+# to consider the service as "active" (running). This is crucial for firewall rules,
+# so systemd knows the state has been applied.
+RemainAfterExit=yes
+
+# The command to run when the user types 'sudo systemctl start ttp' or on boot.
+# --quiet ensures it doesn't print UI elements to the system logs.
+ExecStart=/usr/bin/ttp --quiet start
+
+# The command to run when the user types 'sudo systemctl stop ttp' or on shutdown.
+# This ensures the network is cleanly restored before the computer turns off.
+ExecStop=/usr/bin/ttp --quiet stop
+
+# If the stop command takes longer than 10 seconds (e.g., waiting for Tor to shut down gracefully),
+# systemd will forcefully kill it.
+TimeoutStopSec=10
+
+# The [Install] section defines how the service behaves when "enabled".
+[Install]
+# 'WantedBy=multi-user.target' means: "If the user enables this service, 
+# start it automatically when the system boots into standard multi-user mode 
+# (which is the normal state with network access, before the graphical interface loads)."
+WantedBy=multi-user.target

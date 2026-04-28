@@ -1,0 +1,32 @@
+# TTP Integration Test Environment (Arch Linux)
+FROM archlinux:latest
+
+ENV container docker
+
+# Initialize pacman keys and install dependencies
+RUN pacman-key --init && pacman-key --populate archlinux && \
+    pacman -Syu --noconfirm && \
+    pacman -S --noconfirm systemd python python-pip nftables tor procps-ng curl iptables iproute2 base-devel \
+    && pacman -Scc --noconfirm
+
+# Arch uses systemd by default, mask troublesome services
+RUN systemctl mask systemd-udevd.service \
+                   systemd-udevd-kernel.socket \
+                   systemd-udevd-control.socket \
+                   systemd-modules-load.service \
+                   sys-kernel-debug.mount \
+                   sys-kernel-tracing.mount
+
+# Set up virtual environment
+RUN python3 -m venv /venv
+ENV PATH="/venv/bin:$PATH"
+
+COPY . /app
+WORKDIR /app
+
+# Install TTP with dev dependencies
+RUN pip install -e .[dev]
+
+STOPSIGNAL SIGRTMIN+3
+
+CMD ["/usr/lib/systemd/systemd"]

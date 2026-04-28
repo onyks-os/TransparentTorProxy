@@ -1,0 +1,20 @@
+# Ignore git directory
+.git/
+.github/
+
+# Ignore virtual environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Ignore massive VM files and snapshots
+vm/
+*.qcow2
+*.img
+*.iso
+
+# Ignore lock files and logs
+*.lock
+*.log

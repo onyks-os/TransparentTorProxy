@@ -1,0 +1,33 @@
+# TTP Integration Test Environment
+FROM debian:13-slim
+
+ENV container docker
+
+# Install systemd, python, tor, nftables, curl
+RUN apt-get update && apt-get install -y \
+    systemd systemd-sysv \
+    python3 python3-pip python3-venv \
+    nftables tor procps curl iptables kmod iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Mask services that often fail in unprivileged or standard containers
+RUN systemctl mask systemd-udevd.service \
+                   systemd-udevd-kernel.socket \
+                   systemd-udevd-control.socket \
+                   systemd-modules-load.service \
+                   sys-kernel-debug.mount \
+                   sys-kernel-tracing.mount
+
+# Set up virtual environment
+RUN python3 -m venv /venv
+ENV PATH="/venv/bin:$PATH"
+
+COPY . /app
+WORKDIR /app
+
+# Install TTP with dev dependencies
+RUN pip install -e .[dev]
+
+STOPSIGNAL SIGRTMIN+3
+
+CMD ["/lib/systemd/systemd"]
