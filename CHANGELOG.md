@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-05-01
+
+### Added
+
+- **CI/CD Automation (Makefile)**: Introduced a root-level `Makefile` to provide a unified entry point for unit tests and multi-distro Docker integration tests (`make verify`).
+- **Project Renaming**: Officially renamed the project to `transparent-tor-proxy` for PyPI and native packages to improve clarity and avoid collisions, while preserving the `ttp` command for the CLI.
+- **Call for Contributors**: Added a dedicated section in README.md to attract new developers and experts to the project.
+
+### Changed
+
+- **Repository Reorganization**: Professionalized the project structure:
+  - Moved system scripts (`install.sh`, `uninstall.sh`, `restore-network.sh`) to `scripts/`.
+  - Consolidated QEMU VM and Docker testing assets into `scripts/vm/`.
+  - Integrated internal assets into the Python package namespace under `ttp/resources/`.
+- **Modern Asset Management**: Transitioned from manual path manipulation to `importlib.resources` for accessing the SELinux policy source, ensuring compatibility with all installation methods (pip, venv, native packages).
+- **Documentation Overhaul**: Renamed `TDD.md` to `architecture.md` and updated all documentation to reflect the new architecture and modern packaging standards.
+
+### Fixed
+
+- **Path Robustness**: All shell scripts and Makefiles now resolve the project root absolutely, allowing execution from any working directory without breaking relative paths.
+- **CLI Help Accuracy**: Updated internal CLI help messages to point to the new script locations.
+
 ## [0.1.0] - 2026-04-27
 
 ### Added

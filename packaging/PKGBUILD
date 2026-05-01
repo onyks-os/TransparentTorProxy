@@ -22,12 +22,12 @@
 # ══════════════════════════════════════════════════════════════════════
 
 # Define the package name as it will appear in the Arch package manager (pacman).
-pkgname=ttp
+pkgname=transparent-tor-proxy
 
 # The version of the software. This should match the version in pyproject.toml.
-pkgver=0.1.0
+pkgver=0.1.1
 
-# The release number. If you update the PKGBUILD but the software version (0.1.0) 
+# The release number. If you update the PKGBUILD but the software version (x.y.z) 
 # hasn't changed, you increment this to tell users to update the package.
 pkgrel=1
 
@@ -53,7 +53,7 @@ makedepends=('python-build' 'python-installer' 'python-wheel')
 # Where to get the source code. 
 # In a real Arch User Repository (AUR) package, this would be a GitHub release URL.
 # Since this is a local build script, it points to the local directory (.).
-source=("local-source::.")
+source=("local-source::..")
 
 # Checksums to verify source file integrity. 'SKIP' is used for local sources since they change during development.
 md5sums=('SKIP')

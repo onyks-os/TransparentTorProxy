@@ -34,15 +34,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Extract the version string from pyproject.toml (single source of truth).
-# Example: version = "0.1.0" → VERSION="0.1.0"
+# Example: version = "x.y.z" → VERSION="x.y.z"
 VERSION=$(grep -m 1 '^version =' pyproject.toml | cut -d '"' -f 2)
 
 # rpmbuild requires the source directory to be named exactly
-# %{name}-%{version} (e.g., "ttp-0.1.0"). This variable is used
+# %{name}-%{version} (e.g., "ttp-x.y.z"). This variable is used
 # for the tarball and the temporary source directory.
-PKG_NAME="ttp-${VERSION}"
+PKG_NAME="transparent-tor-proxy-${VERSION}"
 
-echo "==> Building native RPM for ttp version $VERSION..."
+echo "==> Building native RPM for transparent-tor-proxy version $VERSION..."
 
 # Verify that rpmbuild is installed. It ships in the 'rpm-build' package
 # on Fedora/RHEL but is not installed by default.
@@ -56,7 +56,7 @@ fi
 # By default, rpmbuild uses ~/rpmbuild, which is messy and can cause
 # permission issues. Using --define "_topdir ..." later tells rpmbuild
 # to use our temporary directory instead.
-RPM_DIR="/tmp/ttp-rpmbuild"
+RPM_DIR="/tmp/transparent-tor-proxy-rpmbuild"
 rm -rf "$RPM_DIR"
 mkdir -p "$RPM_DIR"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
@@ -100,4 +100,4 @@ rpmbuild --define "_topdir $RPM_DIR" -bb "$RPM_DIR/SPECS/ttp.spec"
 # We copy it back to our packaging/ directory for easy access.
 cp "$RPM_DIR"/RPMS/noarch/*.rpm packaging/
 
-echo "==> Done! RPM is ready: $(ls packaging/ttp-*.rpm)"
+echo "==> Done! RPM is ready: $(ls packaging/transparent-tor-proxy-*.rpm)"

@@ -267,7 +267,7 @@ def test_start_tor_verification_fails(
 
 @patch("ttp.cli._do_stop")
 @patch("ttp.cli.tor_install.remove_selinux_module")
-@patch("ttp.cli.tor_install.is_selinux_module_installed", return_value=True)
+@patch("ttp.tor_detect.is_selinux_module_installed", return_value=True)
 @patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
 @patch("ttp.cli._LOG_PATH")
 @patch("ttp.cli.os.geteuid", return_value=0)

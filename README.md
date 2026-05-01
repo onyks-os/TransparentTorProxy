@@ -15,6 +15,7 @@
 
 <p align="center">
   <a href="#-features">Features</a> •
+  <a href="#-call-for-contributors">Contribute</a> •
   <a href="#%EF%B8%8F-requirements">Requirements</a> •
   <a href="#-installation">Installation</a> •
   <a href="#-usage">Usage</a> •
@@ -24,7 +25,7 @@
 ---
 
 <p align="center">
-  <img src="./assets/gif/demo.gif" alt="TTP Demo">
+  <img src="https://raw.githubusercontent.com/onyks-os/TransparentTorProxy/main/assets/gif/demo.gif" alt="TTP Demo">
 </p>
 
 ---
@@ -36,6 +37,18 @@ No per-application setup needed — just `sudo ttp start` and **every connection
 
 > [!WARNING]
 > **If you are a whistleblower or are engaging in high-risk activities, DO NOT use TTP.** Instead, use officially audited and reliable tools like [TailsOS](https://tails.net/) or the [Tor Browser](https://www.torproject.org/) directly. The authors and contributors of TTP assume no responsibility for your safety or the consequences of using this software.
+
+## 🤝 Call for Contributors
+
+We are actively looking for developers to join the TTP project! Whether you are a student looking to learn or a seasoned professional, your help is welcome.
+
+**We are particularly seeking Senior Developers** with expertise in:
+
+* 🛡️ **Linux Networking** (nftables, routing tables, network namespaces).
+* 🧅 **Tor Internals** (daemon configuration, Stem library, circuit management).
+* 🐍 **System-level Python** (asynchronous I/O, process management, security best practices).
+
+If you want to contribute to making transparent proxying safer and more robust, please check out our [Contributing Guidelines](CONTRIBUTING.md) or dive right into the [Issues](https://github.com/onyks-os/TransparentTorProxy/issues).
 
 ## ✨ Features
 
@@ -58,49 +71,65 @@ No per-application setup needed — just `sudo ttp start` and **every connection
 
 ## 🚀 Installation
 
-Choose the method that best fits your distribution. Native packages are recommended for system stability and better integration.
+Choose the method that best fits your needs. **Native packages are strongly recommended** for system stability, security, and clean uninstallation.
 
-### 📦 Native Packages (Recommended)
+### 1. Native Packages (Recommended)
 
-#### **Debian / Ubuntu / Kali / Mint**
+Installing via native packages ensures that all system dependencies (`tor`, `nftables`) and kernel-level optimizations (SELinux) are managed by your OS package manager.
 
-Install the pre-built `.deb` package. This automatically handles dependencies like `tor` and `nftables`.
-
-```bash
-sudo apt update
-sudo apt install ./packaging/ttp_0.1.0_all.deb
-```
-
-#### **Fedora / RHEL / AlmaLinux**
-
-Install the native `.rpm`. This package also pre-configures **SELinux** policies for you.
-
-```bash
-sudo dnf install ./packaging/ttp-0.1.0-1.fc43.noarch.rpm
-```
-
-#### **Arch Linux**
-
-Use the provided `PKGBUILD` to build and install the package via `makepkg`.
-
-```bash
-cd packaging && makepkg -si
-```
+* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.1.1_all.deb`
+* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.1.1-1.fc43.noarch.rpm`
+* **Arch Linux**: `cd packaging && makepkg -si`
 
 ---
 
-### 🛠️ Source Installation (Universal)
+### 2. Manual Source Install (Developer/Universal)
 
-If you prefer to install from source or are on a different distribution:
+If you are a developer or want to install from the repository:
 
 ```bash
 git clone https://github.com/onyks-os/TransparentTorProxy.git
 cd TransparentTorProxy
-
-# For system-wide deployment (creates venv in /opt/ttp)
-sudo ./install.sh
+sudo ./scripts/install.sh
 ```
 
+> [!TIP]
+> **Why use `./install.sh`?**  
+> Unlike standard Python installers, this script is **"intelligent"**. On Red Hat-based systems, it detects if SELinux is in *Enforcing* mode and dynamically compiles a custom policy module (from `ttp_tor_policy.te`) to allow Tor to bind to the non-standard ports required by TTP (9040, 9053). This kernel-level optimization cannot be performed by `pip`.
+
+---
+
+### 3. Fallback: pipx / pip (PEP 668)
+
+> [!WARNING]
+> **Note on Linux Distributions (PEP 668)**  
+> Recent versions of Ubuntu/Debian prevent global `pip install` to protect system stability. Using these methods will bypass TTP's kernel-level optimizations (SELinux) and won't handle system dependencies automatically.
+
+#### **Option A: pipx (Recommended Fallback)**
+
+`pipx` installs TTP in an isolated environment but makes the command available globally.
+
+```bash
+pipx install transparent-tor-proxy
+```
+
+#### **Option B: Standard pip with venv**
+
+If you prefer standard `pip`, use a virtual environment to avoid the `externally-managed-environment` error.
+
+```bash
+# 1. Create the environment
+python3 -m venv ~/.local/share/ttp-venv
+
+# 2. Install the package
+~/.local/share/ttp-venv/bin/pip install transparent-tor-proxy
+
+# 3. Create a symbolic link to use 'ttp' everywhere
+sudo ln -s ~/.local/share/ttp-venv/bin/ttp /usr/local/bin/ttp
+```
+
+> [!CAUTION]
+> **Uninstallation Warning**: Running `pipx uninstall` or deleting the venv only removes the Python code. If TTP is active, your firewall and DNS will remain hijacked. Always use `ttp stop` before uninstalling via pip, or use `./scripts/uninstall.sh` if you installed via the source script.
 > [!NOTE]  
 > After installation, the `ttp` command is available system-wide.
 
@@ -193,7 +222,7 @@ To confirm that the tunnel is working correctly and no leaks are present:
 To remove TTP completely from the system:
 
 ```bash
-sudo ./uninstall.sh
+sudo ./scripts/uninstall.sh
 ```
 
 ## 🧠 How It Works
@@ -224,12 +253,12 @@ sudo ./uninstall.sh
 
 TTP is designed to always restore your network, even in edge cases:
 
-| Scenario | What happens |
-| :--- | :--- |
-| `ttp stop` | **Normal cleanup**: firewall restored, DNS restored, lock deleted |
-| Ctrl+C / `kill` | Signal handler catches `SIGINT`/`SIGTERM` and runs cleanup before exit |
-| `kill -9` / Power Outage | Next `ttp start` detects the orphaned lock file and auto-restores the network |
-| Manual emergency | Run `sudo ./restore-network.sh` to flush all nftables rules, reset DNS, and delete the lock file |
+| Scenario                 | What happens                                                                                             |
+| :----------------------- | :------------------------------------------------------------------------------------------------------- |
+| `ttp stop`               | **Normal cleanup**: firewall restored, DNS restored, lock deleted                                        |
+| Ctrl+C / `kill`          | Signal handler catches `SIGINT`/`SIGTERM` and runs cleanup before exit                                   |
+| `kill -9` / Power Outage | Next `ttp start` detects the orphaned lock file and auto-restores the network                            |
+| Manual emergency         | Run `sudo ./scripts/restore-network.sh` to flush all nftables rules, reset DNS, and delete the lock file |
 
 ## ⚠️ Known Behavior
 
@@ -243,37 +272,37 @@ TTP is designed to always restore your network, even in edge cases:
 > * **IPv6**: All IPv6 traffic is blocked to prevent leaks. Future versions may support IPv6 through Tor.
 > * **Exit IP variation**: Different connections may show different exit IPs due to Tor stream isolation. After `ttp refresh`, all connections get new circuits.
 
-## 🛠️ Development
+## 🧪 Development & Testing
 
-### Running tests
+TTP uses a **Makefile** to automate and standardize the testing pipeline. This ensures that every change is verified against unit and integration tests before being committed.
+
+### The "Pre-Push" Rule
+>
+> [!IMPORTANT]
+> **Always run `make verify` before pushing code.** If this command fails, the code is NOT ready for production.
+
+### Essential Commands
+
+| Command                   | Goal                                                                      |
+| :------------------------ | :------------------------------------------------------------------------ |
+| `make test`               | Runs fast **Unit Tests** locally (no root needed, fully mocked).          |
+| `make integration-debian` | Runs full system tests inside a privileged **Docker** container (Debian). |
+| `make integration-all`    | Runs integration tests for all supported distros (Debian, Fedora, Arch).  |
+| **`make verify`**         | **The Gold Standard**: Runs Unit Tests + All Integration Tests.           |
+
+### Advanced: Real-World VM Testing
+
+While Docker integration tests are fast and atomic, they don't capture 100% of the kernel/systemd nuances. For critical changes, it is **highly recommended** to test in a real QEMU VM:
 
 ```bash
-pip install -e .
-pytest tests/ -v
-```
+# Start a specific VM (e.g., arch)
+./scripts/vm/start.sh arch
 
-*(unit tests run without root on any system, fully mocked).*
+# Sync current code to the VM
+./scripts/vm/send.sh
 
-### VM testing
-
-Real integration tests should be run in a QEMU VM with snapshots:
-
-```bash
-# Start a specific VM (default is debian)
-./vm-helpers/start.sh arch
-
-# Save a snapshot before testing (vm_type command name)
-./vm-helpers/snapshot.sh arch save pre-test
-
-# Sync code to VM (auto-detects the active one)
-./vm-helpers/send.sh
-
-# SSH into the VM and test (port 2223 for Arch)
-ssh -p 2223 arch@localhost
-cd ~/ttp && pip install -e . && sudo ttp start
-
-# Restore if network breaks
-./vm-helpers/snapshot.sh arch load pre-test
+# Snapshot management for easy rollbacks
+./scripts/vm/snapshot.sh arch save before-risky-test
 ```
 
 ### Diagnostics
@@ -291,20 +320,21 @@ sudo ttp diagnose
 ├── README.md
 ├── CONTRIBUTING.md         # Contribution guidelines
 ├── SECURITY.md             # Security policy
-├── install.sh              # System-wide installer
-├── uninstall.sh            # System-wide uninstaller
-├── restore-network.sh      # Emergency network recovery script
-├── assets/                 # Branding and system policies
-│   ├── gif/                # Demo animations
-│   └── selinux/            # SELinux policy source (.te only)
+├── scripts/                # Installation and VM management scripts
+│   ├── install.sh          # System-wide installer
+│   ├── uninstall.sh        # System-wide uninstaller
+│   ├── restore-network.sh  # Emergency network recovery script
+│   └── vm/                 # QEMU VM management scripts
+├── assets/                 # Branding and demo assets
+│   └── gif/                # Demo animations
 ├── packaging/              # Build scripts for .deb, .rpm, and Arch packages
 │   ├── build_deb.sh
 │   ├── build_rpm.sh
 │   ├── ttp.spec
 │   ├── PKGBUILD
 │   └── ttp.service
-├── vm-helpers/             # QEMU VM management scripts
 ├── ttp/                    # Source code
+│   ├── resources/          # Internal package resources (SELinux policies, etc.)
 │   ├── cli.py              # Typer entry point
 │   ├── exceptions.py       # Custom exception hierarchy
 │   ├── tor_detect.py       # Tor detection logic
@@ -316,7 +346,7 @@ sudo ttp diagnose
 │   └── system_info.py      # System diagnostic gathering
 ├── tests/                  # Unit tests (mocked)
 └── docs/
-    └── TDD.md              # Technical Design Document
+    └── architecture.md     # Technical Architecture & Design
 ```
 
 ## 🤝 Contributing & Security

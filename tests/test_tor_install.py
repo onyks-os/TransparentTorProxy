@@ -14,10 +14,10 @@ from ttp.tor_install import (
     configure_torrc,
     detect_package_manager,
     install_tor,
-    is_selinux_module_installed,
     remove_selinux_module,
     setup_selinux_if_needed,
 )
+from ttp.tor_detect import is_selinux_module_installed
 from ttp.exceptions import TorError
 
 
@@ -136,7 +136,10 @@ def test_configure_torrc_idempotent(tmp_path: Path):
 
 def test_is_selinux_module_installed_true():
     """is_selinux_module_installed returns True if module listed in semodule -l."""
-    with patch("ttp.tor_install.subprocess.run") as mock_run:
+    with (
+        patch("ttp.tor_detect.shutil.which", return_value="/usr/sbin/semodule"),
+        patch("ttp.tor_detect.subprocess.run") as mock_run,
+    ):
         mock_run.return_value = MagicMock(
             returncode=0, stdout="ttp_tor_policy  1.0\nother_mod 2.1"
         )
@@ -145,12 +148,15 @@ def test_is_selinux_module_installed_true():
 
 def test_is_selinux_module_installed_false():
     """is_selinux_module_installed returns False if module not listed."""
-    with patch("ttp.tor_install.subprocess.run") as mock_run:
+    with (
+        patch("ttp.tor_detect.shutil.which", return_value="/usr/sbin/semodule"),
+        patch("ttp.tor_detect.subprocess.run") as mock_run,
+    ):
         mock_run.return_value = MagicMock(returncode=0, stdout="other_mod 2.1")
         assert is_selinux_module_installed() is False
 
 
-@patch("ttp.tor_install.is_selinux_module_installed", return_value=False)
+@patch("ttp.tor_detect.is_selinux_module_installed", return_value=False)
 @patch("ttp.tor_detect.is_selinux_enforcing", return_value=True)
 @patch("ttp.tor_detect.is_fedora_family", return_value=True)
 @patch("ttp.tor_install.Path.exists", return_value=True)
@@ -179,7 +185,7 @@ def test_setup_selinux_if_needed_installs(
     assert any("semodule" in str(c) and "-i" in str(c) for c in mock_run.call_args_list)
 
 
-@patch("ttp.tor_install.is_selinux_module_installed", return_value=True)
+@patch("ttp.tor_detect.is_selinux_module_installed", return_value=True)
 @patch("ttp.tor_install.Path.exists", return_value=True)
 @patch("ttp.tor_install.subprocess.run")
 def test_remove_selinux_module_calls_remove(mock_run, mock_exists, mock_installed):

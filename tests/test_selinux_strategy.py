@@ -9,9 +9,12 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from ttp.tor_detect import is_fedora_family, is_selinux_enforcing
-from ttp.tor_install import (
+from ttp.tor_detect import (
+    is_fedora_family,
+    is_selinux_enforcing,
     is_selinux_module_installed,
+)
+from ttp.tor_install import (
     setup_selinux_if_needed,
     remove_selinux_module,
 )
@@ -82,8 +85,8 @@ def test_is_selinux_enforcing_no_command():
 
 def test_is_selinux_module_installed_true():
     """Returns True if semodule -l lists the policy."""
-    with patch("ttp.tor_install.shutil.which", return_value="/usr/bin/semodule"):
-        with patch("ttp.tor_install.subprocess.run") as mock_run:
+    with patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/semodule"):
+        with patch("ttp.tor_detect.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 stdout="ttp_tor_policy\nother_mod\n", returncode=0
             )
@@ -92,8 +95,8 @@ def test_is_selinux_module_installed_true():
 
 def test_is_selinux_module_installed_false():
     """Returns False if semodule -l does not list the policy."""
-    with patch("ttp.tor_install.shutil.which", return_value="/usr/bin/semodule"):
-        with patch("ttp.tor_install.subprocess.run") as mock_run:
+    with patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/semodule"):
+        with patch("ttp.tor_detect.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout="other_mod\n", returncode=0)
             assert is_selinux_module_installed() is False
 
@@ -101,7 +104,7 @@ def test_is_selinux_module_installed_false():
 def test_setup_selinux_if_needed_skips_on_debian():
     """Does nothing if not on Fedora family."""
     with patch("ttp.tor_detect.is_fedora_family", return_value=False):
-        with patch("ttp.tor_install.subprocess.run") as mock_run:
+        with patch("ttp.tor_detect.subprocess.run") as mock_run:
             setup_selinux_if_needed()
             mock_run.assert_not_called()
 
@@ -111,12 +114,12 @@ def test_setup_selinux_if_needed_installs_when_missing():
     with (
         patch("ttp.tor_detect.is_fedora_family", return_value=True),
         patch("ttp.tor_detect.is_selinux_enforcing", return_value=True),
-        patch("ttp.tor_install.is_selinux_module_installed", return_value=False),
+        patch("ttp.tor_detect.is_selinux_module_installed", return_value=False),
         patch.object(Path, "exists", return_value=True),
         patch("ttp.tor_install._install_selinux_tools"),
-        patch("ttp.tor_install.shutil.which", return_value="/usr/bin/cmd"),
+        patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/cmd"),
         patch("ttp.tor_install.tempfile.TemporaryDirectory") as mock_tempdir,
-        patch("ttp.tor_install.subprocess.run") as mock_run,
+        patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
         mock_tempdir.return_value.__enter__.return_value = "/tmp/fake"
         setup_selinux_if_needed()
@@ -137,8 +140,8 @@ def test_setup_selinux_if_needed_skips_when_present():
     with (
         patch("ttp.tor_detect.is_fedora_family", return_value=True),
         patch("ttp.tor_detect.is_selinux_enforcing", return_value=True),
-        patch("ttp.tor_install.is_selinux_module_installed", return_value=True),
-        patch("ttp.tor_install.subprocess.run") as mock_run,
+        patch("ttp.tor_detect.is_selinux_module_installed", return_value=True),
+        patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
         setup_selinux_if_needed()
         mock_run.assert_not_called()
@@ -147,11 +150,11 @@ def test_setup_selinux_if_needed_skips_when_present():
 def test_remove_selinux_module_calls_semodule_r():
     """Calls semodule -r if the module is installed."""
     with (
-        patch("ttp.tor_install.is_selinux_module_installed", return_value=True),
+        patch("ttp.tor_detect.is_selinux_module_installed", return_value=True),
         patch.object(Path, "exists", return_value=True),
-        patch("ttp.tor_install.subprocess.run") as mock_run,
+        patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
         remove_selinux_module()
-        mock_run.assert_called_once_with(
+        mock_run.assert_any_call(
             ["semodule", "-r", "ttp_tor_policy"], check=True
         )

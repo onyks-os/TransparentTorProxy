@@ -98,3 +98,33 @@ def test_collect_diagnostics_returns_only_strings(
     for key, value in result.items():
         assert isinstance(key, str)
         assert isinstance(value, str), f"Value for {key} is not a string: {type(value)}"
+
+@patch("ttp.system_info.subprocess.run")
+@patch("ttp.system_info._get_service_name", return_value="tor")
+@patch("ttp.system_info.dns.detect_dns_mode", return_value="resolvectl")
+@patch("ttp.system_info.tor_control.get_controller", return_value=None)
+@patch("ttp.system_info.state.read_lock", return_value=None)
+@patch(
+    "ttp.system_info.detect_tor",
+    return_value={
+        "is_installed": True,
+        "is_running": True,
+        "is_configured": True,
+        "tor_user": "toranon",
+        "is_fedora": True,
+        "selinux": True,
+        "selinux_module": True,
+    },
+)
+def test_collect_diagnostics_includes_selinux_info(
+    mock_detect, mock_read, mock_ctrl, mock_dns, mock_svc, mock_run
+):
+    """It should include SELinux module status in the diagnostic output."""
+    mock_run.return_value = MagicMock(stdout="standard output", returncode=0)
+
+    result = collect_diagnostics()
+    ttp_state = result["ttp_state"]
+
+    assert "OS Family: Fedora/RedHat" in ttp_state
+    assert "SELinux Enforcing: True" in ttp_state
+    assert "SELinux Module: INSTALLED" in ttp_state

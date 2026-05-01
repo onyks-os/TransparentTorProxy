@@ -64,7 +64,7 @@ When writing code for TTP, please adhere to these core principles:
 
 1. Create a branch from `main`.
 2. Ensure all tests pass.
-3. Update the documentation (`README.md`, `TDD.md`) if needed.
+3. Update the documentation (`README.md`, `architecture.md`) if needed.
 4. Submit the PR and wait for review.
 
 Thank you for your help! 🛡️

@@ -25,25 +25,29 @@
 #   ./start.sh [debian|arch|ubuntu]
 # ══════════════════════════════════════════════════════════════════════
 
+# Get the absolute path to the project root
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT_DIR" || exit
+
 # Default values
 VM_TYPE=${1:-debian}
-RAM="4096"
-CORES="4"
+RAM="6148"
+CORES="8"
 
 case $VM_TYPE in
     debian)
-        DISK_IMG="../vm/debian.qcow2"
-        ISO_IMG="../vm/debian.iso"
+        DISK_IMG="$ROOT_DIR/scripts/vms/debian.qcow2"
+        ISO_IMG="$ROOT_DIR/scripts/vms/debian.iso"
         SSH_PORT="2222"
         ;;
     arch)
-        DISK_IMG="../vm/arch.qcow2"
-        ISO_IMG="../vm/arch.iso"
+        DISK_IMG="$ROOT_DIR/scripts/vms/arch.qcow2"
+        ISO_IMG="$ROOT_DIR/scripts/vms/arch.iso"
         SSH_PORT="2223"
         ;;
     ubuntu)
-        DISK_IMG="../vm/ubuntu.qcow2"
-        ISO_IMG="../vm/ubuntu.iso"
+        DISK_IMG="$ROOT_DIR/scripts/vms/ubuntu.qcow2"
+        ISO_IMG="$ROOT_DIR/scripts/vms/ubuntu.iso"
         SSH_PORT="2224"
         ;;
     *)
@@ -65,8 +69,8 @@ qemu-system-x86_64 \
     -enable-kvm \
     -cpu host \
     -smp $CORES \
-    -drive file=$DISK_IMG,format=qcow2 \
-    -cdrom $ISO_IMG \
+    -drive file="$DISK_IMG",format=qcow2 \
+    -cdrom "$ISO_IMG" \
     -netdev user,id=net0,hostfwd=tcp::$SSH_PORT-:22 \
     -device virtio-net-pci,netdev=net0
     # -nographic

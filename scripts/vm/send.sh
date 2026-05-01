@@ -20,6 +20,10 @@
 #   ./send.sh
 # ══════════════════════════════════════════════════════════════════════
 
+# Get the absolute path to the project root
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT_DIR" || exit
+
 # Auto-detect running VM
 if pgrep -f "debian.qcow2" > /dev/null; then
     VM_TYPE="debian"
@@ -40,7 +44,7 @@ else
 fi
 
 REMOTE_HOST="localhost"
-DEST_FOLDER="~/ttp/"
+DEST_FOLDER="$HOME/ttp/"
 
 echo "🚀 Sending code to $VM_TYPE VM (port $REMOTE_PORT)..."
 
@@ -48,16 +52,23 @@ echo "🚀 Sending code to $VM_TYPE VM (port $REMOTE_PORT)..."
 ssh -p $REMOTE_PORT $REMOTE_USER@$REMOTE_HOST "mkdir -p $DEST_FOLDER"
 
 # Sync using tar over ssh (robust fallback when rsync is missing on target)
-tar -C .. \
-    --exclude='vm' \
-    --exclude='.git' \
-    --exclude='.venv' \
-    --exclude='venv' \
-    --exclude='*__pycache__*' \
-    --exclude='.pytest_cache' \
-    -cf - . | ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" "tar -C $DEST_FOLDER -xf -"
+EXCLUDES=(
+    --exclude='scripts/vms'
+    --exclude='.git'
+    --exclude='.venv'
+    --exclude='venv'
+    --exclude='dist'
+    --exclude='build'
+    --exclude='*__pycache__*'
+    --exclude='.pytest_cache'
+    --exclude='.ruff_cache'
+    --exclude='*.deb'
+    --exclude='*.rpm'
+    --exclude='*.qcow2'
+    --exclude='*.iso'
+)
 
-if [ $? -eq 0 ]; then
+if tar -C "$ROOT_DIR" "${EXCLUDES[@]}" -cf - . | ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" "tar -C $DEST_FOLDER -xf -"; then
     echo "✅ Sync completed!"
 else
     echo "❌ Sync error."

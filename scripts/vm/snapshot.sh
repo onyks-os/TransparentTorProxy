@@ -20,6 +20,10 @@
 #   ./snapshot.sh {debian|arch|ubuntu} {save|load|list} [name]
 # ══════════════════════════════════════════════════════════════════════
 
+# Get the absolute path to the project root
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT_DIR" || exit
+
 usage() {
     echo "Usage: $0 {debian|arch|ubuntu} {save|load|list} [snapshot_name]"
     exit 1
@@ -34,9 +38,9 @@ COMMAND=$2
 SNAP_NAME=$3
 
 case $VM_TYPE in
-    debian) DISK_IMG="../vm/debian.qcow2" ;;
-    arch)   DISK_IMG="../vm/arch.qcow2" ;;
-    ubuntu) DISK_IMG="../vm/ubuntu.qcow2" ;;
+    debian) DISK_IMG="$ROOT_DIR/scripts/vms/debian.qcow2" ;;
+    arch)   DISK_IMG="$ROOT_DIR/scripts/vms/arch.qcow2" ;;
+    ubuntu) DISK_IMG="$ROOT_DIR/scripts/vms/ubuntu.qcow2" ;;
     *)      echo "❌ Unknown VM type: $VM_TYPE"; usage ;;
 esac
 

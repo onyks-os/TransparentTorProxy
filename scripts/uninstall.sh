@@ -13,12 +13,12 @@
 #   3. Delete all files: /opt/ttp, /usr/local/bin/ttp, /var/lib/ttp.
 #
 # Usage:
-#   sudo ./uninstall.sh
+#   sudo ./scripts/uninstall.sh
 # ══════════════════════════════════════════════════════════════════════
 
 # Ensure the script is run as root.
 if [ "$EUID" -ne 0 ]; then
-  echo "Error: Please run as root (use: sudo ./uninstall.sh)"
+  echo "Error: Please run as root (use: sudo ./scripts/uninstall.sh)"
   exit 1
 fi
 

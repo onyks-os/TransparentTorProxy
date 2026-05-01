@@ -134,7 +134,8 @@ def collect_diagnostics() -> Dict[str, str]:
         f"Tor Configured: {info['is_configured']}\n"
         f"Tor User: {info.get('tor_user', 'unknown')}\n"
         f"OS Family: {'Fedora/RedHat' if info.get('is_fedora') else 'Debian/Other'}\n"
-        f"SELinux Enforcing: {info.get('selinux', False)}\n\n"
+        f"SELinux Enforcing: {info.get('selinux', False)}\n"
+        f"SELinux Module: {'INSTALLED' if info.get('selinux_module') else 'MISSING'}\n\n"
         f"Lock File: {'EXISTS' if lock else 'NONE'}\n"
     )
     if lock:

@@ -35,14 +35,12 @@ set -euo pipefail
 # `/..` moves one level up to the root folder (TransparentTorProxy/).
 cd "$(dirname "$0")/.."
 
-# Parse the pyproject.toml file to extract the current version number.
-# grep finds the line starting with 'version ='. cut splits the line by double quotes (") 
-# and takes the second piece (the actual version string, e.g., 0.1.0).
+# Parse pyproject.toml for name and version
+PROJECT_NAME=$(grep -m 1 '^name =' pyproject.toml | cut -d '"' -f 2)
 VERSION=$(grep -m 1 '^version =' pyproject.toml | cut -d '"' -f 2)
 
-# Define the package name using the Debian naming convention: name_version_architecture
-# 'all' means this package contains Python code which is architecture-independent.
-PKG_NAME="ttp_${VERSION}_all"
+# Define the package name using the Debian naming convention
+PKG_NAME="transparent-tor-proxy_${VERSION}_all"
 
 # Define a temporary working directory where we will construct the package file structure.
 BUILD_DIR="/tmp/${PKG_NAME}"
@@ -62,15 +60,15 @@ mkdir -p "$BUILD_DIR/lib/systemd/system"
 # /DEBIAN is a special metadata folder used by dpkg (the underlying Debian package manager).
 mkdir -p "$BUILD_DIR/DEBIAN"
 
-# Install the Python 'build' module (if not already installed) silently (>/dev/null).
-python3 -m pip install build >/dev/null
 
 # Build the Python project into a standard format called a 'wheel' (.whl).
 # This bundles all our Python source code into an archive in the 'dist/' folder.
 python3 -m build --wheel >/dev/null
 
-# Find the newly created wheel file in the dist/ directory.
-WHEEL_FILE=$(ls dist/ttp-${VERSION}-py3-none-any.whl)
+# Find the newly created wheel file.
+# Note: Hatchling replaces dashes with underscores in the filename.
+WHEEL_NAME=$(echo "$PROJECT_NAME" | tr '-' '_')
+WHEEL_FILE=$(ls dist/${WHEEL_NAME}-${VERSION}-py3-none-any.whl)
 
 # Unzip the wheel file directly into the Debian dist-packages directory.
 # This effectively "installs" the Python library files into the package structure.
@@ -94,15 +92,15 @@ chmod +x "$BUILD_DIR/usr/bin/ttp"
 cp packaging/ttp.service "$BUILD_DIR/lib/systemd/system/"
 
 # Create the documentation folder to store the copyright (required by Debian standards)
-mkdir -p "$BUILD_DIR/usr/share/doc/ttp"
-cp LICENSE "$BUILD_DIR/usr/share/doc/ttp/copyright"
+mkdir -p "$BUILD_DIR/usr/share/doc/transparent-tor-proxy"
+cp LICENSE "$BUILD_DIR/usr/share/doc/transparent-tor-proxy/copyright"
 
 # Create the 'control' file inside the DEBIAN folder.
 # This is the most important metadata file. It tells apt what this package is,
 # who made it, and most crucially, what other system packages it depends on.
 # When a user runs 'apt install ./ttp.deb', apt reads 'Depends:' and installs tor and nftables automatically.
 cat << EOF > "$BUILD_DIR/DEBIAN/control"
-Package: ttp
+Package: transparent-tor-proxy
 Version: $VERSION
 Architecture: all
 Maintainer: onyks <ttp.nzkav@aleeas.com>

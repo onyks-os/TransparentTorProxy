@@ -187,6 +187,20 @@ def is_fedora_family() -> bool:
         return False
 
 
+def is_selinux_module_installed() -> bool:
+    """Return ``True`` if the ``ttp_tor_policy`` module is already loaded."""
+    if not shutil.which("semodule"):
+        return False
+    try:
+        # semodule -l lists all active policy modules.
+        result = subprocess.run(
+            ["semodule", "-l"], capture_output=True, text=True, timeout=10
+        )
+        return "ttp_tor_policy" in result.stdout
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return False
+
+
 def detect_tor() -> dict:
     """Run all detection checks and return a summary dictionary.
 
@@ -212,4 +226,5 @@ def detect_tor() -> dict:
         "service_name": _get_service_name() if installed else "tor",
         "is_fedora": is_fedora_family(),
         "selinux": is_selinux_enforcing(),
+        "selinux_module": is_selinux_module_installed(),
     }

@@ -17,7 +17,7 @@
 #   %files    - Lists every file the package owns
 # ══════════════════════════════════════════════════════════════════════
 
-Name:           ttp
+Name:           transparent-tor-proxy
 Version:        @@VERSION@@
 Release:        1%{?dist}
 Summary:        Transparent Tor Proxy
@@ -28,6 +28,7 @@ Source0:        %{name}-%{version}.tar.gz
 
 BuildArch:      noarch
 BuildRequires:  python3-devel
+BuildRequires:  python3-build
 BuildRequires:  unzip
 BuildRequires:  checkpolicy
 Requires:       python3
@@ -46,11 +47,10 @@ A Linux CLI tool that transparently routes all system traffic through the Tor ne
 
 %build
 # Ensure build module is available, then build the wheel
-python3 -m pip install build --user || true
 python3 -m build --wheel
 
 # Compile SELinux policy
-cd assets/selinux
+cd ttp/resources/selinux
 checkmodule -M -m -o ttp_tor_policy.mod ttp_tor_policy.te
 semodule_package -o ttp_tor_policy.pp -m ttp_tor_policy.mod
 cd -
@@ -58,7 +58,7 @@ cd -
 %install
 # Unpack the wheel directly into the Python site-packages directory
 mkdir -p %{buildroot}%{python3_sitelib}
-unzip -q dist/ttp-*.whl -d %{buildroot}%{python3_sitelib}/
+unzip -q dist/*.whl -d %{buildroot}%{python3_sitelib}/
 
 # Create the main executable script for the CLI
 mkdir -p %{buildroot}%{_bindir}
@@ -76,16 +76,16 @@ mkdir -p %{buildroot}%{_unitdir}
 cp packaging/ttp.service %{buildroot}%{_unitdir}/
 
 # Install SELinux policies so they are available for the %post scriptlet
-mkdir -p %{buildroot}/opt/ttp/assets/selinux
-cp assets/selinux/ttp_tor_policy.pp %{buildroot}/opt/ttp/assets/selinux/
-cp assets/selinux/ttp_tor_policy.te %{buildroot}/opt/ttp/assets/selinux/
+mkdir -p %{buildroot}/opt/ttp/resources/selinux
+cp ttp/resources/selinux/ttp_tor_policy.pp %{buildroot}/opt/ttp/resources/selinux/
+cp ttp/resources/selinux/ttp_tor_policy.te %{buildroot}/opt/ttp/resources/selinux/
 
 %post
 %systemd_post ttp.service
 # $1 == 1 means initial installation, not an upgrade
 if [ "$1" -eq 1 ]; then
     echo "[TTP] Installing SELinux policy module..."
-    semodule -i /opt/ttp/assets/selinux/ttp_tor_policy.pp || :
+    semodule -i /opt/ttp/resources/selinux/ttp_tor_policy.pp || :
 fi
 
 %preun
@@ -103,14 +103,14 @@ fi
 %license LICENSE
 %{_bindir}/ttp
 %{python3_sitelib}/ttp/
-%{python3_sitelib}/ttp-*.dist-info/
+%{python3_sitelib}/transparent_tor_proxy-*.dist-info/
 %{_unitdir}/ttp.service
 %dir /opt/ttp
-%dir /opt/ttp/assets
-%dir /opt/ttp/assets/selinux
-/opt/ttp/assets/selinux/ttp_tor_policy.pp
-/opt/ttp/assets/selinux/ttp_tor_policy.te
+%dir /opt/ttp/resources
+%dir /opt/ttp/resources/selinux
+/opt/ttp/resources/selinux/ttp_tor_policy.pp
+/opt/ttp/resources/selinux/ttp_tor_policy.te
 
 %changelog
-* Sun Apr 26 2026 onyks <ttp.nzkav@aleeas.com> - @@VERSION@@-1
-- Initial native RPM package release
+* Fri May 01 2026 onyks <ttp.nzkav@aleeas.com> - @@VERSION@@-1
+- Modernized repository structure and integrated SELinux resources

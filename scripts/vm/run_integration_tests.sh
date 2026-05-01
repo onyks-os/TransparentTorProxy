@@ -24,24 +24,25 @@
 # ══════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-# Ensure we are in the project root directory before building
-cd "$(dirname "$0")/.."
+# Get the absolute path to the project root
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT_DIR"
 
 DISTRO="${1:-debian}"
 
 if [ "$DISTRO" == "debian" ]; then
-    DOCKERFILE="vm-helpers/Dockerfile.debian.test"
+    DOCKERFILE="scripts/vm/Dockerfile.debian.test"
 elif [ "$DISTRO" == "fedora" ]; then
-    DOCKERFILE="vm-helpers/Dockerfile.fedora.test"
+    DOCKERFILE="scripts/vm/Dockerfile.fedora.test"
 elif [ "$DISTRO" == "arch" ]; then
-    DOCKERFILE="vm-helpers/Dockerfile.arch.test"
+    DOCKERFILE="scripts/vm/Dockerfile.arch.test"
 else
     echo "Unknown distro: $DISTRO"
     exit 1
 fi
 
 echo "==> Building Docker image for $DISTRO..."
-docker build -t ttp-integration-$DISTRO -f "$DOCKERFILE" .
+docker build --progress=plain -t ttp-integration-"$DISTRO" -f "$DOCKERFILE" .
 
 echo "==> Starting systemd container ($DISTRO)..."
 # Required flags for systemd and nftables to work inside Docker
@@ -50,7 +51,7 @@ CID=$(docker run -d \
     -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
     --cgroupns=host \
     --tmpfs /tmp --tmpfs /run --tmpfs /run/lock \
-    ttp-integration-$DISTRO)
+    ttp-integration-"$DISTRO")
 
 # Wait for systemd to initialize
 echo "==> Waiting for systemd to boot..."
@@ -58,13 +59,13 @@ sleep 5
 
 echo "==> Running integration tests inside container..."
 set +e
-docker exec -it $CID /venv/bin/pytest /app/tests/test_integration.py -v -s
+docker exec -it "$CID" /venv/bin/pytest /app/tests/test_integration.py -v -s
 TEST_EXIT=$?
 set -e
 
 echo "==> Cleaning up container..."
-docker stop $CID
-docker rm $CID
+docker stop "$CID"
+docker rm "$CID"
 
 if [ $TEST_EXIT -eq 0 ]; then
     echo "==> ALL INTEGRATION TESTS PASSED ($DISTRO)! ✅"

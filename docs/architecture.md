@@ -1,4 +1,4 @@
-# 🏗️ TTP — Technical Design Document
+# 🏗️ TTP — Technical Architecture & Design
 
 **MVP Language:** Python 3  
 **Target OS:** Linux with systemd *(Debian 12+, Ubuntu 22.04+, Fedora 40+, Arch Linux)*
@@ -36,16 +36,16 @@ Unlike similar tools (TorGhost, Anonsurf), TTP is designed to:
 
 The project is divided into independent Python modules. Each module has a single responsibility and can be tested in isolation.
 
-| Module             | Area             | Responsibility                                                        |
-| :----------------- | :--------------- | :-------------------------------------------------------------------- |
-| 🔍 `tor_detect.py`  | **Detection**    | Checks Tor presence, status, config, user, and SELinux state.         |
-| 📦 `tor_install.py` | **Installation** | Installs Tor via PM, manages SELinux policies, configures `torrc`.    |
+| Module             | Area             | Responsibility                                                                   |
+| :----------------- | :--------------- | :------------------------------------------------------------------------------- |
+| 🔍 `tor_detect.py`  | **Detection**    | Checks Tor presence, status, config, user, and SELinux state.                    |
+| 📦 `tor_install.py` | **Installation** | Installs Tor via PM, manages SELinux policies, configures `torrc`.               |
 | 🧱 `firewall.py`    | **Firewall**     | Generates and applies `nftables` rules in isolated `inet ttp` table (Stateless). |
-| 🌐 `dns.py`         | **DNS**          | Manages DNS via `resolvectl` or `resolv.conf`; performs Hard-Reset on stop.       |
-| 💾 `state.py`       | **State**        | Manages lock file and emergency rollback logic.                       |
-| 🕹️ `tor_control.py` | **Control**      | Encapsulates Tor interaction (Stem, Bootstrap, IP Check).             |
-| 🛠️ `system_info.py` | **Diagnostic**   | Gathers system state (torrc, rules, logs) for debugging.              |
-| 🖥️ `cli.py`         | **Interface**    | Typer entry point: start, stop, refresh, status, diagnose, uninstall. |
+| 🌐 `dns.py`         | **DNS**          | Manages DNS via `resolvectl` or `resolv.conf`; performs Hard-Reset on stop.      |
+| 💾 `state.py`       | **State**        | Manages lock file and emergency rollback logic.                                  |
+| 🕹️ `tor_control.py` | **Control**      | Encapsulates Tor interaction (Stem, Bootstrap, IP Check).                        |
+| 🛠️ `system_info.py` | **Diagnostic**   | Gathers system state (torrc, rules, logs) for debugging.                         |
+| 🖥️ `cli.py`         | **Interface**    | Typer entry point: start, stop, refresh, status, diagnose, uninstall.            |
 
 ### 2.1 Execution Flow — `start`
 
@@ -94,7 +94,7 @@ Intervenes if detection fails or system needs optimization.
 
 1. Detects package manager (`apt-get`, `pacman`, `dnf`, `zypper`).
 2. Installs `tor`.
-3. **SELinux Optimization**: If on Fedora and enforcing, compiles the custom `ttp_tor_policy.te` policy on-the-fly and installs it via `semodule`. Auto-installs `checkpolicy` if missing.
+3. **SELinux Optimization**: If on Fedora and enforcing, compiles the custom SELinux policy on-the-fly. The policy source (`.te`) is stored as an internal package resource and accessed via `importlib.resources`.
 4. Sanitizes `torrc` (removes malformed `HashedControlPassword`, adds missing options).
 5. Validates via `tor --verify-config`.
 6. Restarts service.
@@ -235,17 +235,43 @@ graph TD
 
 ---
 
-## 7. 📦 Native Distribution Support
+## 7. 📦 Deployment & Installation Logic
 
-TTP provides automated packaging scripts to ensure a native experience on major Linux distributions. These packages handle dependencies, systemd integration, and security policies (SELinux) automatically.
+TTP supports multiple installation methods, ranked by their ability to handle system-level dependencies and security policies.
 
-| Format | Distribution | Build Tool | Key Features |
-| :--- | :--- | :--- | :--- |
-| **.deb** | Debian, Ubuntu, Kali | `dpkg-deb` | Standard `dist-packages` installation, `postinst` service reload. |
-| **.rpm** | Fedora, RHEL, Alma | `rpmbuild` | **SELinux Policy integration** via custom `.pp` module. |
-| **PKGBUILD** | Arch Linux, Manjaro | `makepkg` | PEP 517 compliant build, AUR-ready structure. |
+### 7.1 Hierarchy of Installation
 
-Building these packages is handled by scripts in the `packaging/` directory:
+1. **Native Packages (`.deb`, `.rpm`, `PKGBUILD`) [Recommended]**: The most robust method. The OS package manager handles `tor` and `nftables` installation and ensures that SELinux policies (on Fedora) are registered at the kernel level.
+2. **Universal Source Script (`scripts/install.sh`)**: An "intelligent" installer that creates an isolated virtual environment in `/opt/ttp`. It detects the host OS and, if SELinux is *Enforcing*, it compiles the `ttp_tor_policy.te` policy module on the fly.
+3. **Python Packaging (`pipx`, `pip`) [Fallback]**: Standard Python distribution. While convenient, this method cannot install system dependencies or compile SELinux policies.
+
+### 7.2 PEP 668 & System Stability
+
+Modern Linux distributions (Ubuntu 23.04+, Debian 12+) implement **PEP 668** (Externally Managed Environments), which blocks global `pip install`.
+
+* TTP recommends using **pipx** for a clean, isolated Python-only install.
+* Manual venv management is supported for advanced users.
+
+### 7.3 The SELinux Factor
+
+A key architectural feature is the **dynamic SELinux policy**. Because Tor is restricted by default on RHEL/Fedora, it cannot bind to ports like 9040 (TransPort) without specific permissions.
+
+* The **Native RPM** and the **Source Installer** both handle this by compiling a type-enforcement file into a binary policy module.
+* **pip/pipx** installations will likely fail on Fedora unless the user manually handles SELinux or sets it to *Permissive* mode.
+
+### 7.4 Uninstallation Safety
+
+Because TTP modifies core network settings (Firewall and DNS), uninstallation requires care.
+
+* **Native packages** use `prerm` or `preun` scripts to ensure the network is restored before the code is removed.
+* **Source uninstaller** (`scripts/uninstall.sh`) explicitly calls `ttp stop` and `restore-network.sh`.
+* **pipx/pip** users must manually run `ttp stop` before removing the package, as the Python package manager has no hook to restore system state.
+
+---
+
+## 8. 🛠️ Packaging Pipeline
+
+Building system packages is handled by scripts in the `packaging/` directory:
 
 * `build_deb.sh`: Generates a Debian archive.
 * `build_rpm.sh`: Generates a Fedora RPM (requires `rpm-build`).
@@ -259,15 +285,23 @@ Building these packages is handled by scripts in the `packaging/` directory:
 
 * **OS:** Debian 13 (Trixie) Netinstall
 * **Network:** NAT + Host-Only (SSH)
-* **Workflow:** Code on host → `vm-helpers/send.sh` or `rsync` → Test on VM via SSH.
+* **Workflow:** Code on host → `scripts/vm/send.sh` or `rsync` → Test on VM via SSH.
+
+### CI/CD Automation (Makefile)
+
+TTP employs a `Makefile` in the root directory to provide a unified entry point for local CI/CD. This ensures atomicity and consistency across different developer environments.
+
+* **`make test`**: Executes unit tests via `pytest` (Phase 1).
+* **`make integration-<distro>`**: Orchestrates Docker-based system tests for a specific distribution (Phase 2).
+* **`make verify`**: The mandatory pre-commit pipeline. It runs the full suite (Unit + all Integration tests).
 
 ### Testing Strategy
 
-| Phase | Environment      | Goal                    | Status                  |
-| :---- | :--------------- | :---------------------- | :---------------------- |
-| 1     | Unit (Host)      | pytest, fully mocked    | 🟢 Passing               |
-| 2     | Integration | Docker testing (`.test` files) | 🟢 Validated (Debian, Arch, Fedora) |
-| 3     | Portability (VM) | Debian 13, Ubuntu | 🟢 Validated |
+| Phase | Environment      | Goal                           | Status                             |
+| :---- | :--------------- | :----------------------------- | :--------------------------------- |
+| 1     | Unit (Host)      | pytest, fully mocked           | 🟢 Passing                          |
+| 2     | Integration      | Docker testing (`.test` files) | 🟢 Validated (Debian, Arch, Fedora) |
+| 3     | Portability (VM) | Debian 13, Ubuntu              | 🟢 Validated                        |
 
 ---
 

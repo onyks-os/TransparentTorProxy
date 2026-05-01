@@ -20,15 +20,15 @@
 #      non-standard ports TTP requires (9040, 9053).
 #
 # Usage:
-#   sudo ./install.sh
+#   sudo ./scripts/install.sh
 #
 # To uninstall:
-#   sudo ./uninstall.sh
+#   sudo ./scripts/uninstall.sh
 # ══════════════════════════════════════════════════════════════════════
 
 # Ensure the script is run as root, as we need to modify system directories.
 if [ "$EUID" -ne 0 ]; then
-  echo "Error: Please run as root (use: sudo ./install.sh)"
+  echo "Error: Please run as root (use: sudo ./scripts/install.sh)"
   exit 1
 fi
 
@@ -78,7 +78,7 @@ if command -v getenforce >/dev/null 2>&1; then
             
             if command -v checkmodule >/dev/null 2>&1; then
                 (
-                    cd /opt/ttp/assets/selinux || exit 1
+                    cd /opt/ttp/ttp/resources/selinux || exit 1
                     checkmodule -M -m -o ttp_tor_policy.mod ttp_tor_policy.te
                     semodule_package -o ttp_tor_policy.pp -m ttp_tor_policy.mod
                     semodule -i ttp_tor_policy.pp

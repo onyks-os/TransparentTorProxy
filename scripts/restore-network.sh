@@ -18,11 +18,11 @@
 # software, they will be lost. In most desktop setups this is fine.
 #
 # Usage:
-#   sudo ./restore-network.sh
+#   sudo ./scripts/restore-network.sh
 # ══════════════════════════════════════════════════════════════════════
 
 if [ "$EUID" -ne 0 ]; then
-  echo "Error: Please run as root (use: sudo ./restore-network.sh)"
+  echo "Error: Please run as root (use: sudo ./scripts/restore-network.sh)"
   exit 1
 fi
 

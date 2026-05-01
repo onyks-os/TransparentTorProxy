@@ -28,7 +28,7 @@ jobs:
         run: ruff check ttp/ tests/
 
       - name: Run ShellCheck (Script Linting)
-        run: shellcheck install.sh uninstall.sh restore-network.sh
+        run: find scripts -name "*.sh" -exec shellcheck {} +
 
   unit-tests:
     name: Unit Tests (Python ${{ matrix.python-version }})

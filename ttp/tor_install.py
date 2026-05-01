@@ -8,6 +8,7 @@ policy management.
 
 from __future__ import annotations
 
+import importlib.resources
 import logging
 import re
 import shutil
@@ -140,7 +141,11 @@ def _install_selinux_tools() -> None:
 
 def setup_selinux_if_needed() -> None:
     """Compile and install the custom SELinux policy for Tor on Fedora/RHEL if needed."""
-    from ttp.tor_detect import is_fedora_family, is_selinux_enforcing
+    from ttp.tor_detect import (
+        is_fedora_family,
+        is_selinux_enforcing,
+        is_selinux_module_installed,
+    )
 
     if not is_fedora_family() or not is_selinux_enforcing():
         return
@@ -149,49 +154,57 @@ def setup_selinux_if_needed() -> None:
         return
 
     logger.info("SELinux detected. Compiling and installing TTP Tor policy module...")
-    te_path = Path(__file__).parent.parent / "assets" / "selinux" / "ttp_tor_policy.te"
-    if not te_path.exists():
-        logger.warning(f"SELinux policy source missing at {te_path}. Skipping.")
-        return
 
-    _install_selinux_tools()
+    # Use importlib.resources to access the policy file inside the package
+    traversable = importlib.resources.files("ttp.resources.selinux").joinpath(
+        "ttp_tor_policy.te"
+    )
 
-    if not shutil.which("checkmodule") or not shutil.which("semodule_package"):
-        logger.warning(
-            "checkmodule or semodule_package not found. Cannot compile SELinux policy."
-        )
-        return
+    with importlib.resources.as_file(traversable) as te_path:
+        if not te_path.exists():
+            logger.warning(f"SELinux policy source missing at {te_path}. Skipping.")
+            return
 
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            mod_path = tmp / "ttp_tor_policy.mod"
-            pp_path = tmp / "ttp_tor_policy.pp"
+        _install_selinux_tools()
 
-            logger.debug(f"Compiling {te_path.name}...")
-            subprocess.run(
-                ["checkmodule", "-M", "-m", "-o", str(mod_path), str(te_path)],
-                check=True,
+        if not shutil.which("checkmodule") or not shutil.which("semodule_package"):
+            logger.warning(
+                "checkmodule or semodule_package not found. Cannot compile SELinux policy."
             )
-            subprocess.run(
-                ["semodule_package", "-o", str(pp_path), "-m", str(mod_path)],
-                check=True,
+            return
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                mod_path = tmp / "ttp_tor_policy.mod"
+                pp_path = tmp / "ttp_tor_policy.pp"
+
+                logger.debug(f"Compiling {te_path.name}...")
+                subprocess.run(
+                    ["checkmodule", "-M", "-m", "-o", str(mod_path), str(te_path)],
+                    check=True,
+                )
+                subprocess.run(
+                    ["semodule_package", "-o", str(pp_path), "-m", str(mod_path)],
+                    check=True,
+                )
+
+                logger.debug(f"Installing {pp_path.name}...")
+                subprocess.run(["semodule", "-i", str(pp_path)], check=True)
+
+            logger.info("SELinux policy module installed successfully.")
+        except (subprocess.CalledProcessError, OSError) as e:
+            logger.warning(
+                f"SELinux policy installation failed: {e}. Tor might have permission issues."
             )
-
-            logger.debug(f"Installing {pp_path.name}...")
-            subprocess.run(["semodule", "-i", str(pp_path)], check=True)
-
-        logger.info("SELinux policy module installed successfully.")
-    except (subprocess.CalledProcessError, OSError) as e:
-        logger.warning(
-            f"SELinux policy installation failed: {e}. Tor might have permission issues."
-        )
 
 
 def remove_selinux_module() -> None:
     """Remove the custom TTP SELinux policy module."""
     if not Path("/usr/sbin/semodule").exists():
         return
+
+    from ttp.tor_detect import is_selinux_module_installed
 
     if not is_selinux_module_installed():
         return
@@ -202,17 +215,6 @@ def remove_selinux_module() -> None:
         logger.info("SELinux policy module removed.")
     except (subprocess.CalledProcessError, OSError) as e:
         logger.warning(f"Failed to remove SELinux policy module: {e}")
-
-
-def is_selinux_module_installed() -> bool:
-    """Return True if the ttp_tor_policy module is loaded."""
-    try:
-        res = subprocess.run(
-            ["semodule", "-l"], capture_output=True, text=True, check=True
-        )
-        return "ttp_tor_policy" in res.stdout
-    except Exception:
-        return False
 
 
 def detect_package_manager() -> Optional[str]:

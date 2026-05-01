@@ -447,7 +447,9 @@ def uninstall() -> None:
         _do_stop()
 
     # 2. Remove the SELinux module if it was installed.
-    if tor_install.is_selinux_module_installed():
+    from ttp.tor_detect import is_selinux_module_installed
+
+    if is_selinux_module_installed():
         console.print(f"{_PREFIX} Purging SELinux policy module...")
         tor_install.remove_selinux_module()
 
@@ -461,7 +463,7 @@ def uninstall() -> None:
 
     console.print(f"{_PREFIX} [bold green]Uninstallation complete.[/]")
     console.print(
-        f"{_PREFIX} Note: To remove application files, run the provided 'uninstall.sh'."
+        f"{_PREFIX} Note: To remove application files, run the provided 'scripts/uninstall.sh'."
     )
 
 

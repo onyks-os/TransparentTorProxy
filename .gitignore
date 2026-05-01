@@ -141,11 +141,12 @@ packaging/*.tar.gz
 packaging/SHA256SUMS.txt
 
 # SELinux
-/assets/selinux/*.pp
+**/*.pp
 
 # Other
-vm
-ignore
+.vscode
+tmp
+vms
 
 # Environments
 .env
