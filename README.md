@@ -50,6 +50,19 @@ We are actively looking for developers to join the TTP project! Whether you are 
 
 If you want to contribute to making transparent proxying safer and more robust, please check out our [Contributing Guidelines](CONTRIBUTING.md) or dive right into the [Issues](https://github.com/onyks-os/TransparentTorProxy/issues).
 
+---
+
+<div align="center">
+
+### 🌟 Support the Project
+
+If you find **TTP** useful, please consider giving it a **Star** on GitHub!  
+It helps others discover the tool and motivates further development.
+
+[![GitHub stars](https://img.shields.io/github/stars/onyks-os/TransparentTorProxy?style=social)](https://github.com/onyks-os/TransparentTorProxy)
+
+</div>
+
 ## ✨ Features
 
 * 🌐 **System-wide transparent proxy** — all TCP traffic is redirected to Tor's TransPort, all DNS queries go through Tor's DNSPort.

@@ -23,6 +23,7 @@ from ttp.exceptions import StateError
 
 LOCK_DIR = Path("/var/lib/ttp")
 LOCK_PATH = LOCK_DIR / "ttp.lock"
+STAR_NOTIFIED_PATH = LOCK_DIR / ".starred_notified"
 
 
 def write_lock(
@@ -118,3 +119,22 @@ def attempt_recovery(
         delete_lock()
 
     return True
+
+def should_show_star_message() -> bool:
+    """Return ``True`` if the one-time star message should be shown."""
+    return not STAR_NOTIFIED_PATH.exists()
+
+
+def mark_star_message_shown() -> None:
+    """Mark the star message as shown by creating a sentinel file."""
+    try:
+        LOCK_DIR.mkdir(parents=True, exist_ok=True)
+        STAR_NOTIFIED_PATH.touch()
+    except OSError:
+        # Best effort — if we can't write, we might show it again next time.
+        pass
+
+
+def delete_star_sentinel() -> None:
+    """Remove the star notification sentinel file."""
+    STAR_NOTIFIED_PATH.unlink(missing_ok=True)

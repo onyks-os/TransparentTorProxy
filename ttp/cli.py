@@ -300,6 +300,13 @@ def start(
             console.print(f"{_PREFIX} [yellow]Detected IP: {exit_ip}[/]")
     console.print(f"{_PREFIX} Use 'ttp stop' to terminate. 'ttp refresh' to change IP.")
 
+    # One-time discrete message to encourage GitHub stars.
+    if state.should_show_star_message():
+        console.print(
+            "\n[dim]Thanks for using TTP! Starring the repo on GitHub helps the project grow.[/]"
+        )
+        state.mark_star_message_shown()
+
 
 @app.command()
 def stop() -> None:
@@ -460,6 +467,9 @@ def uninstall() -> None:
             console.print(f"{_PREFIX} Removed log file.")
         except OSError:
             pass
+
+    # 4. Clean up the star notification sentinel.
+    state.delete_star_sentinel()
 
     console.print(f"{_PREFIX} [bold green]Uninstallation complete.[/]")
     console.print(
