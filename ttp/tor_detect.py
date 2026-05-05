@@ -1,7 +1,7 @@
 """System inspection — Read-only detection of Tor and OS state.
 
-This module is the "eyes" of TTP. It performs non-destructive checks
-to determine if Tor is installed, configured, and running. It also
+This module provides non-destructive system inspection functions to
+determine if Tor is installed, configured, and running. It also
 identifies distribution-specific details like the Tor user and
 SELinux status.
 
@@ -201,6 +201,22 @@ def is_selinux_module_installed() -> bool:
         return False
 
 
+def is_firewalld_active() -> bool:
+    """Return ``True`` if the ``firewalld`` service is active."""
+    import shutil
+    if not shutil.which("systemctl"):
+        return False
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "--quiet", "firewalld"],
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return False
+
+
 def detect_tor() -> dict:
     """Run all detection checks and return a summary dictionary.
 
@@ -227,4 +243,5 @@ def detect_tor() -> dict:
         "is_fedora": is_fedora_family(),
         "selinux": is_selinux_enforcing(),
         "selinux_module": is_selinux_module_installed(),
+        "firewalld": is_firewalld_active(),
     }

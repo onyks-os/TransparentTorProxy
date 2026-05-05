@@ -41,22 +41,22 @@ case $VM_TYPE in
     debian) DISK_IMG="$ROOT_DIR/scripts/vms/debian.qcow2" ;;
     arch)   DISK_IMG="$ROOT_DIR/scripts/vms/arch.qcow2" ;;
     ubuntu) DISK_IMG="$ROOT_DIR/scripts/vms/ubuntu.qcow2" ;;
-    *)      echo "❌ Unknown VM type: $VM_TYPE"; usage ;;
+    *)      echo "Error: Unknown VM type: $VM_TYPE"; usage ;;
 esac
 
 case "$COMMAND" in
     save)
         if [ -z "$SNAP_NAME" ]; then usage; fi
-        echo "📸 Saving snapshot '$SNAP_NAME' for $VM_TYPE..."
+        echo "Saving snapshot '$SNAP_NAME' for $VM_TYPE..."
         qemu-img snapshot -c "$SNAP_NAME" "$DISK_IMG"
         ;;
     load)
         if [ -z "$SNAP_NAME" ]; then usage; fi
-        echo "⏪ Restoring snapshot '$SNAP_NAME' for $VM_TYPE..."
+        echo "Restoring snapshot '$SNAP_NAME' for $VM_TYPE..."
         qemu-img snapshot -a "$SNAP_NAME" "$DISK_IMG"
         ;;
     list)
-        echo "📜 Available snapshots for $VM_TYPE:"
+        echo "Available snapshots for $VM_TYPE:"
         qemu-img snapshot -l "$DISK_IMG"
         ;;
     *)

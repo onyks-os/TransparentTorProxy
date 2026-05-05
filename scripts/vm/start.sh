@@ -51,18 +51,18 @@ case $VM_TYPE in
         SSH_PORT="2224"
         ;;
     *)
-        echo "❌ Unknown VM type: $VM_TYPE"
+        echo "Error: Unknown VM type: $VM_TYPE"
         echo "Usage: $0 [debian|arch|ubuntu]"
         exit 1
         ;;
 esac
 
 if [ ! -f "$DISK_IMG" ]; then
-    echo "⚠️  Warning: Disk image $DISK_IMG not found. QEMU might fail if you are not installing from ISO."
+    echo "[!] Warning: Disk image $DISK_IMG not found. QEMU might fail if you are not installing from ISO."
 fi
 
-echo "🚀 Starting TTP Development VM ($VM_TYPE)..."
-echo "🔗 SSH available at localhost:$SSH_PORT"
+echo "Starting TTP Development VM ($VM_TYPE)..."
+echo "SSH available at localhost:$SSH_PORT"
 
 qemu-system-x86_64 \
     -m $RAM \

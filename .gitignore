@@ -142,6 +142,7 @@ packaging/SHA256SUMS.txt
 
 # SELinux
 **/*.pp
+**/*.log
 
 # Other
 .vscode

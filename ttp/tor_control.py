@@ -54,7 +54,7 @@ def get_exit_ip() -> str:
         try:
             req = urllib.request.Request(
                 endpoint,
-                headers={"User-Agent": "ttp/0.1"},
+                headers={"User-Agent": "ttp"},
             )
             with urllib.request.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read().decode())
@@ -156,7 +156,7 @@ def verify_tor() -> tuple[bool, str]:
             try:
                 req = urllib.request.Request(
                     endpoint,
-                    headers={"User-Agent": "ttp/0.1"},
+                    headers={"User-Agent": "ttp"},
                 )
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     data = json.loads(resp.read().decode())

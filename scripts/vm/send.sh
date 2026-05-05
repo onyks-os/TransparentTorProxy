@@ -38,7 +38,7 @@ elif pgrep -f "ubuntu.qcow2" > /dev/null; then
     REMOTE_USER="ubuntu"
     REMOTE_PORT="2224"
 else
-    echo "❌ No active TTP VM detected!"
+    echo "Error: No active TTP VM detected!"
     echo "Please start one first using ./start.sh"
     exit 1
 fi
@@ -46,7 +46,7 @@ fi
 REMOTE_HOST="localhost"
 DEST_FOLDER="$HOME/ttp/"
 
-echo "🚀 Sending code to $VM_TYPE VM (port $REMOTE_PORT)..."
+echo "Sending code to $VM_TYPE VM (port $REMOTE_PORT)..."
 
 # Ensure the destination folder exists
 ssh -p $REMOTE_PORT $REMOTE_USER@$REMOTE_HOST "mkdir -p $DEST_FOLDER"
@@ -69,7 +69,7 @@ EXCLUDES=(
 )
 
 if tar -C "$ROOT_DIR" "${EXCLUDES[@]}" -cf - . | ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" "tar -C $DEST_FOLDER -xf -"; then
-    echo "✅ Sync completed!"
+    echo "Sync completed!"
 else
-    echo "❌ Sync error."
+    echo "Sync error."
 fi

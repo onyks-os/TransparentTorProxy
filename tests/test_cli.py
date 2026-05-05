@@ -270,11 +270,12 @@ def test_start_tor_verification_fails(
 @patch("ttp.tor_detect.is_selinux_module_installed", return_value=True)
 @patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
 @patch("ttp.cli._LOG_PATH")
+@patch("ttp.cli.state.delete_star_sentinel")
 @patch("ttp.cli.os.geteuid", return_value=0)
 def test_uninstall_calls_cleanup(
-    mock_euid, mock_log_path, mock_read, mock_is_sel, mock_rem_sel, mock_stop
+    mock_euid, mock_del_star, mock_log_path, mock_read, mock_is_sel, mock_rem_sel, mock_stop
 ):
-    """uninstall → stops session, removes SELinux, and cleans logs."""
+    """uninstall -> stops session, removes SELinux, and cleans logs."""
     # Ensure log path mock behaves like a Path object
     mock_log_path.exists.return_value = True
 
@@ -285,3 +286,206 @@ def test_uninstall_calls_cleanup(
     mock_stop.assert_called_once()
     mock_rem_sel.assert_called_once()
     mock_log_path.unlink.assert_called_once()
+    mock_del_star.assert_called_once()
+
+
+
+# ── start with --bootstrap-timeout ─────────────────────────────────
+
+
+@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.cli.dns.detect_dns_mode", return_value="resolvectl")
+@patch("ttp.cli.firewall.apply_rules")
+@patch(
+    "ttp.cli.tor_install.ensure_tor_ready",
+    return_value={"is_installed": True, "version": "0.4.8.10"},
+)
+@patch("ttp.cli.tor_install.setup_selinux_if_needed")
+@patch("ttp.cli.state.write_lock")
+@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("ttp.cli.state.is_orphan", return_value=False)
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_start_with_bootstrap_timeout(
+    mock_euid,
+    mock_orphan,
+    mock_read,
+    mock_write,
+    mock_selinux,
+    mock_ensure,
+    mock_apply_fw,
+    mock_dns_mode,
+    mock_iface,
+    mock_apply_dns,
+    mock_verify,
+):
+    result = runner.invoke(app, ["start", "--bootstrap-timeout", "300"])
+    assert result.exit_code == 0
+    mock_verify.assert_called_once_with(timeout=300)
+
+
+# ── stop --restore-only ────────────────────────────────────────────
+
+
+@patch("ttp.cli.state.delete_lock")
+@patch("ttp.cli.dns.restore_dns")
+@patch("ttp.cli.firewall.destroy_rules")
+@patch(
+    "ttp.cli.state.read_lock", return_value={"dns_mode": "resolvectl", "dns_backup": {}}
+)
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_stop_restore_only_with_lock(mock_euid, mock_read, mock_fw, mock_dns, mock_del):
+    result = runner.invoke(app, ["stop", "--restore-only"])
+    assert result.exit_code == 0
+    assert "Forcing network restoration" in result.output
+    mock_fw.assert_called_once()
+    mock_dns.assert_called_once_with("resolvectl", {})
+    mock_del.assert_called_once()
+
+
+@patch("ttp.cli.state.delete_lock")
+@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.cli.dns.detect_dns_mode", return_value="resolvectl")
+@patch("ttp.cli.dns.restore_dns")
+@patch("ttp.cli.firewall.destroy_rules")
+@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_stop_restore_only_no_lock(
+    mock_euid,
+    mock_read,
+    mock_fw,
+    mock_dns,
+    mock_detect_mode,
+    mock_detect_iface,
+    mock_del,
+):
+    result = runner.invoke(app, ["stop", "--restore-only"])
+    assert result.exit_code == 0
+    assert "Forcing network restoration" in result.output
+    mock_fw.assert_called_once()
+    mock_dns.assert_called_once_with("resolvectl", {"interface": "eth0"})
+    mock_del.assert_called_once()
+
+
+# ── restart ────────────────────────────────────────────────────────
+
+
+@patch("ttp.cli.start")
+@patch("ttp.cli.time.sleep")
+@patch("ttp.cli._do_stop")
+@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_restart_active_session(mock_euid, mock_read, mock_stop, mock_sleep, mock_start):
+    result = runner.invoke(app, ["restart", "--interface", "wlan0", "--bootstrap-timeout", "300"])
+    assert result.exit_code == 0
+    mock_stop.assert_called_once()
+    mock_sleep.assert_called_once_with(1)
+    mock_start.assert_called_once_with(interface="wlan0", bootstrap_timeout=300)
+
+
+@patch("ttp.cli.start")
+@patch("ttp.cli._do_stop")
+@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_restart_inactive_session(mock_euid, mock_read, mock_stop, mock_start):
+    result = runner.invoke(app, ["restart"])
+    assert result.exit_code == 0
+    mock_stop.assert_not_called()
+    mock_start.assert_called_once_with(interface=None, bootstrap_timeout=180)
+
+
+# ── check ──────────────────────────────────────────────────────────
+
+
+@patch("ttp.tor_control.get_controller")
+@patch("urllib.request.urlopen")
+def test_check_success(mock_urlopen, mock_get_ctrl):
+    import json
+
+    mock_response = mock_urlopen.return_value.__enter__.return_value
+    mock_response.read.return_value = json.dumps(
+        {"IsTor": True, "IP": "100.200.100.200"}
+    ).encode()
+    mock_get_ctrl.return_value = True
+
+    result = runner.invoke(app, ["check"])
+    assert result.exit_code == 0
+    assert "100.200.100.200" in result.output
+    assert "Yes (IsTor=True)" in result.output
+    assert "Yes (Controller connected)" in result.output
+
+
+@patch("urllib.request.urlopen", side_effect=Exception("Connection refused"))
+def test_check_failure(mock_urlopen):
+    result = runner.invoke(app, ["check"])
+    assert result.exit_code == 1
+    assert "Failed to reach check.torproject.org" in result.output
+
+
+# ── check-leak ─────────────────────────────────────────────────────
+
+
+@patch("subprocess.run")
+@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
+def test_check_leak_success(mock_read, mock_run):
+    import json
+    from unittest.mock import MagicMock
+
+    def side_effect(cmd, *args, **kwargs):
+        mock_result = MagicMock()
+        if cmd[0] == "curl":
+            mock_result.stdout = json.dumps({"IsTor": True, "IP": "1.1.1.1"})
+        elif cmd[0] == "dig" and cmd[2] == "A":
+            mock_result.stdout = "2.2.2.2"
+        elif cmd[0] == "dig" and cmd[2] == "TXT":
+            mock_result.stdout = ""
+        return mock_result
+
+    mock_run.side_effect = side_effect
+
+    result = runner.invoke(app, ["check-leak"])
+    assert result.exit_code == 0
+    assert "No leaks detected" in result.output
+
+
+@patch("subprocess.run")
+@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
+def test_check_leak_detected(mock_read, mock_run):
+    from unittest.mock import MagicMock
+
+    def side_effect(cmd, *args, **kwargs):
+        mock_result = MagicMock()
+        if cmd[0] == "curl":
+            mock_result.stdout = '{"IsTor": true}'
+        elif cmd[0] == "dig" and cmd[2] == "A":
+            mock_result.stdout = "2.2.2.2"
+        elif cmd[0] == "dig" and cmd[2] == "TXT":
+            mock_result.stdout = "192.168.1.1"
+        return mock_result
+
+    mock_run.side_effect = side_effect
+
+    result = runner.invoke(app, ["check-leak"])
+    assert result.exit_code == 1
+    assert "Leaks detected!" in result.output
+
+
+@patch("ttp.cli.state.read_lock", return_value=None)
+def test_check_leak_inactive(mock_read):
+    result = runner.invoke(app, ["check-leak"])
+    assert result.exit_code == 1
+    assert "INACTIVE" in result.output
+
+
+# ── logs ───────────────────────────────────────────────────────────
+
+
+@patch("subprocess.run")
+@patch("ttp.tor_detect._get_service_name", return_value="tor@default")
+def test_logs_command(mock_get_service, mock_run):
+    result = runner.invoke(app, ["logs"])
+    assert result.exit_code == 0
+    mock_run.assert_called_once_with(
+        ["journalctl", "-u", "tor@default", "-n", "50", "-f"]
+    )

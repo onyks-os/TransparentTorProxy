@@ -25,7 +25,7 @@
 pkgname=transparent-tor-proxy
 
 # The version of the software. This should match the version in pyproject.toml.
-pkgver=0.1.1
+pkgver=0.2.0
 
 # The release number. If you update the PKGBUILD but the software version (x.y.z) 
 # hasn't changed, you increment this to tell users to update the package.
@@ -86,3 +86,4 @@ package() {
     # Install the license file (required by Arch Linux standards for MIT).
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
+

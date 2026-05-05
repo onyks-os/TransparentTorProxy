@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from ttp.tor_detect import detect_tor, _check_config, _detect_tor_user
+from ttp.tor_detect import detect_tor, _check_config, _detect_tor_user, is_firewalld_active
 
 
 # ── Helper: canonical subprocess side_effect ──────────────────────────
@@ -227,3 +227,31 @@ def test_detect_tor_user_hard_fallback():
         mock_run.return_value = MagicMock(stdout=ps_output, returncode=0)
         with patch.object(Path, "read_text", return_value=passwd_content):
             assert _detect_tor_user() == "tor"
+
+
+# ── firewalld ───────────────────────────────────────────────────────
+
+
+def test_is_firewalld_active_true():
+    with patch("shutil.which", return_value="/usr/bin/systemctl"):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            assert is_firewalld_active() is True
+            mock_run.assert_called_with(
+                ["systemctl", "is-active", "--quiet", "firewalld"],
+                capture_output=True,
+                check=False,
+            )
+
+
+def test_is_firewalld_active_false():
+    with patch("shutil.which", return_value="/usr/bin/systemctl"):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 1
+            assert is_firewalld_active() is False
+
+
+def test_is_firewalld_active_no_systemctl():
+    with patch("shutil.which", return_value=None):
+        assert is_firewalld_active() is False
+

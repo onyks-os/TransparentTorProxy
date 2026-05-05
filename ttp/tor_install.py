@@ -1,9 +1,8 @@
 """Tor installation and system-wide optimization logic.
 
-This module is the "hands" of TTP. It intervenes when system state
-needs modification to support Tor. It handles package installation,
-config file sanitization, and OS-specific optimizations like SELinux
-policy management.
+This module handles system modifications required to support Tor.
+It manages package installation, configuration sanitization, and
+OS-specific optimizations such as SELinux policy management.
 """
 
 from __future__ import annotations

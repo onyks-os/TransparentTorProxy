@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """CLI entry point — Typer application for TTP.
 
-This module acts as the primary orchestrator for the entire application.
-It defines the command-line interface and coordinates the interaction
+This module provides the command-line interface and coordinates the interaction
 between specialized modules (firewall, dns, tor_install, etc.).
 
 ARCHITECTURE NOTE:
-- This file should remain a "pure orchestrator."
+- This file handles high-level execution flow and CLI orchestration.
 - It handles UI (Rich/Typer) and high-level logic flow.
 - It should NOT contain low-level system interaction code (that goes into modules).
 
@@ -42,7 +41,6 @@ from ttp.exceptions import FirewallError, DNSError, StateError, TorError
 app = typer.Typer(
     name="ttp",
     help="TTP — Transparent Tor Proxy. Route all traffic through Tor.",
-    add_completion=False,
 )
 console = Console()
 
@@ -85,8 +83,12 @@ logger = logging.getLogger("ttp")
 
 def _setup_logging() -> None:
     """Configure logging based on the CLI state."""
+    from logging.handlers import RotatingFileHandler
+
     try:
-        handler = logging.FileHandler(_LOG_PATH)
+        handler = RotatingFileHandler(
+            _LOG_PATH, maxBytes=5 * 1024 * 1024, backupCount=1
+        )
         handler.setFormatter(
             logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
         )
@@ -117,7 +119,7 @@ def _require_root() -> None:
         raise typer.Exit(code=1)
 
 
-def _verify_tor() -> tuple[bool, str]:
+def _verify_tor(timeout: int = 180) -> tuple[bool, str]:
     """Verify that traffic is actually routed through Tor, with UI."""
     from ttp import tor_control
 
@@ -135,11 +137,12 @@ def _verify_tor() -> tuple[bool, str]:
 
         try:
             tor_control.wait_for_bootstrap(
-                progress_callback=lambda val: progress.update(task_id, completed=val)
+                progress_callback=lambda val: progress.update(task_id, completed=val),
+                timeout=timeout,
             )
             progress.stop()
             console.print(f"{_PREFIX} Tor is 100% bootstrapped.")
-        except RuntimeError as e:
+        except (TorError, RuntimeError) as e:
             progress.stop()
             _print_error("Bootstrap Error", str(e))
             return False, "unknown"
@@ -170,9 +173,7 @@ def _do_stop() -> None:
     dns.restore_dns(lock.get("dns_mode", ""), lock.get("dns_backup"))
 
     state.delete_lock()
-    console.print(
-        f"{_PREFIX} [bold red]🔴 Session terminated. Traffic in cleartext.[/]"
-    )
+    console.print(f"{_PREFIX} [bold red]Session terminated. Traffic in cleartext.[/]")
 
 
 def _signal_handler(signum: int, frame) -> None:
@@ -192,6 +193,11 @@ def start(
         "--interface",
         "-i",
         help="Network interface to configure DNS on (auto-detected if omitted).",
+    ),
+    bootstrap_timeout: int = typer.Option(
+        180,
+        "--bootstrap-timeout",
+        help="Timeout in seconds to wait for Tor to bootstrap.",
     ),
 ) -> None:
     """Start the transparent Tor proxy session."""
@@ -240,6 +246,17 @@ def start(
         else f"found, service active (user: {tor_user})."
     )
 
+    if info.get("firewalld"):
+        console.print(
+            f"{_PREFIX} [bold yellow]Warning: firewalld is active.[/bold yellow]"
+        )
+        console.print(
+            "  [yellow]firewalld can interfere with TTP's nftables rules and cause connectivity issues.[/yellow]"
+        )
+        console.print(
+            "  [yellow]If Tor fails to bootstrap, consider stopping it: sudo systemctl stop firewalld[/yellow]\n"
+        )
+
     # Step 2 — Apply stateless firewall rules.
     try:
         firewall.apply_rules(tor_user=tor_user)
@@ -285,12 +302,12 @@ def start(
         raise typer.Exit(code=1)
 
     # Step 5 — Verify Tor is working.
-    is_tor, exit_ip = _verify_tor()
+    is_tor, exit_ip = _verify_tor(timeout=bootstrap_timeout)
     if is_tor:
-        console.print(f"{_PREFIX} [bold green]✅ Session active. Exit IP: {exit_ip}[/]")
+        console.print(f"{_PREFIX} [bold green] Session active. Exit IP: {exit_ip}[/]")
     else:
         console.print(
-            f"{_PREFIX} [bold yellow]⚠ Session active but Tor verification failed.[/]"
+            f"{_PREFIX} [bold yellow]Session active but Tor verification failed.[/]"
         )
         console.print(
             f"{_PREFIX} [yellow]Traffic may NOT be routed through Tor. "
@@ -300,17 +317,74 @@ def start(
             console.print(f"{_PREFIX} [yellow]Detected IP: {exit_ip}[/]")
     console.print(f"{_PREFIX} Use 'ttp stop' to terminate. 'ttp refresh' to change IP.")
 
+    # One-time discrete message to encourage GitHub stars.
+    if state.should_show_star_message():
+        console.print(
+            "\n[dim]Thanks for using TTP! Starring the repo on GitHub helps the project grow.[/]"
+        )
+        state.mark_star_message_shown()
+
 
 @app.command()
-def stop() -> None:
+def stop(
+    restore_only: bool = typer.Option(
+        False,
+        "--restore-only",
+        help="Force network restoration even if TTP is crashed or no session is active.",
+    ),
+) -> None:
     """Stop the transparent Tor proxy and restore the network."""
     _require_root()
+
+    if restore_only:
+        console.print(f"{_PREFIX} Forcing network restoration (restore-only)...")
+        firewall.destroy_rules()
+
+        lock = state.read_lock()
+        if lock:
+            dns.restore_dns(lock.get("dns_mode", ""), lock.get("dns_backup"))
+        else:
+            if dns.detect_dns_mode() == "resolvectl":
+                dns.restore_dns(
+                    "resolvectl", {"interface": dns.detect_active_interface()}
+                )
+
+        state.delete_lock()
+        console.print(f"{_PREFIX} [bold red]Network restored. Traffic in cleartext.[/]")
+        raise typer.Exit(code=0)
 
     if state.read_lock() is None:
         console.print(f"{_PREFIX} No active session found.")
         raise typer.Exit(code=0)
 
     _do_stop()
+
+
+@app.command()
+def restart(
+    interface: Optional[str] = typer.Option(
+        None,
+        "--interface",
+        "-i",
+        help="Network interface to configure DNS on (auto-detected if omitted).",
+    ),
+    bootstrap_timeout: int = typer.Option(
+        180,
+        "--bootstrap-timeout",
+        help="Timeout in seconds to wait for Tor to bootstrap.",
+    ),
+) -> None:
+    """Restart the transparent Tor proxy session."""
+    _require_root()
+
+    if state.read_lock() is not None:
+        console.print(f"{_PREFIX} Stopping current session...")
+        _do_stop()
+        time.sleep(1)
+    else:
+        console.print(f"{_PREFIX} No active session found, starting a new one...")
+
+    start(interface=interface, bootstrap_timeout=bootstrap_timeout)
 
 
 @app.command()
@@ -354,9 +428,18 @@ def refresh() -> None:
 @app.command()
 def status() -> None:
     """Show current TTP session status."""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen("https://api.ipify.org", timeout=3) as response:
+            current_ip = response.read().decode("utf-8").strip()
+    except Exception:
+        current_ip = "Unknown"
+
     lock = state.read_lock()
     if lock is None:
         console.print(f"{_PREFIX} Status: [bold red]INACTIVE[/]")
+        console.print(f"{_PREFIX} Current IP: {current_ip}")
         console.print(f"{_PREFIX} No active session. Traffic is in cleartext.")
         raise typer.Exit(code=0)
 
@@ -367,6 +450,119 @@ def status() -> None:
     console.print(f"{_PREFIX} Exit IP: {exit_ip}")
     console.print(f"{_PREFIX} Session started: {lock.get('timestamp', 'unknown')}")
     console.print(f"{_PREFIX} Process PID: {lock.get('pid', 'unknown')}")
+
+
+@app.command(name="check")
+def check() -> None:
+    """Quickly verify Tor network connection and circuit state."""
+    import time
+    import urllib.request
+    import json
+    from ttp import tor_control
+
+    console.print(f"{_PREFIX} Checking Tor network connection...")
+
+    start_time = time.time()
+    try:
+        req = urllib.request.Request(
+            "https://check.torproject.org/api/ip",
+            headers={"User-Agent": "ttp/0.1"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        latency = round((time.time() - start_time) * 1000)
+
+        ip = data.get("IP", "Unknown")
+        is_tor = data.get("IsTor", False)
+    except Exception as e:
+        console.print(
+            f"{_PREFIX} [bold red]Failed to reach check.torproject.org:[/bold red] {e}"
+        )
+        raise typer.Exit(code=1)
+
+    ctrl = tor_control.get_controller()
+    circuit_stable = ctrl is not None
+
+    console.print(f"  [cyan]-[/cyan] Current IP:      {ip}")
+    console.print(
+        f"  [cyan]-[/cyan] Tor Network:     {'[bold green]Yes (IsTor=True)[/]' if is_tor else '[bold red]No[/]'}"
+    )
+    console.print(f"  [cyan]-[/cyan] API Latency:     {latency} ms")
+    console.print(
+        f"  [cyan]-[/cyan] Circuit Stable:  {'[bold green]Yes (Controller connected)[/]' if circuit_stable else '[bold red]No (ControlPort/Socket unreachable)[/]'}"
+    )
+
+
+@app.command(name="check-leak")
+def check_leak() -> None:
+    """Check for network leaks using external services."""
+    import subprocess
+    import json
+
+    lock = state.read_lock()
+    if lock is None:
+        console.print(f"{_PREFIX} Cannot check for leaks: TTP is INACTIVE.")
+        raise typer.Exit(code=1)
+
+    has_leaks = False
+    console.print(f"{_PREFIX} Running leak tests...")
+
+    # 1. Verify Tor Exit IP
+    cmd1 = ["curl", "-s", "https://check.torproject.org/api/ip"]
+    try:
+        res1 = subprocess.run(cmd1, capture_output=True, text=True, timeout=10)
+        out1 = res1.stdout.strip()
+        if cli_state.verbose:
+            console.print(f"[dim]> {' '.join(cmd1)}\n{out1}[/dim]")
+
+        if not out1:
+            has_leaks = True
+        else:
+            data = json.loads(out1)
+            if not data.get("IsTor", False):
+                has_leaks = True
+    except Exception as e:
+        if cli_state.verbose:
+            console.print(f"[dim]Error running curl: {e}[/dim]")
+        has_leaks = True
+
+    # 2. Verify DNS Routing
+    cmd2 = ["dig", "+short", "A", "check.torproject.org"]
+    try:
+        res2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=10)
+        out2 = res2.stdout.strip()
+        if cli_state.verbose:
+            console.print(f"[dim]> {' '.join(cmd2)}\n{out2}[/dim]")
+
+        if not out2:
+            has_leaks = True
+    except Exception as e:
+        if cli_state.verbose:
+            console.print(f"[dim]Error running dig: {e}[/dim]")
+        has_leaks = True
+
+    # 3. DNS Leak Test
+    cmd3 = ["dig", "+short", "TXT", "whoami.ipv4.akahelp.net"]
+    try:
+        res3 = subprocess.run(cmd3, capture_output=True, text=True, timeout=10)
+        out3 = res3.stdout.strip()
+        if cli_state.verbose:
+            console.print(f"[dim]> {' '.join(cmd3)}\n{out3}[/dim]")
+
+        if out3:
+            has_leaks = True
+    except Exception as e:
+        if cli_state.verbose:
+            console.print(f"[dim]Error running dig: {e}[/dim]")
+        has_leaks = True
+
+    if has_leaks:
+        console.print(
+            f"{_PREFIX} [bold red]Leaks detected![/bold red] Use -v for details."
+        )
+        raise typer.Exit(code=1)
+    else:
+        console.print(f"{_PREFIX} [bold green]No leaks detected.[/bold green]")
 
 
 @app.command()
@@ -461,10 +657,32 @@ def uninstall() -> None:
         except OSError:
             pass
 
+    # 4. Clean up the star notification sentinel.
+    state.delete_star_sentinel()
+
     console.print(f"{_PREFIX} [bold green]Uninstallation complete.[/]")
     console.print(
         f"{_PREFIX} Note: To remove application files, run the provided 'scripts/uninstall.sh'."
     )
+
+
+@app.command(name="logs")
+def logs() -> None:
+    """View recent Tor daemon logs for debugging."""
+    import subprocess
+    from ttp.tor_detect import _get_service_name
+
+    service = _get_service_name()
+    console.print(
+        f"{_PREFIX} Streaming logs for [bold]{service}[/bold] (Press Ctrl+C to exit)..."
+    )
+
+    try:
+        subprocess.run(["journalctl", "-u", service, "-n", "50", "-f"])
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        console.print(f"{_PREFIX} [bold red]Error running journalctl:[/bold red] {e}")
 
 
 if __name__ == "__main__":

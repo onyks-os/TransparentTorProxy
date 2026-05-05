@@ -61,6 +61,7 @@ fi
 echo "[TTP] Creating global 'ttp' command..."
 ln -sf /opt/ttp/venv/bin/ttp /usr/local/bin/ttp
 
+
 # 4. SELinux Optimization (Fedora/RHEL/CentOS Family)
 # On Red Hat-based systems, SELinux often blocks Tor from binding to non-standard ports.
 # We compile and install a custom policy module from source to allow this interaction.
@@ -92,3 +93,9 @@ if command -v getenforce >/dev/null 2>&1; then
 fi
 
 echo "[TTP] Installation complete! You can now use 'sudo ttp start' to begin."
+
+# One-time discrete message to encourage GitHub stars.
+echo ""
+echo "Thanks for using TTP! Starring the repo on GitHub helps the project grow."
+mkdir -p /var/lib/ttp
+touch /var/lib/ttp/.starred_notified

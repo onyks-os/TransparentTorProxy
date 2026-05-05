@@ -1,11 +1,11 @@
-# 🏗️ TTP — Technical Architecture & Design
+# TTP - Technical Architecture & Design
 
 **MVP Language:** Python 3  
 **Target OS:** Linux with systemd *(Debian 12+, Ubuntu 22.04+, Fedora 40+, Arch Linux)*
 
 ---
 
-## 📑 Table of Contents
+## Table of Contents
 
 1. [Project Goal](#1-project-goal)
 2. [Module Architecture](#2-module-architecture)
@@ -15,11 +15,11 @@
 6. [Project Structure](#6-project-structure)
 7. [Native Distribution Support](#7-native-distribution-support)
 8. [Development and Test Environment](#8-development-and-test-environment)
-9. [Unit Tests — Specifications](#9-unit-tests--specifications)
+9. [Unit Tests - Specifications](#9-unit-tests--specifications)
 
 ---
 
-## 1. 🎯 Project Goal
+## 1. Project Goal
 
 **TTP (Transparent Tor Proxy)** is a CLI tool for Linux that intercepts all outgoing network traffic from a user and forces it through the Tor network, without requiring per-application manual configuration.
 
@@ -32,22 +32,22 @@ Unlike similar tools (TorGhost, Anonsurf), TTP is designed to:
 
 ---
 
-## 2. 🧩 Module Architecture
+## 2. Module Architecture
 
 The project is divided into independent Python modules. Each module has a single responsibility and can be tested in isolation.
 
 | Module             | Area             | Responsibility                                                                   |
 | :----------------- | :--------------- | :------------------------------------------------------------------------------- |
-| 🔍 `tor_detect.py`  | **Detection**    | Checks Tor presence, status, config, user, and SELinux state.                    |
-| 📦 `tor_install.py` | **Installation** | Installs Tor via PM, manages SELinux policies, configures `torrc`.               |
-| 🧱 `firewall.py`    | **Firewall**     | Generates and applies `nftables` rules in isolated `inet ttp` table (Stateless). |
-| 🌐 `dns.py`         | **DNS**          | Manages DNS via `resolvectl` or `resolv.conf`; performs Hard-Reset on stop.      |
-| 💾 `state.py`       | **State**        | Manages lock file and emergency rollback logic.                                  |
-| 🕹️ `tor_control.py` | **Control**      | Encapsulates Tor interaction (Stem, Bootstrap, IP Check).                        |
-| 🛠️ `system_info.py` | **Diagnostic**   | Gathers system state (torrc, rules, logs) for debugging.                         |
-| 🖥️ `cli.py`         | **Interface**    | Typer entry point: start, stop, refresh, status, diagnose, uninstall.            |
+| `tor_detect.py`  | **Detection**    | Checks Tor presence, status, config, user, and SELinux state.                    |
+| `tor_install.py` | **Installation** | Installs Tor via PM, manages SELinux policies, configures `torrc`.               |
+| `firewall.py`    | **Firewall**     | Generates and applies `nftables` rules in isolated `inet ttp` table (Stateless). |
+| `dns.py`         | **DNS**          | Manages DNS via `resolvectl` or `resolv.conf`; performs Hard-Reset on stop.      |
+| `state.py`       | **State**        | Manages lock file and emergency rollback logic.                                  |
+| `tor_control.py` | **Control**      | Encapsulates Tor interaction (Stem, Bootstrap, IP Check).                        |
+| `system_info.py` | **Diagnostic**   | Gathers system state (torrc, rules, logs) for debugging.                         |
+| `cli.py`         | **Interface**    | Typer entry point: start, stop, refresh, status, check, logs, etc.               |
 
-### 2.1 Execution Flow — `start`
+### 2.1 Execution Flow - `start`
 
 1. **cli**: Verifies root execution.
 2. **state**: Checks for existing/orphaned locks.
@@ -58,10 +58,13 @@ The project is divided into independent Python modules. Each module has a single
 7. **state**: Writes lock file (PID, timestamp, backups).
 8. **cli**: Waits for bootstrap and verifies IP via `check.torproject.org`.
 
-### 2.2 Execution Flow — `stop` / crash
+### 2.2 Execution Flow - `stop` / crash
 
 > [!NOTE]  
-> **Normal:** `ttp stop` → reads lock → restores firewall/DNS → deletes lock.
+> **Normal:** `ttp stop` -> reads lock -> restores firewall/DNS -> deletes lock.
+
+> [!TIP]
+> **Emergency Restore:** `ttp stop --restore-only` bypasses session checks and forces network cleanup. Useful if TTP crashed and the lock file was lost.
 
 > [!WARNING]
 > **Crash (SIGTERM/SIGINT):** Signal handler ensures restoration before shutdown.
@@ -69,24 +72,25 @@ The project is divided into independent Python modules. Each module has a single
 > [!IMPORTANT]
 > **Worst-case (kill -9):** Next `ttp start` detects orphaned lock and auto-restores.
 
-### 2.3 Flow — `refresh`
+### 2.3 Flow - `refresh`
 
 Sends `NEWNYM` signal via Stem. Tor changes circuits. Traffic flows normally during the switch.
 
 ---
 
-## 3. 🔬 Module Details
+## 3. Module Details
 
 ### 3.1 `tor_detect.py`
 
-Answers structural questions:
+Module functionality:
 
 * Installed? (`shutil.which`)
 * Running? (`systemctl is-active` + `pgrep -x`)
 * Configured? (Checks `TransPort`, `DNSPort`, `ControlPort`)
-* User? (Live inspection `ps -eo user:32,comm` → `/etc/passwd` → fallback)
+* User? (Live inspection `ps -eo user:32,comm` -> `/etc/passwd` -> fallback)
 * Service? (`tor@default` vs `tor`)
 * SELinux? (Checks if OS is Fedora-family and if SELinux is `Enforcing`)
+* **Firewalld?** (Detects if `firewalld` is active to warn about potential `nftables` conflicts).
 
 ### 3.2 `tor_install.py`
 
@@ -123,7 +127,7 @@ Manages `/var/lib/ttp/ttp.lock` (JSON) containing PID, timestamps, and backup pa
 
 ### 3.6 `cli.py`
 
-Typer CLI exposing: `start`, `stop`, `refresh`, `status`, `diagnose`, `uninstall`. Pure orchestrator, zero network logic.
+Typer CLI exposing: `start`, `stop`, `refresh`, `status`, `diagnose`, `uninstall`. Primary controller for execution flow, zero network logic.
 
 ### 3.7 `tor_control.py`
 
@@ -147,7 +151,7 @@ Pure data gathering module, decoupled from UI.
 
 ### 3.9 Architecture Graph & Module Interactions
 
-The following dependency graph illustrates how modules interact with each other and with the underlying Linux system. `cli.py` acts as the central brain, orchestrating the specialized modules.
+The following dependency graph illustrates how modules interact with each other and with the underlying Linux system. `cli.py` acts as the controller, coordinating the specialized modules.
 
 ```mermaid
 %%{init: {
@@ -166,7 +170,7 @@ graph TD
     classDef system fill:#111111,stroke:#22d3ee,stroke-width:1px,stroke-dasharray: 4 4,color:#22d3ee,rx:6px,ry:6px
 
     %% Nodes
-    CLI["cli.py<br/>Orchestrator"]:::orchestrator
+    CLI["cli.py<br/>Controller"]:::orchestrator
     
     STATE["state.py<br/>Lock & Recovery"]:::module
     DETECT["tor_detect.py<br/>Inspection (Read-Only)"]:::module
@@ -204,20 +208,24 @@ graph TD
 
 ---
 
-## 4. 💻 Command Line Interface
+## 4. Command Line Interface
 
 *All commands require `sudo`.*
 
-* `ttp start`
-* `ttp stop`
+* `ttp start` (with optional `--interface` and `--bootstrap-timeout`)
+* `ttp stop` (with optional `--restore-only`)
+* `ttp restart`
 * `ttp refresh`
 * `ttp status`
+* `ttp check`
+* `ttp check-leak`
+* `ttp logs`
 * `ttp diagnose`
 * `ttp uninstall`
 
 ---
 
-## 5. 📦 Dependencies
+## 5. Dependencies
 
 | Library    | Source | Purpose                            |
 | :--------- | :----- | :--------------------------------- |
@@ -229,13 +237,13 @@ graph TD
 
 ---
 
-## 6. 🗂️ Project Structure
+## 6. Project Structure
 
 *(See README.md for full tree. Uses standard `pyproject.toml` distribution).*
 
 ---
 
-## 7. 📦 Deployment & Installation Logic
+## 7. Deployment & Installation Logic
 
 TTP supports multiple installation methods, ranked by their ability to handle system-level dependencies and security policies.
 
@@ -269,7 +277,7 @@ Because TTP modifies core network settings (Firewall and DNS), uninstallation re
 
 ---
 
-## 8. 🛠️ Packaging Pipeline
+## 8. Packaging Pipeline
 
 Building system packages is handled by scripts in the `packaging/` directory:
 
@@ -279,13 +287,13 @@ Building system packages is handled by scripts in the `packaging/` directory:
 
 ---
 
-## 8. 🧪 Development and Test Environment
+## 9. Development and Test Environment
 
 ### QEMU VM Configuration
 
 * **OS:** Debian 13 (Trixie) Netinstall
 * **Network:** NAT + Host-Only (SSH)
-* **Workflow:** Code on host → `scripts/vm/send.sh` or `rsync` → Test on VM via SSH.
+* **Workflow:** Code on host -> `scripts/vm/send.sh` or `rsync` -> Test on VM via SSH.
 
 ### CI/CD Automation (Makefile)
 
@@ -294,18 +302,21 @@ TTP employs a `Makefile` in the root directory to provide a unified entry point 
 * **`make test`**: Executes unit tests via `pytest` (Phase 1).
 * **`make integration-<distro>`**: Orchestrates Docker-based system tests for a specific distribution (Phase 2).
 * **`make verify`**: The mandatory pre-commit pipeline. It runs the full suite (Unit + all Integration tests).
+* **`make build`**: Compiles native system packages (`.deb`, `.rpm`) using the logic in `packaging/`.
+* **`make clean`**: Purges all temporary build artifacts, `__pycache__`, and compiled packages.
+* **`make pypi` / `make testpypi`**: Automates the build and upload of Python wheels to PyPI/TestPyPI.
 
 ### Testing Strategy
 
 | Phase | Environment      | Goal                           | Status                             |
 | :---- | :--------------- | :----------------------------- | :--------------------------------- |
-| 1     | Unit (Host)      | pytest, fully mocked           | 🟢 Passing                          |
-| 2     | Integration      | Docker testing (`.test` files) | 🟢 Validated (Debian, Arch, Fedora) |
-| 3     | Portability (VM) | Debian 13, Ubuntu              | 🟢 Validated                        |
+| 1     | Unit (Host)      | pytest, fully mocked           | PASS                                |
+| 2     | Integration      | Docker testing (`.test` files) | PASS (Debian, Arch, Fedora)         |
+| 3     | Portability (VM) | Debian 13, Ubuntu              | PASS                                |
 
 ---
 
-## 9. 🚥 Unit Tests — Specifications
+## 10. Unit Tests - Specifications
 
 *(Tests run without root, using `unittest.mock`)*
 

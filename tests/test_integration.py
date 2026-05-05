@@ -38,7 +38,7 @@ def test_full_ttp_flow():
     # 2. Verify routing through Tor
     req = urllib.request.Request(
         "https://check.torproject.org/api/ip",
-        headers={"User-Agent": "ttp-integration-test/0.1"},
+        headers={"User-Agent": "ttp-integration-test"},
     )
     is_tor = False
     exit_ip = "unknown"

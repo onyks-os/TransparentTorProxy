@@ -68,8 +68,8 @@ docker stop "$CID"
 docker rm "$CID"
 
 if [ $TEST_EXIT -eq 0 ]; then
-    echo "==> ALL INTEGRATION TESTS PASSED ($DISTRO)! ✅"
+    echo "==> ALL INTEGRATION TESTS PASSED ($DISTRO)! [OK]"
 else
-    echo "==> INTEGRATION TESTS FAILED ($DISTRO)! ❌"
+    echo "==> INTEGRATION TESTS FAILED ($DISTRO)! [FAILED]"
     exit $TEST_EXIT
 fi

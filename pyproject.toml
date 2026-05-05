@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "transparent-tor-proxy"
-version = "0.1.1"
+version = "0.2.0"
 description = "Transparent Tor Proxy — route all system traffic through Tor"
 readme = "README.md"
 license = {text = "MIT"}
@@ -21,6 +21,7 @@ dev = [
     "ruff>=0.1.0",
     "build>=1.0.0",
     "twine>=4.0.0",
+    "bump-my-version>=0.20.0",
 ]
 
 [project.scripts]
@@ -36,3 +37,33 @@ filterwarnings = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["ttp"]
+
+[tool.bumpversion]
+current_version = "0.2.0"
+commit = false
+tag = false
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = "version = \"{current_version}\""
+replace = "version = \"{new_version}\""
+
+[[tool.bumpversion.files]]
+filename = "ttp/__init__.py"
+search = "__version__ = \"{current_version}\""
+replace = "__version__ = \"{new_version}\""
+
+[[tool.bumpversion.files]]
+filename = "packaging/PKGBUILD"
+search = "pkgver={current_version}"
+replace = "pkgver={new_version}"
+
+[[tool.bumpversion.files]]
+filename = "README.md"
+search = "transparent-tor-proxy_{current_version}_all.deb"
+replace = "transparent-tor-proxy_{new_version}_all.deb"
+
+[[tool.bumpversion.files]]
+filename = "README.md"
+search = "transparent-tor-proxy-{current_version}-1"
+replace = "transparent-tor-proxy-{new_version}-1"

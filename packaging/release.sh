@@ -48,7 +48,7 @@ echo "[0/5] Building and verifying Python distribution..."
 rm -rf dist/ build/
 python3 -m build > /dev/null
 python3 -m twine check dist/*
-echo "      ✅ Python metadata is valid."
+echo "      [OK] Python metadata is valid."
 echo ""
 
 # ── Step 1: Clean old artifacts ──────────────────────────────────────
@@ -60,9 +60,9 @@ echo ""
 # ── Step 2: Build .deb ───────────────────────────────────────────────
 echo "[2/5] Building Debian package (.deb)..."
 if bash "$RELEASE_DIR/build_deb.sh"; then
-    echo "      ✅ .deb built successfully."
+    echo "      [OK] .deb built successfully."
 else
-    echo "      ❌ .deb build failed!"
+    echo "      [FAILED] .deb build failed!"
     exit 1
 fi
 echo ""
@@ -71,13 +71,13 @@ echo ""
 echo "[3/5] Building RPM package (.rpm)..."
 if command -v rpmbuild >/dev/null 2>&1; then
     if bash "$RELEASE_DIR/build_rpm.sh"; then
-        echo "      ✅ .rpm built successfully."
+        echo "      [OK] .rpm built successfully."
     else
-        echo "      ❌ .rpm build failed!"
+        echo "      [FAILED] .rpm build failed!"
         exit 1
     fi
 else
-    echo "      ⚠ rpmbuild not found, skipping .rpm"
+    echo "      [!] rpmbuild not found, skipping .rpm"
 fi
 echo ""
 
@@ -93,12 +93,12 @@ echo "[4/5] Generating SHA256 checksums..."
     done
 
     if [ ${#PACKAGES[@]} -eq 0 ]; then
-        echo "      ❌ No packages found to checksum!"
+        echo "      [FAILED] No packages found to checksum!"
         exit 1
     fi
 
     sha256sum "${PACKAGES[@]}" > SHA256SUMS.txt
-    echo "      ✅ SHA256SUMS.txt generated."
+    echo "      [OK] SHA256SUMS.txt generated."
 )
 echo ""
 
