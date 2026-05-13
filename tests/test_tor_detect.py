@@ -1,7 +1,7 @@
-"""Tests for ttp.tor_detect — Tor detection module.
+"""Tests for ttp.tor_detect - Tor detection module.
 
 All tests use mocks to avoid hitting the real system.
-Corresponds to TDD §8.1.
+Corresponds to TDD Section 8.1.
 """
 
 from __future__ import annotations
@@ -9,25 +9,23 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from ttp.tor_detect import detect_tor, _check_config, _detect_tor_user, is_firewalld_active
+from ttp.tor_detect import (
+    detect_tor,
+    _check_config,
+    _detect_tor_user,
+    is_firewalld_active,
+)
 
 
-# ── Helper: canonical subprocess side_effect ──────────────────────────
-#
-# _get_service_name() now uses os.path.exists("/etc/debian_version") to
-# determine the service name instead of calling "systemctl cat".
-# To keep tests OS-agnostic we always patch _get_service_name() directly.
+# Helper: canonical subprocess side_effect
 
 
-def _make_subprocess_side_effect(service: str = "tor@default", running: bool = True):
+def _make_subprocess_side_effect(running: bool = True):
     """Return a side_effect function for mocked subprocess.run calls."""
 
     def side_effect(cmd, **kwargs):
         m = MagicMock()
-        if cmd == ["systemctl", "is-active", service]:
-            m.stdout = "active\n" if running else "inactive\n"
-            m.returncode = 0 if running else 3
-        elif cmd == ["pgrep", "-x", "tor"]:
+        if cmd == ["pgrep", "-x", "tor"]:
             m.stdout = "1234\n" if running else ""
             m.returncode = 0 if running else 1
         elif cmd == ["tor", "--version"]:
@@ -41,23 +39,23 @@ def _make_subprocess_side_effect(service: str = "tor@default", running: bool = T
     return side_effect
 
 
-# ── 8.1.1 Correct torrc → all fields True ─────────────────────────
+# Correct torrc detection
 
 
 def test_full_detection_all_true(tmp_path: Path):
-    """torrc with TransPort and DNSPort → dict with all True."""
+    """torrc with TransPort and DNSPort -> dict with all True."""
     torrc = tmp_path / "torrc"
-    torrc.write_text("TransPort 9040\nDNSPort 9053\nControlPort 9051\n")
+    torrc.write_text(
+        "TransPort 9041\nDNSPort 9054\nControlSocket /run/tor/ttp/control.sock\n"
+    )
 
     with (
         patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/tor"),
         patch("ttp.tor_detect.subprocess.run") as mock_run,
         patch("ttp.tor_detect.TORRC_PATH", torrc),
         patch("ttp.tor_detect._detect_tor_user", return_value="debian-tor"),
-        # Isolate from the actual OS: always act as if on Debian.
-        patch("ttp.tor_detect._get_service_name", return_value="tor@default"),
     ):
-        mock_run.side_effect = _make_subprocess_side_effect("tor@default", running=True)
+        mock_run.side_effect = _make_subprocess_side_effect(running=True)
         result = detect_tor()
 
     assert result["is_installed"] is True
@@ -65,14 +63,13 @@ def test_full_detection_all_true(tmp_path: Path):
     assert result["is_configured"] is True
     assert result["version"] == "0.4.8.10"
     assert result["tor_user"] == "debian-tor"
-    assert result["service_name"] == "tor@default"
 
 
-# ── 8.1.2 Empty torrc → is_configured = False ─────────────────────
+# Empty torrc detection
 
 
 def test_empty_torrc_not_configured(tmp_path: Path):
-    """Empty torrc → is_configured = False."""
+    """Empty torrc -> is_configured = False."""
     torrc = tmp_path / "torrc"
     torrc.write_text("")
 
@@ -80,18 +77,20 @@ def test_empty_torrc_not_configured(tmp_path: Path):
 
 
 def test_correct_torrc_is_configured(tmp_path: Path):
-    """torrc with correct ports → is_configured = True."""
+    """torrc with correct ports -> is_configured = True."""
     torrc = tmp_path / "torrc"
-    torrc.write_text("TransPort 9040\nDNSPort 9053\nControlPort 9051\n")
+    torrc.write_text(
+        "TransPort 9041\nDNSPort 9054\nControlSocket /run/tor/ttp/control.sock\n"
+    )
 
     assert _check_config(torrc) is True
 
 
-# ── 8.1.3 which tor not found → is_installed = False ──────────────
+# Binary not found detection
 
 
 def test_tor_not_installed():
-    """which tor returns None → is_installed = False."""
+    """which tor returns None -> is_installed = False."""
     with patch("ttp.tor_detect.shutil.which", return_value=None):
         result = detect_tor()
 
@@ -101,57 +100,33 @@ def test_tor_not_installed():
     assert result["version"] == ""
 
 
-# ── 8.1.4 systemctl is-active → inactive ─────────────────────────
-#
-# Patch _get_service_name to return a known service name, then have the
-# subprocess mock return "inactive" for is-active.  This test verifies
-# the double-check logic (systemd says inactive → no pgrep call needed).
+# Process not running detection
 
 
 def test_tor_not_running(tmp_path: Path):
-    """systemctl is-active tor returns 'inactive' → is_running = False."""
+    """pgrep -x tor fails -> is_running = False."""
     torrc = tmp_path / "torrc"
-    torrc.write_text("TransPort 9040\nDNSPort 9053\n")
+    torrc.write_text("TransPort 9041\nDNSPort 9054\n")
 
     with (
         patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/tor"),
         patch("ttp.tor_detect.subprocess.run") as mock_run,
         patch("ttp.tor_detect.TORRC_PATH", torrc),
-        patch("ttp.tor_detect._get_service_name", return_value="tor"),
     ):
-        mock_run.side_effect = _make_subprocess_side_effect("tor", running=False)
+        mock_run.side_effect = _make_subprocess_side_effect(running=False)
         result = detect_tor()
 
     assert result["is_installed"] is True
     assert result["is_running"] is False
 
 
-# ── 8.1.5 _get_service_name — Debian vs non-Debian ─────────────────
-
-
-def test_get_service_name_on_debian():
-    """On a Debian system, service name should be 'tor@default'."""
-    from ttp.tor_detect import _get_service_name
-
-    with patch("os.path.exists", return_value=True):
-        assert _get_service_name() == "tor@default"
-
-
-def test_get_service_name_on_non_debian():
-    """On a non-Debian system, service name should be 'tor'."""
-    from ttp.tor_detect import _get_service_name
-
-    with patch("os.path.exists", return_value=False):
-        assert _get_service_name() == "tor"
-
-
-# ── 8.1.6 _detect_tor_user — live process detection ──────────────
+# Tor user detection
 
 
 def test_detect_tor_user_from_ps_toranon():
-    """Running process owned by 'toranon' → returns 'toranon'.
+    """Running process owned by 'toranon' -> returns 'toranon'.
 
-    This is the CRITICAL test — many distros (Fedora, RHEL, openSUSE)
+    This is the CRITICAL test - many distros (Fedora, RHEL, openSUSE)
     use non-standard usernames.  The old code only checked for
     'debian-tor' and 'tor', causing nftables to block Tor's own
     traffic on those systems.
@@ -195,7 +170,7 @@ def test_detect_tor_user_custom_passwd(mock_run):
 
 
 def test_detect_tor_user_from_ps_debian_tor():
-    """Running process owned by 'debian-tor' → returns 'debian-tor'."""
+    """Running process owned by 'debian-tor' -> returns 'debian-tor'."""
     ps_output = "USER         COMMAND\ndebian-tor   tor\n"
     with patch("ttp.tor_detect.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout=ps_output, returncode=0)
@@ -203,7 +178,7 @@ def test_detect_tor_user_from_ps_debian_tor():
 
 
 def test_detect_tor_user_fallback_to_passwd():
-    """No running tor process, 'toranon' in /etc/passwd → returns 'toranon'."""
+    """No running tor process, 'toranon' in /etc/passwd -> returns 'toranon'."""
     passwd_content = (
         "root:x:0:0:root:/root:/bin/bash\n"
         "toranon:x:964:964:Tor anonymizing user:/var/lib/tor:/sbin/nologin\n"
@@ -217,7 +192,7 @@ def test_detect_tor_user_fallback_to_passwd():
 
 
 def test_detect_tor_user_hard_fallback():
-    """No process, no passwd match → falls back to 'tor'."""
+    """No process, no passwd match -> falls back to 'tor'."""
     passwd_content = (
         "root:x:0:0:root:/root:/bin/bash\nnobody:x:65534:65534::/:/sbin/nologin\n"
     )
@@ -229,29 +204,38 @@ def test_detect_tor_user_hard_fallback():
             assert _detect_tor_user() == "tor"
 
 
-# ── firewalld ───────────────────────────────────────────────────────
+def test_detect_tor_user_numeric_uid_rejected():
+    """ps returns numeric UID (e.g. 524330) -> falls back to /etc/passwd."""
+    ps_output = "USER     COMMAND\n524330   tor\n"
+    passwd_content = "debian-tor:x:524330:524330::/var/lib/tor:/bin/false\n"
+
+    with patch("ttp.tor_detect.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout=ps_output, returncode=0)
+        with patch.object(Path, "read_text", return_value=passwd_content):
+            assert _detect_tor_user() == "debian-tor"
+
+
+# Firewalld detection
 
 
 def test_is_firewalld_active_true():
-    with patch("shutil.which", return_value="/usr/bin/systemctl"):
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            assert is_firewalld_active() is True
-            mock_run.assert_called_with(
-                ["systemctl", "is-active", "--quiet", "firewalld"],
-                capture_output=True,
-                check=False,
-            )
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        assert is_firewalld_active() is True
+        mock_run.assert_called_with(
+            ["pgrep", "-x", "firewalld"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
 
 
 def test_is_firewalld_active_false():
-    with patch("shutil.which", return_value="/usr/bin/systemctl"):
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 1
-            assert is_firewalld_active() is False
-
-
-def test_is_firewalld_active_no_systemctl():
-    with patch("shutil.which", return_value=None):
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 1
         assert is_firewalld_active() is False
 
+
+def test_is_firewalld_active_exception():
+    with patch("subprocess.run", side_effect=FileNotFoundError):
+        assert is_firewalld_active() is False

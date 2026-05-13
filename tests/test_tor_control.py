@@ -1,4 +1,4 @@
-"""Tests for ttp.tor_control — Tor interaction logic.
+"""Tests for ttp.tor_control - Tor interaction logic.
 
 All external network calls and Stem interactions are mocked.
 """
@@ -18,7 +18,7 @@ except ImportError:
     Signal = MagicMock()
 
 
-# ── get_exit_ip ────────────────────────────────────────────────────
+# get_exit_ip
 
 
 @patch("ttp.tor_control.urllib.request.urlopen")
@@ -50,52 +50,48 @@ def test_get_exit_ip_fallback(mock_urlopen):
     assert tor_control.get_exit_ip() == "5.6.7.8"
 
 
-# ── get_controller ─────────────────────────────────────────────────
+# get_controller
 
 
 @patch("ttp.tor_control.os.path.exists", return_value=True)
 @patch("ttp.tor_control.Controller")
 def test_get_controller_unix_socket(mock_controller_cls, mock_exists):
-    """get_controller prefers the Unix socket if it exists."""
+    """get_controller connects only via the TTP private Unix socket."""
     mock_ctrl = MagicMock()
     mock_controller_cls.from_socket_file.return_value = mock_ctrl
 
     ctrl = tor_control.get_controller()
     assert ctrl is mock_ctrl
+    mock_controller_cls.from_socket_file.assert_called_once_with(
+        "/run/tor/ttp/control.sock"
+    )
     mock_ctrl.authenticate.assert_called_once()
     mock_controller_cls.from_port.assert_not_called()
 
 
 @patch("ttp.tor_control.os.path.exists", return_value=False)
 @patch("ttp.tor_control.Controller")
-def test_get_controller_tcp_port(mock_controller_cls, mock_exists):
-    """get_controller falls back to TCP port 9051 if Unix socket doesn't exist."""
-    mock_ctrl = MagicMock()
-    mock_controller_cls.from_port.return_value = mock_ctrl
-
-    ctrl = tor_control.get_controller()
-    assert ctrl is mock_ctrl
-    mock_ctrl.authenticate.assert_called_once()
+def test_get_controller_no_socket_returns_none(mock_controller_cls, mock_exists):
+    """get_controller returns None if the TTP control socket is absent."""
+    assert tor_control.get_controller() is None
     mock_controller_cls.from_socket_file.assert_not_called()
+    mock_controller_cls.from_port.assert_not_called()
 
 
 @patch("ttp.tor_control.os.path.exists", return_value=True)
 @patch("ttp.tor_control.Controller")
-def test_get_controller_socket_auth_fails(mock_controller_cls, mock_exists):
-    """If Unix socket fails authentication, it falls back to TCP."""
+def test_get_controller_socket_auth_fails_returns_none(mock_controller_cls, mock_exists):
+    """If TTP socket auth fails, get_controller returns None (no system Tor fallback)."""
     mock_socket_ctrl = MagicMock()
     mock_socket_ctrl.authenticate.side_effect = Exception("Auth failed")
     mock_controller_cls.from_socket_file.return_value = mock_socket_ctrl
 
-    mock_tcp_ctrl = MagicMock()
-    mock_controller_cls.from_port.return_value = mock_tcp_ctrl
-
     ctrl = tor_control.get_controller()
-    assert ctrl is mock_tcp_ctrl
-    mock_controller_cls.from_port.assert_called_once_with(port=9051)
+    assert ctrl is None
+    mock_controller_cls.from_port.assert_not_called()
 
 
-# ── wait_for_bootstrap ─────────────────────────────────────────────
+# wait_for_bootstrap
 
 
 @patch("ttp.tor_control.time.sleep")
@@ -141,7 +137,7 @@ def test_wait_for_bootstrap_timeout(mock_get_ctrl, mock_sleep):
         tor_control.wait_for_bootstrap()
 
 
-# ── verify_tor ─────────────────────────────────────────────────────
+# verify_tor
 
 
 @patch("ttp.tor_control.time.sleep")
@@ -167,7 +163,7 @@ def test_verify_tor_retries(mock_urlopen, mock_sleep):
 
     assert is_tor is False
     assert ip == "unknown"
-    # 5 attempts × 3 endpoints = 15 calls
+    # 5 attempts x 3 endpoints = 15 calls
     assert mock_urlopen.call_count == 15
 
 
@@ -187,7 +183,7 @@ def test_verify_tor_fallback_endpoint(mock_urlopen, mock_sleep):
     assert ip == "9.9.9.9"
 
 
-# ── request_new_circuit ────────────────────────────────────────────
+# request_new_circuit
 
 
 @patch("ttp.tor_control.time.sleep")
@@ -222,3 +218,41 @@ def test_request_new_circuit_timeout(mock_get_ctrl, mock_get_ip, mock_sleep):
 
     assert changed is False
     assert new_ip == "1.1.1.1"
+
+
+# graceful_shutdown
+
+
+@patch("ttp.tor_control.time.sleep")
+@patch("ttp.tor_control.get_controller")
+def test_graceful_shutdown_success(mock_get_ctrl, mock_sleep):
+    """graceful_shutdown sends SHUTDOWN signal and returns True."""
+    mock_ctrl = MagicMock()
+    # First call: send signal. Subsequent calls: Tor is gone (None).
+    mock_get_ctrl.side_effect = [mock_ctrl, None]
+
+    result = tor_control.graceful_shutdown(timeout=5)
+
+    assert result is True
+    mock_ctrl.signal.assert_called_once_with(Signal.SHUTDOWN)
+
+
+@patch("ttp.tor_control.get_controller", return_value=None)
+def test_graceful_shutdown_no_controller(mock_get_ctrl):
+    """graceful_shutdown returns False when no controller is available."""
+    result = tor_control.graceful_shutdown()
+    assert result is False
+
+
+@patch("ttp.tor_control.time.sleep")
+@patch("ttp.tor_control.get_controller")
+def test_graceful_shutdown_signal_exception(mock_get_ctrl, mock_sleep):
+    """graceful_shutdown returns False if signal raises an exception."""
+    mock_ctrl = MagicMock()
+    mock_ctrl.signal.side_effect = Exception("Connection lost")
+    mock_ctrl.__enter__ = MagicMock(return_value=mock_ctrl)
+    mock_ctrl.__exit__ = MagicMock(return_value=False)
+    mock_get_ctrl.return_value = mock_ctrl
+
+    result = tor_control.graceful_shutdown(timeout=1)
+    assert result is False

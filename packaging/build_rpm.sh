@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# ══════════════════════════════════════════════════════════════════════
-# TTP — RPM Package Builder
-# ══════════════════════════════════════════════════════════════════════
+# TTP - RPM Package Builder
 #
 # This script builds a native .rpm package for Fedora/RHEL/CentOS
 # distributions. It is the RPM equivalent of build_deb.sh.
@@ -24,7 +22,6 @@
 #
 # Prerequisites:
 #   sudo dnf install rpm-build
-# ══════════════════════════════════════════════════════════════════════
 
 # Strict mode: exit on error, undefined variables, and pipe failures.
 set -euo pipefail
@@ -60,7 +57,7 @@ RPM_DIR="/tmp/transparent-tor-proxy-rpmbuild"
 rm -rf "$RPM_DIR"
 mkdir -p "$RPM_DIR"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
-# ── Prepare the source tarball ───────────────────────────────────────
+# Prepare the source tarball
 # rpmbuild's %prep phase expects to unpack a tarball that contains a
 # single top-level directory named %{name}-%{version}. We create that
 # directory structure in /tmp, copy the relevant source files into it,
@@ -79,7 +76,7 @@ tar -czf "$RPM_DIR/SOURCES/${PKG_NAME}.tar.gz" -C "/tmp" "$PKG_NAME"
 # Clean up the temporary source directory (the tarball is all we need).
 rm -rf "$TMP_SRC"
 
-# ── Prepare the spec file ────────────────────────────────────────────
+# Prepare the spec file
 # The .spec file in our repo uses @@VERSION@@ as a placeholder so it
 # can be version-controlled without hardcoding the version number.
 # We copy it to the SPECS directory and replace the placeholder with
@@ -88,13 +85,13 @@ echo "--> Preparing spec file..."
 cp packaging/ttp.spec "$RPM_DIR/SPECS/"
 sed -i "s/@@VERSION@@/$VERSION/g" "$RPM_DIR/SPECS/ttp.spec"
 
-# ── Run the build ────────────────────────────────────────────────────
+# Run rpmbuild
 # rpmbuild -bb = "build binary only" (we don't need source RPMs).
 # --define "_topdir ..." overrides the default ~/rpmbuild location.
 echo "--> Running rpmbuild..."
 rpmbuild --define "_topdir $RPM_DIR" -bb "$RPM_DIR/SPECS/ttp.spec"
 
-# ── Collect the output ───────────────────────────────────────────────
+# Collect the output .rpm
 # rpmbuild places the finished .rpm inside RPMS/<arch>/.
 # Since our package is 'noarch' (pure Python), it goes in RPMS/noarch/.
 # We copy it back to our packaging/ directory for easy access.

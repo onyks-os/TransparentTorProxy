@@ -1,13 +1,15 @@
-"""State management — Persistent lock file for crash-safe operations.
+"""State management - Volatile lock file for crash-safe operations.
 
 This module acts as the "memory" of TTP. It tracks active sessions
-using a JSON-formatted lock file. This is critical for crash-safety:
-if the system loses power or the process is killed, the lock file
-survives and provides the necessary backup data (firewall rules, DNS
-settings) to restore the network on the next run.
+using a JSON-formatted lock file stored in ``/run/ttp/`` (a ``tmpfs``
+mount).  Because the lock lives on a volatile filesystem, it vanishes
+on reboot, eliminating stale-lock issues after power loss.
+
+The only persistent path is ``/var/lib/ttp/`` which holds the star
+notification sentinel and the Tor cache directory.
 
 CORE CONCEPTS:
-- Lock File: Located at /var/lib/ttp/ttp.lock.
+- Lock File: Located at /run/ttp/ttp.lock (volatile - tmpfs).
 - Orphans: A lock exists but the recorded PID is dead.
 - Recovery: The process of reading an orphan lock and calling rollback logic.
 """
@@ -16,21 +18,69 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from ttp.exceptions import StateError
 
-LOCK_DIR = Path("/var/lib/ttp")
+LOCK_DIR = Path("/run/ttp")
 LOCK_PATH = LOCK_DIR / "ttp.lock"
-STAR_NOTIFIED_PATH = LOCK_DIR / ".starred_notified"
+
+# Minimum required free space on /run (tmpfs): 5 MB.
+MIN_TMPFS_BYTES = 5 * 1024 * 1024
+
+# Persistent directory - survives reboots. Only non-relevant forensic data here.
+PERSISTENT_DIR = Path("/var/lib/ttp")
+STAR_NOTIFIED_PATH = PERSISTENT_DIR / ".starred_notified"
+
+
+def ensure_runtime_dir() -> None:
+    """Create ``/run/ttp`` with mode 0755 owned by root.
+
+    Must be called early in the CLI startup before any I/O that targets
+    the runtime directory (lock file, log file, torrc, etc.).
+
+    The directory is world-readable so the Tor user can traverse it
+    to reach ``/run/tor/ttp/``.
+    """
+    LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(LOCK_DIR, 0o755)
+    os.chown(LOCK_DIR, 0, 0)
+
+
+def check_tmpfs_space(min_bytes: int = MIN_TMPFS_BYTES) -> None:
+    """Abort if ``/run`` (tmpfs) has insufficient free space.
+
+    Must be called **before** any I/O to ``/run`` so that TTP
+    fails fast instead of crashing mid-setup with ``ENOSPC``.
+
+    Raises
+    ------
+    StateError
+        If free space on ``/run`` is below *min_bytes*.
+    """
+    try:
+        usage = shutil.disk_usage("/run")
+        if usage.free < min_bytes:
+            free_mb = usage.free / (1024 * 1024)
+            min_mb = min_bytes / (1024 * 1024)
+            raise StateError(
+                f"Insufficient space on /run (tmpfs): {free_mb:.1f}MB free, "
+                f"minimum {min_mb:.1f}MB required. "
+                f"Free space before starting TTP."
+            )
+    except OSError as e:
+        if isinstance(e, StateError):
+            raise
+        # Cannot stat /run - non-fatal, proceed with best effort
+        pass
 
 
 def write_lock(
     *,
     pid: int | None = None,
     dns_backup: Any = None,
-    dns_mode: str = "",
 ) -> None:
     """Write the session lock file with the current state.
 
@@ -39,17 +89,14 @@ def write_lock(
     pid:
         PID to record.  Defaults to the current process.
     dns_backup:
-        Original DNS data (resolv.conf contents *or* interface name).
-    dns_mode:
-        ``"resolvectl"`` or ``"resolv.conf"``.
+        Original DNS data (resolv.conf mount target dictionary).
     """
     try:
-        LOCK_DIR.mkdir(parents=True, exist_ok=True)
+        ensure_runtime_dir()
         data = {
             "pid": pid if pid is not None else os.getpid(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "dns_backup": dns_backup,
-            "dns_mode": dns_mode,
         }
         LOCK_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     except OSError as e:
@@ -83,12 +130,12 @@ def is_orphan() -> bool:
 
     pid = data.get("pid")
     if pid is None:
-        return True  # corrupt lock → treat as orphan
+        return True  # corrupt lock -> treat as orphan
 
     try:
         os.kill(pid, 0)
     except OSError:
-        return True  # process not running → orphan
+        return True  # process not running -> orphan
     return False
 
 
@@ -106,7 +153,7 @@ def attempt_recovery(
     destroy_firewall:
         ``firewall.destroy_rules()``
     restore_dns:
-        ``dns.restore_dns(mode, backup)``
+        ``dns.restore_dns(backup)``
     """
     data = read_lock()
     if data is None:
@@ -114,11 +161,12 @@ def attempt_recovery(
 
     try:
         destroy_firewall()
-        restore_dns(data.get("dns_mode", ""), data.get("dns_backup"))
+        restore_dns(data.get("dns_backup"))
     finally:
         delete_lock()
 
     return True
+
 
 def should_show_star_message() -> bool:
     """Return ``True`` if the one-time star message should be shown."""
@@ -128,10 +176,10 @@ def should_show_star_message() -> bool:
 def mark_star_message_shown() -> None:
     """Mark the star message as shown by creating a sentinel file."""
     try:
-        LOCK_DIR.mkdir(parents=True, exist_ok=True)
+        PERSISTENT_DIR.mkdir(parents=True, exist_ok=True)
         STAR_NOTIFIED_PATH.touch()
     except OSError:
-        # Best effort — if we can't write, we might show it again next time.
+        # Best effort - if we can't write, we might show it again next time.
         pass
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI entry point — Typer application for TTP.
+"""CLI entry point - Typer application for TTP.
 
 This module provides the command-line interface and coordinates the interaction
 between specialized modules (firewall, dns, tor_install, etc.).
@@ -9,8 +9,8 @@ ARCHITECTURE NOTE:
 - It handles UI (Rich/Typer) and high-level logic flow.
 - It should NOT contain low-level system interaction code (that goes into modules).
 
-Exposes five commands: ``start``, ``stop``, ``refresh``, ``status``, ``uninstall``.
-All commands require root privileges. Signal handlers guarantee that the
+Exposes commands: ``start``, ``stop``, ``refresh``, ``status``, ``uninstall``, ``logs``, ``diagnose``.
+All commands require root privileges, except for ttp --help. Signal handlers guarantee that the
 network state is restored even on SIGINT/SIGTERM.
 """
 
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import signal
 import sys
 import time
@@ -40,7 +41,8 @@ from ttp.exceptions import FirewallError, DNSError, StateError, TorError
 
 app = typer.Typer(
     name="ttp",
-    help="TTP — Transparent Tor Proxy. Route all traffic through Tor.",
+    help="TTP - Transparent Tor Proxy. Route all traffic through Tor.",
+    add_completion=False,
 )
 console = Console()
 
@@ -77,7 +79,7 @@ def _print_error(title: str, msg: str) -> None:
     )
 
 
-_LOG_PATH = Path("/var/log/ttp.log")
+_LOG_PATH = Path("/run/ttp/ttp.log")
 logger = logging.getLogger("ttp")
 
 
@@ -85,17 +87,18 @@ def _setup_logging() -> None:
     """Configure logging based on the CLI state."""
     from logging.handlers import RotatingFileHandler
 
+    state.ensure_runtime_dir()
+
     try:
-        handler = RotatingFileHandler(
-            _LOG_PATH, maxBytes=5 * 1024 * 1024, backupCount=1
-        )
+        # Volatile log, capped at 1MB to avoid filling RAM
+        handler = RotatingFileHandler(_LOG_PATH, maxBytes=1048576, backupCount=1)
         handler.setFormatter(
             logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
         )
         logger.addHandler(handler)
         logger.setLevel(logging.DEBUG if cli_state.verbose else logging.INFO)
     except OSError:
-        # Non-fatal — logging is best-effort.
+        # Non-fatal - logging is best-effort.
         pass
 
     if cli_state.verbose and not cli_state.quiet:
@@ -107,7 +110,7 @@ def _setup_logging() -> None:
         logger.setLevel(logging.DEBUG)
 
 
-# ── Helpers ────────────────────────────────────────────────────────
+# Helpers
 
 
 def _require_root() -> None:
@@ -161,29 +164,40 @@ def _verify_tor(timeout: int = 180) -> tuple[bool, str]:
 
 
 def _do_stop() -> None:
-    """Internal stop logic — shared by ``stop`` command and signal handler."""
+    """Internal stop logic - shared by ``stop`` command and signal handler."""
     lock = state.read_lock()
     if lock is None:
         return
+
+    # Graceful circuit teardown BEFORE touching the firewall.
+    # This ensures Tor closes all circuits cryptographically so no
+    # cleartext RST packets leak when nftables rules are removed.
+    console.print(f"{_PREFIX} Gracefully shutting down Tor circuits...")
+    from ttp import tor_control
+
+    tor_control.graceful_shutdown(timeout=10)
+
+    console.print(f"{_PREFIX} Stopping Tor service...")
+    tor_install.stop_tor_service()
 
     console.print(f"{_PREFIX} Removing nftables rules...")
     firewall.destroy_rules()
 
     console.print(f"{_PREFIX} Restoring DNS...")
-    dns.restore_dns(lock.get("dns_mode", ""), lock.get("dns_backup"))
+    dns.restore_dns(lock.get("dns_backup"))
 
     state.delete_lock()
     console.print(f"{_PREFIX} [bold red]Session terminated. Traffic in cleartext.[/]")
 
 
 def _signal_handler(signum: int, frame) -> None:
-    """Handle SIGINT/SIGTERM — clean up and exit."""
+    """Handle SIGINT/SIGTERM - clean up and exit."""
     console.print(f"\n{_PREFIX} Signal received, restoring network...")
     _do_stop()
     sys.exit(0)
 
 
-# ── Commands ───────────────────────────────────────────────────────
+# Commands
 
 
 @app.command()
@@ -223,12 +237,19 @@ def start(
             )
             raise typer.Exit(code=1)
 
-    # Step 0 — SELinux optimization (for Fedora/RHEL).
+    # Step 0a - Pre-flight: verify /run has enough space for tmpfs I/O.
+    try:
+        state.check_tmpfs_space()
+    except StateError as exc:
+        _print_error("Pre-flight Failed", str(exc))
+        raise typer.Exit(code=1)
+
+    # Step 0b - SELinux optimization (for Fedora/RHEL).
     # This ensures the kernel policy allows Tor to bind to our ports.
     # It only runs once and has zero overhead on subsequent calls.
     tor_install.setup_selinux_if_needed()
 
-    # Step 1 — Detect / install Tor.
+    # Step 1 - Detect / install Tor.
     console.print(f"{_PREFIX} Detecting Tor...", end=" ")
     try:
         info = tor_install.ensure_tor_ready()
@@ -241,9 +262,9 @@ def start(
     version = info.get("version", "")
     tor_user = info.get("tor_user", "debian-tor")
     console.print(
-        f"found (v{version}), service active (user: {tor_user})."
+        f"found (v{version}), managed via system service (user: {tor_user})."
         if version
-        else f"found, service active (user: {tor_user})."
+        else f"found, managed via system service (user: {tor_user})."
     )
 
     if info.get("firewalld"):
@@ -257,24 +278,25 @@ def start(
             "  [yellow]If Tor fails to bootstrap, consider stopping it: sudo systemctl stop firewalld[/yellow]\n"
         )
 
-    # Step 2 — Apply stateless firewall rules.
+    # Step 2 - Apply stateless firewall rules.
     try:
         firewall.apply_rules(tor_user=tor_user)
     except FirewallError as exc:
         _print_error("Firewall Setup Failed", str(exc))
+        tor_install.stop_tor_service()
         firewall.destroy_rules()
         raise typer.Exit(code=1)
     console.print(f"{_PREFIX} Stateless nftables rules applied (Table: inet ttp).")
 
-    # Step 3 — Modify DNS.
-    dns_mode = dns.detect_dns_mode()
+    # Step 3 - Modify DNS.
     if interface is None:
         interface = dns.detect_active_interface()
     try:
-        dns_backup = dns.apply_dns(dns_mode, interface)
+        dns_backup = dns.apply_dns(interface)
     except DNSError as exc:
         logger.error("DNS setup failed: %s", exc)
         _print_error("DNS Setup Failed", str(exc))
+        tor_install.stop_tor_service()
         firewall.destroy_rules()
         raise typer.Exit(code=1)
     except Exception as exc:
@@ -282,29 +304,28 @@ def start(
         _print_error(
             "DNS Setup Failed", "An unexpected error occurred during DNS configuration."
         )
+        tor_install.stop_tor_service()
         firewall.destroy_rules()
         raise typer.Exit(code=1)
-    logger.info("Session started — mode=%s, interface=%s", dns_mode, interface)
-    console.print(f"{_PREFIX} DNS set via {dns_mode} on interface {interface}.")
+    logger.info("Session started: interface=%s", interface)
+    console.print(f"{_PREFIX} DNS set via overlay on interface {interface}.")
 
-    # Step 4 — Write lock file.
+    # Step 4 - Write lock file.
     try:
-        state.write_lock(
-            dns_backup=dns_backup,
-            dns_mode=dns_mode,
-        )
+        state.write_lock(dns_backup=dns_backup)
     except StateError as exc:
         logger.error("Failed to write lock: %s", exc)
         _print_error("Session Tracking Failed", str(exc))
         # Emergency cleanup since we can't track this session
+        tor_install.stop_tor_service()
         firewall.destroy_rules()
-        dns.restore_dns(dns_mode, dns_backup)
+        dns.restore_dns(dns_backup)
         raise typer.Exit(code=1)
 
-    # Step 5 — Verify Tor is working.
+    # Step 5 - Verify Tor is working.
     is_tor, exit_ip = _verify_tor(timeout=bootstrap_timeout)
     if is_tor:
-        console.print(f"{_PREFIX} [bold green] Session active. Exit IP: {exit_ip}[/]")
+        console.print(f"{_PREFIX} [bold green]Session active. Exit IP: {exit_ip}[/]")
     else:
         console.print(
             f"{_PREFIX} [bold yellow]Session active but Tor verification failed.[/]"
@@ -338,16 +359,19 @@ def stop(
 
     if restore_only:
         console.print(f"{_PREFIX} Forcing network restoration (restore-only)...")
+
+        # Graceful shutdown even in restore-only mode
+        from ttp import tor_control
+
+        tor_control.graceful_shutdown(timeout=10)
+        tor_install.stop_tor_service()
         firewall.destroy_rules()
 
         lock = state.read_lock()
         if lock:
-            dns.restore_dns(lock.get("dns_mode", ""), lock.get("dns_backup"))
+            dns.restore_dns(lock.get("dns_backup"))
         else:
-            if dns.detect_dns_mode() == "resolvectl":
-                dns.restore_dns(
-                    "resolvectl", {"interface": dns.detect_active_interface()}
-                )
+            dns.restore_dns(None)
 
         state.delete_lock()
         console.print(f"{_PREFIX} [bold red]Network restored. Traffic in cleartext.[/]")
@@ -493,11 +517,28 @@ def check() -> None:
     )
 
 
+def _parse_txt_dig_ipv4(dig_stdout: str) -> Optional[str]:
+    """Return the first plausible IPv4 from ``dig +short TXT`` output (quotes stripped)."""
+    for raw_line in dig_stdout.strip().splitlines():
+        line = raw_line.strip().strip('"').strip("'").strip()
+        if not line:
+            continue
+        if re.match(r"^(\d{1,3}\.){3}\d{1,3}$", line):
+            return line
+        m = re.search(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", line)
+        if m:
+            return m.group(1)
+    return None
+
+
 @app.command(name="check-leak")
 def check_leak() -> None:
-    """Check for network leaks using external services."""
-    import subprocess
+    """Check for network leaks using Tor Project API and optional DNS probes."""
     import json
+    import shutil
+    import subprocess
+    import urllib.error
+    import urllib.request
 
     lock = state.read_lock()
     if lock is None:
@@ -507,62 +548,85 @@ def check_leak() -> None:
     has_leaks = False
     console.print(f"{_PREFIX} Running leak tests...")
 
-    # 1. Verify Tor Exit IP
-    cmd1 = ["curl", "-s", "https://check.torproject.org/api/ip"]
+    # 1. Authoritative Tor exit check (stdlib only — no curl).
     try:
-        res1 = subprocess.run(cmd1, capture_output=True, text=True, timeout=10)
-        out1 = res1.stdout.strip()
-        if cli_state.verbose:
-            console.print(f"[dim]> {' '.join(cmd1)}\n{out1}[/dim]")
-
-        if not out1:
+        req = urllib.request.Request(
+            "https://check.torproject.org/api/ip",
+            headers={"User-Agent": "ttp"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        if not data.get("IsTor", False):
             has_leaks = True
-        else:
-            data = json.loads(out1)
-            if not data.get("IsTor", False):
+            if cli_state.verbose:
+                logger.debug(
+                    "check.torproject.org reports IsTor=False (payload keys: %s)",
+                    list(data.keys()),
+                )
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
+        has_leaks = True
+        if cli_state.verbose:
+            logger.debug("Tor API check failed: %s", e, exc_info=True)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        has_leaks = True
+        if cli_state.verbose:
+            logger.debug("Tor API returned invalid JSON: %s", e, exc_info=True)
+
+    dig_bin = shutil.which("dig")
+    if not dig_bin:
+        has_leaks = True
+        if cli_state.verbose:
+            logger.debug("dig not found in PATH; cannot verify DNS path.")
+    else:
+        # 2. Basic DNS resolution through the tunnel (must resolve check.torproject.org).
+        cmd_a = [dig_bin, "+short", "A", "check.torproject.org"]
+        try:
+            res_a = subprocess.run(
+                cmd_a, capture_output=True, text=True, timeout=10, check=False
+            )
+            out_a = res_a.stdout.strip()
+            if cli_state.verbose:
+                console.print(f"[dim]> {' '.join(cmd_a)}\n{out_a}[/dim]")
+            if not out_a:
                 has_leaks = True
-    except Exception as e:
-        if cli_state.verbose:
-            console.print(f"[dim]Error running curl: {e}[/dim]")
-        has_leaks = True
-
-    # 2. Verify DNS Routing
-    cmd2 = ["dig", "+short", "A", "check.torproject.org"]
-    try:
-        res2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=10)
-        out2 = res2.stdout.strip()
-        if cli_state.verbose:
-            console.print(f"[dim]> {' '.join(cmd2)}\n{out2}[/dim]")
-
-        if not out2:
+                if cli_state.verbose:
+                    logger.debug(
+                        "Empty dig A output for check.torproject.org (returncode=%s).",
+                        res_a.returncode,
+                    )
+        except Exception as e:
             has_leaks = True
-    except Exception as e:
-        if cli_state.verbose:
-            console.print(f"[dim]Error running dig: {e}[/dim]")
-        has_leaks = True
+            if cli_state.verbose:
+                logger.debug("dig A check.torproject.org failed: %s", e, exc_info=True)
 
-    # 3. DNS Leak Test
-    cmd3 = ["dig", "+short", "TXT", "whoami.ipv4.akahelp.net"]
-    try:
-        res3 = subprocess.run(cmd3, capture_output=True, text=True, timeout=10)
-        out3 = res3.stdout.strip()
-        if cli_state.verbose:
-            console.print(f"[dim]> {' '.join(cmd3)}\n{out3}[/dim]")
-
-        if out3:
+        # 3. Akamai TXT: resolver identity (exit-side resolver) — presence of an IP is NOT a leak.
+        cmd_txt = [dig_bin, "+short", "TXT", "whoami.ipv4.akahelp.net"]
+        try:
+            res_txt = subprocess.run(
+                cmd_txt, capture_output=True, text=True, timeout=10, check=False
+            )
+            out_txt = res_txt.stdout.strip()
+            if cli_state.verbose:
+                console.print(f"[dim]> {' '.join(cmd_txt)}\n{out_txt}[/dim]")
+            resolver_ip = _parse_txt_dig_ipv4(out_txt) if out_txt else None
+            if cli_state.verbose and resolver_ip:
+                console.print(
+                    f"{_PREFIX} [dim]Akamai resolver probe (informational): {resolver_ip}[/dim]"
+                )
+        except Exception as e:
             has_leaks = True
-    except Exception as e:
-        if cli_state.verbose:
-            console.print(f"[dim]Error running dig: {e}[/dim]")
-        has_leaks = True
+            if cli_state.verbose:
+                logger.debug(
+                    "dig TXT whoami.ipv4.akahelp.net failed: %s", e, exc_info=True
+                )
 
     if has_leaks:
         console.print(
             f"{_PREFIX} [bold red]Leaks detected![/bold red] Use -v for details."
         )
         raise typer.Exit(code=1)
-    else:
-        console.print(f"{_PREFIX} [bold green]No leaks detected.[/bold green]")
+
+    console.print(f"{_PREFIX} [bold green]No leaks detected.[/bold green]")
 
 
 @app.command()
@@ -570,36 +634,35 @@ def diagnose() -> None:
     """Run a system diagnostic and print a report for troubleshooting."""
     _require_root()
     from ttp.system_info import collect_diagnostics
-    from ttp.tor_detect import _get_service_name
+    from rich.text import Text
 
     console.print(f"{_PREFIX} Running system diagnostics...\n")
 
     data = collect_diagnostics()
-    service = _get_service_name()
 
     console.print(
-        Panel(data["os"], title="[bold cyan]1. System[/]", border_style="cyan")
+        Panel(Text(data["os"]), title="[bold cyan]1. System[/]", border_style="cyan")
     )
 
     console.print(
         Panel(
-            data["tor_service"],
-            title=f"[bold blue]2. Tor Service ({service})[/]",
+            Text(data["tor_service"]),
+            title="[bold blue]2. Tor Service (ttp-tor)[/]",
             border_style="blue",
         )
     )
 
     console.print(
         Panel(
-            data["torrc"],
-            title="[bold blue]3. Active Tor Config (/etc/tor/torrc)[/]",
+            Text(data["torrc"]),
+            title="[bold blue]3. Active Tor Config (/run/tor/ttp/torrc)[/]",
             border_style="blue",
         )
     )
 
     console.print(
         Panel(
-            data["nftables"],
+            Text(data["nftables"]),
             title="[bold magenta]4. nftables Ruleset[/]",
             border_style="magenta",
         )
@@ -607,7 +670,7 @@ def diagnose() -> None:
 
     console.print(
         Panel(
-            data["dns"],
+            Text(data["dns"]),
             title="[bold magenta]5. DNS Configuration[/]",
             border_style="magenta",
         )
@@ -615,7 +678,7 @@ def diagnose() -> None:
 
     console.print(
         Panel(
-            data["control_interface"],
+            Text(data["control_interface"]),
             title="[bold green]6. Tor Control Interface[/]",
             border_style="green",
         )
@@ -623,7 +686,7 @@ def diagnose() -> None:
 
     console.print(
         Panel(
-            data["ttp_state"],
+            Text(data["ttp_state"]),
             title="[bold yellow]7. TTP Internal State[/]",
             border_style="yellow",
         )
@@ -649,15 +712,9 @@ def uninstall() -> None:
         console.print(f"{_PREFIX} Purging SELinux policy module...")
         tor_install.remove_selinux_module()
 
-    # 3. Clean up the log file.
-    if _LOG_PATH.exists():
-        try:
-            _LOG_PATH.unlink()
-            console.print(f"{_PREFIX} Removed log file.")
-        except OSError:
-            pass
+    # (Log file and runtime state are in tmpfs /run/ttp and evaporate on reboot/stop)
 
-    # 4. Clean up the star notification sentinel.
+    # 3. Clean up the star notification sentinel.
     state.delete_star_sentinel()
 
     console.print(f"{_PREFIX} [bold green]Uninstallation complete.[/]")
@@ -668,21 +725,13 @@ def uninstall() -> None:
 
 @app.command(name="logs")
 def logs() -> None:
-    """View recent Tor daemon logs for debugging."""
-    import subprocess
-    from ttp.tor_detect import _get_service_name
+    """View recent TTP logs from the volatile log file."""
+    if not _LOG_PATH.exists():
+        console.print(f"{_PREFIX} No log file found at {_LOG_PATH}.")
+        raise typer.Exit(code=1)
 
-    service = _get_service_name()
-    console.print(
-        f"{_PREFIX} Streaming logs for [bold]{service}[/bold] (Press Ctrl+C to exit)..."
-    )
-
-    try:
-        subprocess.run(["journalctl", "-u", service, "-n", "50", "-f"])
-    except KeyboardInterrupt:
-        pass
-    except Exception as e:
-        console.print(f"{_PREFIX} [bold red]Error running journalctl:[/bold red] {e}")
+    console.print(f"{_PREFIX} Displaying logs from [bold]{_LOG_PATH}[/bold]...")
+    console.print(_LOG_PATH.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

@@ -1,7 +1,5 @@
 #!/bin/bash
-# ══════════════════════════════════════════════════════════════════════
-# TTP — QEMU VM Launcher
-# ══════════════════════════════════════════════════════════════════════
+# TTP - QEMU VM Launcher
 #
 # Starts a QEMU virtual machine for testing TTP on real Linux
 # distributions. This is part of the development workflow:
@@ -23,7 +21,6 @@
 #
 # Usage:
 #   ./start.sh [debian|arch|ubuntu]
-# ══════════════════════════════════════════════════════════════════════
 
 # Get the absolute path to the project root
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

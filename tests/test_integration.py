@@ -10,12 +10,22 @@ import os
 import subprocess
 import time
 import urllib.request
+from pathlib import Path
 
 import pytest
 
 # Skip the entire module if not running as root
 if os.geteuid() != 0:
     pytest.skip("Integration tests must be run as root", allow_module_level=True)
+
+# Skip when /run is not writable (e.g. sandboxed "root", minimal CI without tmpfs)
+try:
+    Path("/run/ttp").mkdir(parents=True, exist_ok=True)
+except OSError:
+    pytest.skip(
+        "Integration tests need a writable /run/ttp (use Docker integration or a real host)",
+        allow_module_level=True,
+    )
 
 
 @pytest.fixture(scope="module", autouse=True)

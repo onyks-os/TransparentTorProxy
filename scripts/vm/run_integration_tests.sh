@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# ══════════════════════════════════════════════════════════════════════
-# TTP — Docker Integration Test Runner
-# ══════════════════════════════════════════════════════════════════════
+# TTP - Docker Integration Test Runner
 #
 # Runs the full integration test suite (tests/test_integration.py)
 # inside a privileged Docker container with systemd. This is the
@@ -21,7 +19,6 @@
 #   ./run_integration_tests.sh [debian|fedora|arch]
 #
 # Note: Requires Docker with --privileged support. Podman works too.
-# ══════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
 # Get the absolute path to the project root

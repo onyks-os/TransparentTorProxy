@@ -40,8 +40,8 @@ except ImportError:
     Controller = None
     Signal = None
 
-# Debian ControlSocket path (set in tor-service-defaults-torrc).
-_CONTROL_SOCKET = "/run/tor/control"
+# TTP instance control socket (never fall back to system Tor — see get_controller).
+_TTP_CONTROL_SOCKET = "/run/tor/ttp/control.sock"
 
 
 def get_exit_ip() -> str:
@@ -68,34 +68,25 @@ def get_exit_ip() -> str:
 
 
 def get_controller():
-    """Connect to Tor's control interface.
+    """Connect to the dedicated ``ttp-tor`` control interface only.
 
-    Tries the Unix ControlSocket first (``/run/tor/control``, the
-    Debian default), then falls back to TCP ControlPort 9051.
-    Returns an **authenticated** :class:`stem.control.Controller` or
-    ``None``.
+    Uses exclusively ``ControlSocket /run/tor/ttp/control.sock`` so
+    bootstrap queries, NEWNYM, and shutdown signals always target TTP's
+    isolated instance — never ``tor.service`` or TCP ControlPort.
+    Returns an authenticated :class:`stem.control.Controller` or ``None``.
     """
     if Controller is None:
         return None
 
-    # 1. Unix socket (Debian default — always available).
-    if os.path.exists(_CONTROL_SOCKET):
-        try:
-            ctrl = Controller.from_socket_file(_CONTROL_SOCKET)
-            ctrl.authenticate()
-            return ctrl
-        except (socket.error, Exception):
-            pass
+    if not os.path.exists(_TTP_CONTROL_SOCKET):
+        return None
 
-    # 2. TCP ControlPort (if configured in torrc).
     try:
-        ctrl = Controller.from_port(port=9051)
+        ctrl = Controller.from_socket_file(_TTP_CONTROL_SOCKET)
         ctrl.authenticate()
         return ctrl
     except (socket.error, Exception):
-        pass
-
-    return None
+        return None
 
 
 def wait_for_bootstrap(
@@ -148,7 +139,7 @@ def verify_tor() -> tuple[bool, str]:
     Returns
     -------
     tuple[bool, str]
-        ``(is_tor, exit_ip)`` — whether we confirmed Tor routing,
+        ``(is_tor, exit_ip)`` - whether we confirmed Tor routing,
         and the exit IP address.
     """
     for attempt in range(1, 6):  # 5 attempts
@@ -205,3 +196,47 @@ def request_new_circuit() -> tuple[bool, str]:
             return True, new_ip
 
     return False, new_ip
+
+
+def graceful_shutdown(timeout: int = 10) -> bool:
+    """Send ``SHUTDOWN`` signal to Tor for clean circuit teardown.
+
+    This MUST be called **before** firewall teardown to avoid leaking
+    cleartext RST packets on the physical interface.  Tor will close
+    all circuits cryptographically, then exit.
+
+    Parameters
+    ----------
+    timeout:
+        Maximum seconds to wait for Tor to finish closing circuits.
+
+    Returns
+    -------
+    bool
+        ``True`` if the shutdown signal was sent successfully.
+    """
+    if Signal is None:
+        return False
+
+    ctrl = get_controller()
+    if ctrl is None:
+        return False
+
+    try:
+        with ctrl:
+            ctrl.signal(Signal.SHUTDOWN)
+
+        # Wait for Tor to finish closing circuits
+        for _ in range(timeout):
+            ctrl_check = get_controller()
+            if ctrl_check is None:
+                return True
+            try:
+                ctrl_check.close()
+            except Exception:
+                pass
+            time.sleep(1)
+        return True
+    except Exception:
+        return False
+

@@ -1,4 +1,4 @@
-"""Tests for ttp.system_info — diagnostic data gathering."""
+"""Tests for ttp.system_info - diagnostic data gathering."""
 
 from unittest.mock import MagicMock, patch
 
@@ -6,8 +6,6 @@ from ttp.system_info import collect_diagnostics
 
 
 @patch("ttp.system_info.subprocess.run")
-@patch("ttp.system_info._get_service_name", return_value="tor@default")
-@patch("ttp.system_info.dns.detect_dns_mode", return_value="resolvectl")
 @patch("ttp.system_info.tor_control.get_controller")
 @patch("ttp.system_info.state.read_lock", return_value=None)
 @patch(
@@ -20,7 +18,7 @@ from ttp.system_info import collect_diagnostics
     },
 )
 def test_collect_diagnostics_has_all_keys(
-    mock_detect, mock_read, mock_ctrl, mock_dns, mock_svc, mock_run
+    mock_detect, mock_read, mock_ctrl, mock_run
 ):
     """It should return a dictionary with all expected keys."""
     mock_run.return_value = MagicMock(stdout="mocked output", returncode=0)
@@ -41,8 +39,6 @@ def test_collect_diagnostics_has_all_keys(
 
 
 @patch("ttp.system_info.subprocess.run")
-@patch("ttp.system_info._get_service_name", return_value="tor")
-@patch("ttp.system_info.dns.detect_dns_mode", return_value="resolvectl")
 @patch("ttp.system_info.tor_control.get_controller", return_value=None)
 @patch("ttp.system_info.state.read_lock", return_value=None)
 @patch(
@@ -55,7 +51,7 @@ def test_collect_diagnostics_has_all_keys(
     },
 )
 def test_collect_diagnostics_subprocess_failure_does_not_crash(
-    mock_detect, mock_read, mock_ctrl, mock_dns, mock_svc, mock_run
+    mock_detect, mock_read, mock_ctrl, mock_run
 ):
     """It should not crash if subprocesses raise exceptions.
     Instead, it should store the error message in the dictionary.
@@ -74,8 +70,6 @@ def test_collect_diagnostics_subprocess_failure_does_not_crash(
 
 
 @patch("ttp.system_info.subprocess.run")
-@patch("ttp.system_info._get_service_name", return_value="tor")
-@patch("ttp.system_info.dns.detect_dns_mode", return_value="resolvectl")
 @patch("ttp.system_info.tor_control.get_controller", return_value=None)
 @patch("ttp.system_info.state.read_lock", return_value=None)
 @patch(
@@ -88,7 +82,7 @@ def test_collect_diagnostics_subprocess_failure_does_not_crash(
     },
 )
 def test_collect_diagnostics_returns_only_strings(
-    mock_detect, mock_read, mock_ctrl, mock_dns, mock_svc, mock_run
+    mock_detect, mock_read, mock_ctrl, mock_run
 ):
     """It should return only strings, no Rich objects or other complex types."""
     mock_run.return_value = MagicMock(stdout="standard output", returncode=0)
@@ -99,9 +93,8 @@ def test_collect_diagnostics_returns_only_strings(
         assert isinstance(key, str)
         assert isinstance(value, str), f"Value for {key} is not a string: {type(value)}"
 
+
 @patch("ttp.system_info.subprocess.run")
-@patch("ttp.system_info._get_service_name", return_value="tor")
-@patch("ttp.system_info.dns.detect_dns_mode", return_value="resolvectl")
 @patch("ttp.system_info.tor_control.get_controller", return_value=None)
 @patch("ttp.system_info.state.read_lock", return_value=None)
 @patch(
@@ -117,7 +110,7 @@ def test_collect_diagnostics_returns_only_strings(
     },
 )
 def test_collect_diagnostics_includes_selinux_info(
-    mock_detect, mock_read, mock_ctrl, mock_dns, mock_svc, mock_run
+    mock_detect, mock_read, mock_ctrl, mock_run
 ):
     """It should include SELinux module status in the diagnostic output."""
     mock_run.return_value = MagicMock(stdout="standard output", returncode=0)

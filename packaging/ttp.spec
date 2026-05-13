@@ -1,6 +1,4 @@
-# ══════════════════════════════════════════════════════════════════════
-# TTP — RPM Spec File
-# ══════════════════════════════════════════════════════════════════════
+# TTP - RPM Spec File
 #
 # This is the recipe that rpmbuild uses to create the .rpm package.
 # It defines what to build, how to build it, what files to include,
@@ -15,7 +13,6 @@
 #   %post     - Runs after installation (loads SELinux module)
 #   %preun    - Runs before removal (unloads SELinux module)
 #   %files    - Lists every file the package owns
-# ══════════════════════════════════════════════════════════════════════
 
 Name:           transparent-tor-proxy
 Version:        @@VERSION@@

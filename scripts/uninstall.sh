@@ -1,11 +1,9 @@
 #!/bin/bash
-# ══════════════════════════════════════════════════════════════════════
-# TTP — Universal Uninstaller
-# ══════════════════════════════════════════════════════════════════════
+# TTP - Universal Uninstaller
 #
 # This script completely removes TTP from the system, reversing
 # everything that install.sh did. It is safe to run even if TTP
-# is currently active — it will stop the session first.
+# is currently active - it will stop the session first.
 #
 # Removal steps:
 #   1. Stop any active TTP session (restores firewall and DNS).
@@ -14,7 +12,6 @@
 #
 # Usage:
 #   sudo ./scripts/uninstall.sh
-# ══════════════════════════════════════════════════════════════════════
 
 # Ensure the script is run as root.
 if [ "$EUID" -ne 0 ]; then

@@ -1,15 +1,19 @@
+<p align="center">
+  <img src="assets/icon.png" width="200" alt="TTP Logo">
+</p>
+
 <h1 align="center">
-  <br>
   TTP - Transparent Tor Proxy
-  <br>
 </h1>
 
 <h4 align="center">A Linux CLI tool that transparently routes <b>all system traffic</b> through the Tor network using nftables.</h4>
 
 <p align="center">
+  <a href="https://github.com/sponsors/onyks-os"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-ff69b4?style=for-the-badge&logo=githubsponsors" alt="Sponsor"></a>
   <img src="https://img.shields.io/badge/OS-Linux-blue?style=for-the-badge&logo=linux" alt="Linux">
   <img src="https://img.shields.io/badge/Python-3.10+-yellow?style=for-the-badge&logo=python" alt="Python">
-  <img src="https://github.com/onyks-os/TransparentTorProxy/actions/workflows/ci.yml/badge.svg" alt="CI Status">
+  <a href="https://github.com/onyks-os/TransparentTorProxy/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/onyks-os/TransparentTorProxy/ci.yml?style=for-the-badge&logo=github" alt="CI Status"></a>
+  <a href="https://pypi.org/project/transparent-tor-proxy/"><img src="https://img.shields.io/pypi/dm/transparent-tor-proxy?style=for-the-badge&logo=pypi" alt="PyPI - Downloads"></a>
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </p>
 
@@ -30,7 +34,7 @@
 
 ---
 
-No per-application setup needed — just `sudo ttp start` and **every connection** goes through Tor.
+No per-application setup needed - just `sudo ttp start` and **every connection** goes through Tor.
 
 > [!CAUTION]
 > TTP is a tool designed to aid privacy by routing traffic through Tor. However, no tool can guarantee 100% anonymity. Your safety also depends on your behavior (e.g., using a regular browser vs. Tor Browser, signing into accounts, etc.). Always use TTP as part of a multi-layered security strategy.
@@ -50,28 +54,18 @@ We are actively looking for developers to join the TTP project! Whether you are 
 
 If you want to contribute to making transparent proxying safer and more robust, please check out our [Contributing Guidelines](CONTRIBUTING.md) or dive right into the [Issues](https://github.com/onyks-os/TransparentTorProxy/issues).
 
----
-
-<div align="center">
-
-### Support the Project
-
-If you find **TTP** useful, please consider giving it a **Star** on GitHub!  
-It helps others discover the tool and motivates further development.
-
-[![GitHub stars](https://img.shields.io/github/stars/onyks-os/TransparentTorProxy?style=social)](https://github.com/onyks-os/TransparentTorProxy)
-
-</div>
-
 ## Features
 
-* **System-wide transparent proxy** - all TCP traffic is redirected to Tor's TransPort, all DNS queries go through Tor's DNSPort.
-* **DNS leak prevention** - dual-mode DNS management (`resolvectl` / `resolv.conf` fallback) with symlink-aware detection.
+* **Volatile Standard Core** - Fully volatile runtime. All session data, locks, and temporary configs are stored in `tmpfs` (/run/ttp), wiped automatically on reboot.
+* **Pre-flight Safety Check** - Verifies sufficient `tmpfs` space before execution to prevent out-of-memory crashes mid-setup.
+* **DNS leak prevention** - Stateless `mount --bind` overlay strategy for `/etc/resolv.conf`, with automatic stale mount cleanup for absolute idempotency.
 * **IPv6 leak prevention** - all outgoing IPv6 is blocked to avoid ISP-level leaks.
-* **Crash-safe** - a lock file tracks session state; even after `kill -9` or a power outage, the next run detects the orphaned session and restores the network.
+* **Graceful Teardown** - On stop, TTP sends a cryptographic `SHUTDOWN` signal to Tor, ensuring all circuits are closed cleanly before the firewall rules are removed to prevent cleartext `RST` packet leaks.
+* **Native Tor Service Management** - Tor is managed via a dedicated volatile `ttp-tor.service` unit, ensuring zero interference with the system's own Tor service and no sandboxing issues.
 * **Atomic firewall rules** - `nftables` rules are loaded with `nft -f` (all-or-nothing), avoiding dangerous intermediate states.
 * **IP rotation** - `ttp refresh` requests a new Tor circuit for a fresh exit IP.
-* **Log rotation** - Automatic rotation of `/var/log/ttp.log` (5MB limit) to prevent disk saturation.
+* **Volatile Logging** - Logs stored in `/run/ttp/ttp.log` (1MB limit) to ensure no forensic traces remain on disk.
+* **Persistent Entry Guards** - `DataDirectory /var/lib/tor/ttp/` preserves Entry Guards across runs for fast bootstrap (~3 seconds).
 * **Firewalld detection** - Warns Fedora/RHEL users if `firewalld` is active to prevent rule conflicts.
 * **SELinux optimization** - Compiles a custom SELinux policy from source (`.te`) on Fedora/RHEL to allow Tor to bind to necessary ports. No opaque binaries shipped.
 * **Multi-distro** - auto-detects `apt-get`, `pacman`, `dnf`, and `zypper` for Tor installation. Handles Debian multi-instance services (`tor@default`), Fedora (`toranon` user), and more.
@@ -79,7 +73,7 @@ It helps others discover the tool and motivates further development.
 
 ## Requirements
 
-* **Linux** with systemd *(tested on Debian 12+, Ubuntu 22.04+, Fedora 40+, Arch Linux)*
+* **Linux with systemd** *(tested on Debian, Ubuntu, Fedora, Arch)*
 * **Python 3.10+**
 * **nftables** *(pre-installed on most modern distros)*
 * **Root privileges** *(required for firewall and DNS modifications)*
@@ -92,8 +86,8 @@ Choose the method that best fits your needs. **Native packages are strongly reco
 
 Installing via native packages ensures that all system dependencies (`tor`, `nftables`) and kernel-level optimizations (SELinux) are managed by your OS package manager.
 
-* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.2.0_all.deb`
-* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.2.0-1.fc43.noarch.rpm`
+* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.3.0_all.deb`
+* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.3.0-1.fc43.noarch.rpm`
 * **Arch Linux**: `cd packaging && makepkg -si`
 
 ---
@@ -164,9 +158,11 @@ sudo ttp start [--interface <iface>] [--bootstrap-timeout <seconds>]
 > Use `--bootstrap-timeout` (default: 180s) if you are on a slow network or Tor takes a long time to connect.
 
 ```text
-[TTP] Detecting Tor... found (v0.4.9.6), service active (user: debian-tor).
+[TTP] Detecting Tor... found (v0.4.9.6), managed via system service (user: debian-tor).
+[TTP] Initializing volatile runtime in /run/ttp...
+[TTP] Restarting TTP Tor service...
 [TTP] Stateless nftables rules applied (Table: inet ttp).
-[TTP] DNS set via resolvectl on interface ens3.
+[TTP] DNS set via overlay on interface ens3.
 [TTP] Waiting for Tor to bootstrap...
 [TTP] Tor is 100% bootstrapped.
 [TTP] Verifying Tor routing...
@@ -195,7 +191,7 @@ sudo ttp stop [--restore-only]
 sudo ttp refresh
 ```
 
-*Sends `NEWNYM` to Tor via the control interface — all active circuits are rotated and you get a new exit IP.*
+*Sends `NEWNYM` to Tor via the control interface - all active circuits are rotated and you get a new exit IP.*
 
 ### Check status
 
@@ -240,7 +236,7 @@ ttp check-leak [-v]
 sudo ttp logs
 ```
 
-*Streams real-time logs from the Tor daemon using `journalctl`. Automatically identifies the correct service unit (e.g., `tor@default`).*
+*Streams real-time logs from the volatile log file at `/run/ttp/ttp.log`.*
 
 ## Manual Leak Verification
 
@@ -259,7 +255,7 @@ To confirm that the tunnel is working correctly and no leaks are present:
    dig +short A check.torproject.org
    ```
 
-2. **DNS Leak Test (Terminal):**
+1. **DNS Leak Test (Terminal):**
 
    ```bash
    # This TXT query SHOULD return an EMPTY output
@@ -268,7 +264,7 @@ To confirm that the tunnel is working correctly and no leaks are present:
 
    *Note: An empty output is the **expected** behavior under Tor. Tor's transparent resolver does not support TXT records; if this command returns your real ISP's IP, you have a DNS leak.*
 
-3. **Web-based Verification:**
+1. **Web-based Verification:**
    Always perform additional tests on [dnsleaktest.com](https://www.dnsleaktest.com) and [ipleak.net](https://ipleak.net).
 
 ### Full Uninstallation
@@ -281,11 +277,12 @@ sudo ./scripts/uninstall.sh
 
 ## How It Works
 
-1. **Detection** — checks if Tor is installed, which systemd service runs the daemon, and dynamically detects the Tor user.
-2. **Installation** — if Tor is missing, detects the system's package manager and installs it automatically.
-3. **Configuration** — sanitizes `torrc`, validates with `tor --verify-config`, restarts the correct service.
-4. **Firewall** — generates `nftables` rules in a dedicated `inet ttp` table:
-      * **Stateless approach** — no system backups needed; cleanup is an atomic `nft destroy table`.
+1. **Detection** - checks if Tor is installed and identifies the appropriate user to run the process.
+2. **Installation** - if Tor is missing, detects the system's package manager and installs it automatically.
+3. **Configuration** - generates a dynamic, volatile `torrc` in `/run/tor/ttp/torrc` and installs it as the system config.
+4. **Tor Management** - creates a dedicated volatile `ttp-tor.service` systemd unit and starts Tor with the optimized config.
+5. **Firewall** - generates `nftables` rules in a dedicated `inet ttp` table:
+      * **Stateless approach** - no system backups needed; cleanup is an atomic `nft destroy table`.
       * **Multi-Chain Protection**:
           * `prerouting`: Intercepts traffic if TTP is used as a gateway.
           * `output` (NAT): Redirects local TCP/DNS to Tor's ports.
@@ -298,10 +295,10 @@ sudo ./scripts/uninstall.sh
           5. **Redirect all TCP** to Tor's TransPort (`:9040`).
           6. **Drop all IPv6** output to prevent leaks.
           7. **Kill-Switch (Reject)**: Terminate any cleartext traffic that bypassed redirection (e.g., pre-existing connections).
-5. **DNS** — redirects DNS resolution to `127.0.0.1` via `resolvectl` or `/etc/resolv.conf`.
-6. **Bootstrap** — waits for Tor to reach 100% bootstrap via the control interface.
-7. **Verification** — confirms traffic is routed through Tor via multiple endpoints (`check.torproject.org`, `ipify`, `ifconfig.me`) for resilience.
-8. **State** — writes a JSON lock file at `/var/lib/ttp/ttp.lock` for crash recovery.
+6. **DNS** - redirects DNS resolution using a `mount --bind` overlay on `/etc/resolv.conf`.
+7. **Bootstrap** - waits for Tor to reach 100% bootstrap via the control interface.
+8. **Verification** - confirms traffic is routed through Tor via multiple endpoints (`check.torproject.org`, `ipify`, `ifconfig.me`).
+9. **State** - writes a JSON lock file at `/run/ttp/ttp.lock` (volatile) for recovery.
 
 ## Crash Recovery
 
@@ -309,9 +306,9 @@ TTP is designed to always restore your network, even in edge cases:
 
 | Scenario                 | What happens                                                                                             |
 | :----------------------- | :------------------------------------------------------------------------------------------------------- |
-| `ttp stop`               | **Normal cleanup**: firewall restored, DNS restored, lock deleted                                        |
-| Ctrl+C / `kill`          | Signal handler catches `SIGINT`/`SIGTERM` and runs cleanup before exit                                   |
-| `kill -9` / Power Outage | Next `ttp start` detects the orphaned lock file and auto-restores the network                            |
+| `ttp stop`               | **Normal cleanup**: graceful Tor shutdown, firewall restored, DNS restored, lock deleted                 |
+| Ctrl+C / `kill`          | Signal handler catches `SIGINT`/`SIGTERM` and runs normal cleanup before exit                            |
+| `kill -9` / Power Outage | Next `ttp start` detects the orphaned lock file, clears any stale mount stacks, and auto-restores        |
 | Manual emergency         | Run `sudo ./scripts/restore-network.sh` to flush all nftables rules, reset DNS, and delete the lock file |
 
 ## Known Behavior
@@ -342,9 +339,9 @@ TTP uses a **Makefile** to automate and standardize the testing pipeline. This e
 | `make test`               | Runs fast **Unit Tests** locally (no root needed, fully mocked).          |
 | `make integration-debian` | Runs full system tests inside a privileged **Docker** container (Debian). |
 | `make integration-all`    | Runs integration tests for all supported distros (Debian, Fedora, Arch).  |
-| **`make verify`**         | **The Gold Standard**: Runs Unit Tests + All Integration Tests.           |
-| `make build`              | **Packaging**: Generates native `.deb` and `.rpm` packages.                |
-| `make clean`              | **Cleanup**: Removes all build artifacts, caches, and temp files.          |
+| `make verify`         | Runs Unit Tests + All Integration Tests.           |
+| `make build`              | Generates native `.deb` and `.rpm` packages.                |
+| `make clean`              | Removes all build artifacts, caches, and temp files.          |
 
 ### Advanced: Real-World VM Testing
 
@@ -382,7 +379,9 @@ sudo ttp diagnose
 │   ├── restore-network.sh  # Emergency network recovery script
 │   ├── verify.sh           # CI/CD verification script
 │   └── vm/                 # QEMU VM management scripts
+│   └── vms/                # .iso and .qcow2 files
 ├── assets/                 # Branding and demo assets
+│   ├── favicon/            # Project favicons and webmanifest
 │   └── gif/                # Demo animations
 ├── packaging/              # Build scripts for .deb, .rpm, and Arch packages
 │   ├── build_deb.sh
@@ -413,6 +412,19 @@ Contributions are what make the open-source community such an amazing place to l
 
 * Check out our [Contributing Guidelines](CONTRIBUTING.md) to get started.
 * Please review our [Security Policy](SECURITY.md) before reporting vulnerabilities.
+
+## Support
+
+This project is maintained in my free time, and donations are highly appreciated.
+
+<div align="center">
+
+Also, if you find **TTP** useful, please consider giving it a **Star**!  
+It helps others discover the tool and motivates further development.
+
+[![GitHub stars](https://img.shields.io/github/stars/onyks-os/TransparentTorProxy?style=social)](https://github.com/onyks-os/TransparentTorProxy)
+
+</div>
 
 ## License
 

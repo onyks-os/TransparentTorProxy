@@ -1,7 +1,5 @@
 #!/bin/bash
-# ══════════════════════════════════════════════════════════════════════
-# TTP — Emergency Network Restore
-# ══════════════════════════════════════════════════════════════════════
+# TTP - Emergency Network Restore
 #
 # This script is a safety net. Use it ONLY when `sudo ttp stop`
 # doesn't work (e.g., the Python venv is broken, the binary was
@@ -13,13 +11,12 @@
 #   3. Resets /etc/resolv.conf to a sane default (Cloudflare 1.1.1.1).
 #   4. Deletes the TTP lock file so the next `ttp start` works cleanly.
 #
-# WARNING: Step 1 is destructive — it removes ALL firewall rules,
+# WARNING: Step 1 is destructive - it removes ALL firewall rules,
 # not just TTP's. If you have custom nftables rules from other
 # software, they will be lost. In most desktop setups this is fine.
 #
 # Usage:
 #   sudo ./scripts/restore-network.sh
-# ══════════════════════════════════════════════════════════════════════
 
 if [ "$EUID" -ne 0 ]; then
   echo "Error: Please run as root (use: sudo ./scripts/restore-network.sh)"

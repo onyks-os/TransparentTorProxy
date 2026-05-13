@@ -1,7 +1,5 @@
 #!/bin/bash
-# ══════════════════════════════════════════════════════════════════════
-# TTP — Pre-release Verification Suite
-# ══════════════════════════════════════════════════════════════════════
+# TTP - Pre-release Verification Suite
 
 # Configuration
 TOTAL_EST_TIME=480 # 8 minutes in seconds
@@ -24,7 +22,7 @@ done
 # Start time tracking
 START_TIME=$SECONDS
 
-# ── Helpers ──────────────────────────────────────────────────────────
+# Helpers
 
 print_progress() {
     local elapsed=$(( SECONDS - START_TIME ))
@@ -88,7 +86,7 @@ run_step() {
     fi
 }
 
-# ── Pipeline ─────────────────────────────────────────────────────────
+# Pipeline steps
 
 echo -e "\n${YELLOW}TTP Pre-release Verification Pipeline${NC}\n"
 

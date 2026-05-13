@@ -1,6 +1,4 @@
-# ══════════════════════════════════════════════════════════════════════
-# TTP — Arch Linux PKGBUILD
-# ══════════════════════════════════════════════════════════════════════
+# TTP - Arch Linux PKGBUILD
 #
 # This file tells makepkg how to build a native Arch Linux package
 # (.pkg.tar.zst) from the TTP source code.
@@ -19,13 +17,12 @@
 #
 # Usage (AUR):
 #   Upload PKGBUILD + .SRCINFO to aur.archlinux.org
-# ══════════════════════════════════════════════════════════════════════
 
 # Define the package name as it will appear in the Arch package manager (pacman).
 pkgname=transparent-tor-proxy
 
 # The version of the software. This should match the version in pyproject.toml.
-pkgver=0.2.0
+pkgver=0.3.0
 
 # The release number. If you update the PKGBUILD but the software version (x.y.z) 
 # hasn't changed, you increment this to tell users to update the package.

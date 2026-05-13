@@ -1,7 +1,8 @@
 # TTP - Technical Architecture & Design
 
 **MVP Language:** Python 3  
-**Target OS:** Linux with systemd *(Debian 12+, Ubuntu 22.04+, Fedora 40+, Arch Linux)*
+
+* **Target OS:** Any systemd-based Linux distribution *(Debian, Ubuntu, Fedora, Arch, etc.)*
 
 ---
 
@@ -13,9 +14,11 @@
 4. [Command Line Interface](#4-command-line-interface)
 5. [Dependencies](#5-dependencies)
 6. [Project Structure](#6-project-structure)
-7. [Native Distribution Support](#7-native-distribution-support)
-8. [Development and Test Environment](#8-development-and-test-environment)
-9. [Unit Tests - Specifications](#9-unit-tests--specifications)
+7. [Branding & Assets](#7-branding--assets)
+8. [Deployment & Installation Logic](#8-deployment--installation-logic)
+9. [Packaging Pipeline](#9-packaging-pipeline)
+10. [Development and Test Environment](#10-development-and-test-environment)
+11. [Unit Tests - Specifications](#11-unit-tests--specifications)
 
 ---
 
@@ -25,7 +28,7 @@
 
 Unlike similar tools (TorGhost, Anonsurf), TTP is designed to:
 
-* Work on any modern Linux distribution with systemd.
+* Work on any modern Linux distribution with systemd and nftables.
 * Be **crash-safe**: the network state is always restored.
 * Be readable and maintainable.
 * Be distributable as native system packages (`.deb`, `.rpm`, `PKGBUILD`).
@@ -41,8 +44,8 @@ The project is divided into independent Python modules. Each module has a single
 | `tor_detect.py`  | **Detection**    | Checks Tor presence, status, config, user, and SELinux state.                    |
 | `tor_install.py` | **Installation** | Installs Tor via PM, manages SELinux policies, configures `torrc`.               |
 | `firewall.py`    | **Firewall**     | Generates and applies `nftables` rules in isolated `inet ttp` table (Stateless). |
-| `dns.py`         | **DNS**          | Manages DNS via `resolvectl` or `resolv.conf`; performs Hard-Reset on stop.      |
-| `state.py`       | **State**        | Manages lock file and emergency rollback logic.                                  |
+| `dns.py`         | **DNS**          | Manages DNS via Kernel-level `mount --bind` overlay.                             |
+| `state.py`       | **State**        | Manages volatile lock file in `/run/ttp` and recovery logic.                     |
 | `tor_control.py` | **Control**      | Encapsulates Tor interaction (Stem, Bootstrap, IP Check).                        |
 | `system_info.py` | **Diagnostic**   | Gathers system state (torrc, rules, logs) for debugging.                         |
 | `cli.py`         | **Interface**    | Typer entry point: start, stop, refresh, status, check, logs, etc.               |
@@ -50,18 +53,18 @@ The project is divided into independent Python modules. Each module has a single
 ### 2.1 Execution Flow - `start`
 
 1. **cli**: Verifies root execution.
-2. **state**: Checks for existing/orphaned locks.
+2. **state**: Checks for existing/orphaned locks and verifies `tmpfs` free space (**pre-flight check**).
 3. **detect**: Verifies Tor installation and config.
 4. **install**: Installs/configures Tor if missing. Performs **SELinux optimization** on Fedora.
 5. **firewall**: Generates and atomically applies rules in isolated `inet ttp` table.
-6. **dns**: Modifies active interface DNS.
-7. **state**: Writes lock file (PID, timestamp, backups).
-8. **cli**: Waits for bootstrap and verifies IP via `check.torproject.org`.
+6. **dns**: Clears any stale overlays (idempotency guard), then modifies active interface DNS using `mount --bind` overlay on `/etc/resolv.conf`.
+7. **state**: Initializes volatile runtime in `/run/ttp` and writes lock file.
+8. **cli**: Waits for Tor bootstrap via ControlSocket, verifies IP, and returns to the prompt.
 
 ### 2.2 Execution Flow - `stop` / crash
 
 > [!NOTE]  
-> **Normal:** `ttp stop` -> reads lock -> restores firewall/DNS -> deletes lock.
+> **Normal:** `ttp stop` -> graceful Tor `SHUTDOWN` -> restores firewall/DNS -> deletes lock.
 
 > [!TIP]
 > **Emergency Restore:** `ttp stop --restore-only` bypasses session checks and forces network cleanup. Useful if TTP crashed and the lock file was lost.
@@ -85,10 +88,9 @@ Sends `NEWNYM` signal via Stem. Tor changes circuits. Traffic flows normally dur
 Module functionality:
 
 * Installed? (`shutil.which`)
-* Running? (`systemctl is-active` + `pgrep -x`)
-* Configured? (Checks `TransPort`, `DNSPort`, `ControlPort`)
+* Running? (`pgrep -x tor`)
+* Configured? (Checks `TransPort`, `DNSPort`, `ControlSocket`)
 * User? (Live inspection `ps -eo user:32,comm` -> `/etc/passwd` -> fallback)
-* Service? (`tor@default` vs `tor`)
 * SELinux? (Checks if OS is Fedora-family and if SELinux is `Enforcing`)
 * **Firewalld?** (Detects if `firewalld` is active to warn about potential `nftables` conflicts).
 
@@ -99,9 +101,9 @@ Intervenes if detection fails or system needs optimization.
 1. Detects package manager (`apt-get`, `pacman`, `dnf`, `zypper`).
 2. Installs `tor`.
 3. **SELinux Optimization**: If on Fedora and enforcing, compiles the custom SELinux policy on-the-fly. The policy source (`.te`) is stored as an internal package resource and accessed via `importlib.resources`.
-4. Sanitizes `torrc` (removes malformed `HashedControlPassword`, adds missing options).
-5. Validates via `tor --verify-config`.
-6. Restarts service.
+4. Generates a volatile `torrc` in `/run/tor/ttp/torrc`.
+5. Writes a dedicated `ttp-tor.service` unit to `/run/systemd/system/` (volatile, evaporates on reboot).
+6. Starts the TTP Tor instance via `systemctl start ttp-tor`.
 
 ### 3.3 `firewall.py`
 
@@ -116,18 +118,22 @@ Generates rules applied atomically via `nft -f` into the dedicated `inet ttp` ta
 
 ### 3.4 `dns.py`
 
-* **Mode 1 (resolvectl):** Preferred. Uses `resolvectl dns <interface> 127.0.0.1` and sets routing domain `~.` to intercept all queries.
-* **Hard-Reset Strategy:** During `stop`, it performs `resolvectl revert` followed by `systemctl restart systemd-resolved` to purge any lingering state.
-* **Mode 2 (resolv.conf):** Fallback. Overwrites and restores `/etc/resolv.conf` content.
+Implements a **stateless overlay** by bind-mounting a volatile resolver file from `/run/ttp/resolv.conf` over `/etc/resolv.conf`.
+
+* **Symlink Check:** Automatically resolves `/etc/resolv.conf` if it's a symlink (common on systemd systems) to apply the mount to the real physical target.
+* **Mount Guard:** Before applying the overlay, it parses `/proc/mounts` and iteratively unmounts any stale layers left by previous unclean exits, ensuring absolute idempotency.
+* **Non-destructive:** Does not alter disk metadata; the original file is preserved "under" the mount.
+* **Lazy Teardown:** Uses `umount -l` (lazy) on shutdown to ensure immediate release even if processes are currently reading the file.
+* **Volatile:** Being a `mount --bind` on a `tmpfs` file, it evaporates on hard reboot.
 * **Architectural Limit (DoH/DoT):** DNS-over-HTTPS (port 443) and DNS-over-TLS (port 853) traffic is intercepted by the TCP NAT and anonymized via Tor. However, since these protocols use encrypted wrappers, they bypass Tor's internal resolver. While the traffic remains anonymous, the queries are not handled by the Tor daemon itself, which may lead to fingerprinting if using specific providers (e.g., NextDNS).
 
 ### 3.5 `state.py`
 
-Manages `/var/lib/ttp/ttp.lock` (JSON) containing PID, timestamps, and backup paths. Detects orphaned sessions.
+Manages `/run/ttp/ttp.lock` (JSON) on a volatile `tmpfs` mount. This ensures that session state disappears on power loss, preventing stale lock issues. Contains PID, timestamps, and metadata. Detects orphaned sessions. Also handles the **tmpfs pre-flight check** (`check_tmpfs_space`) to ensure at least 5MB of RAM is free before starting, preventing `ENOSPC` crashes mid-setup.
 
 ### 3.6 `cli.py`
 
-Typer CLI exposing: `start`, `stop`, `refresh`, `status`, `diagnose`, `uninstall`. Primary controller for execution flow, zero network logic.
+Typer CLI acting as the primary orchestrator. It manages the **TTP Tor service lifecycle** via a dedicated `ttp-tor.service` unit, handling signals (SIGINT/SIGTERM) to ensure clean network restoration. Exposes: `start`, `stop`, `refresh`, `status`, `diagnose`, `uninstall`.
 
 ### 3.7 `tor_control.py`
 
@@ -136,6 +142,7 @@ Encapsulates all communication with the Tor daemon.
 * Connects to Tor's ControlPort/ControlSocket.
 * Monitors bootstrap progress.
 * Requests new circuits via `Signal.NEWNYM`.
+* Executes graceful teardown via `Signal.SHUTDOWN` to close circuits cryptographically before network restoration.
 * Verifies exit IP via multiple endpoints for resilience (`check.torproject.org`, `ipify`, `ifconfig.me`).
 
 ### 3.8 `system_info.py`
@@ -143,10 +150,10 @@ Encapsulates all communication with the Tor daemon.
 Pure data gathering module, decoupled from UI.
 
 * Reads `/etc/os-release`.
-* Captures `systemctl status tor`.
+* Captures Tor service status via `systemctl status`.
 * Greps active `torrc` settings.
 * Captures `nft list ruleset`.
-* Captures DNS state via `resolvectl`.
+* Captures DNS state from `/etc/resolv.conf` overlay.
 * Returns results as a flat dictionary for the CLI to render.
 
 ### 3.9 Architecture Graph & Module Interactions
@@ -188,7 +195,8 @@ graph TD
     CLI -->|2. Prepares environment| INSTALL
     CLI -->|3. Injects routing| FIREWALL
     CLI -->|4. Redirects queries| DNS
-    CLI -->|5. Verifies & rotates IP| CONTROL
+    CLI -->|5. Starts ttp-tor| TOR
+    CLI -->|6. Verifies & rotates IP| CONTROL
     CLI -->|Generates reports| SYSINFO
 
     %% Inter-module Dependencies
@@ -199,11 +207,12 @@ graph TD
     SYSINFO -->|Checks Bootstrap| CONTROL
 
     %% System Interactions
-    INSTALL -->|Installs / Modifies torrc| KERNEL
+    INSTALL -->|Generates volatile torrc & unit| KERNEL
     FIREWALL -->|Creates 'inet ttp' table| KERNEL
-    DNS -->|Modifies systemd-resolved| KERNEL
+    DNS -->|mount --bind overlay| KERNEL
     DETECT -->|Scans processes & OS| KERNEL
-    CONTROL -->|ControlPort / Socket| TOR
+    TOR -->|Managed via systemctl| KERNEL
+    CONTROL -->|ControlSocket / Port| TOR
 ```
 
 ---
@@ -243,31 +252,45 @@ graph TD
 
 ---
 
-## 7. Deployment & Installation Logic
+## 7. Branding & Assets
+
+TTP follows a consistent visual identity to ensure professional representation across documentation and web-based platforms.
+
+| Asset | Path | Usage |
+| :--- | :--- | :--- |
+| **Project Logo** | `assets/icon.png` | Main branding, README header, and social previews. |
+| **Favicon Set** | `assets/favicon/` | Icons for web documentation and browser-based interfaces. |
+| **Web Manifest** | `assets/favicon/site.webmanifest` | PWA and mobile-friendly metadata. |
+
+The brand color palette is primarily **Black (#000000)** and **Cyan (#22d3ee)**, reflecting the tool's focus on privacy and high-performance networking.
+
+---
+
+## 8. Deployment & Installation Logic
 
 TTP supports multiple installation methods, ranked by their ability to handle system-level dependencies and security policies.
 
-### 7.1 Hierarchy of Installation
+### 8.1 Hierarchy of Installation
 
 1. **Native Packages (`.deb`, `.rpm`, `PKGBUILD`) [Recommended]**: The most robust method. The OS package manager handles `tor` and `nftables` installation and ensures that SELinux policies (on Fedora) are registered at the kernel level.
 2. **Universal Source Script (`scripts/install.sh`)**: An "intelligent" installer that creates an isolated virtual environment in `/opt/ttp`. It detects the host OS and, if SELinux is *Enforcing*, it compiles the `ttp_tor_policy.te` policy module on the fly.
 3. **Python Packaging (`pipx`, `pip`) [Fallback]**: Standard Python distribution. While convenient, this method cannot install system dependencies or compile SELinux policies.
 
-### 7.2 PEP 668 & System Stability
+### 8.2 PEP 668 & System Stability
 
 Modern Linux distributions (Ubuntu 23.04+, Debian 12+) implement **PEP 668** (Externally Managed Environments), which blocks global `pip install`.
 
 * TTP recommends using **pipx** for a clean, isolated Python-only install.
 * Manual venv management is supported for advanced users.
 
-### 7.3 The SELinux Factor
+### 8.3 The SELinux Factor
 
 A key architectural feature is the **dynamic SELinux policy**. Because Tor is restricted by default on RHEL/Fedora, it cannot bind to ports like 9040 (TransPort) without specific permissions.
 
 * The **Native RPM** and the **Source Installer** both handle this by compiling a type-enforcement file into a binary policy module.
 * **pip/pipx** installations will likely fail on Fedora unless the user manually handles SELinux or sets it to *Permissive* mode.
 
-### 7.4 Uninstallation Safety
+### 8.4 Uninstallation Safety
 
 Because TTP modifies core network settings (Firewall and DNS), uninstallation requires care.
 
@@ -277,17 +300,19 @@ Because TTP modifies core network settings (Firewall and DNS), uninstallation re
 
 ---
 
-## 8. Packaging Pipeline
+## 9. Packaging Pipeline
 
 Building system packages is handled by scripts in the `packaging/` directory:
 
+* `release.sh`: Orchestrates the full release: Python wheel/sdist build + `twine check`, cleanup of prior artifacts, `.deb` (via `build_deb.sh`), `.rpm` when `rpmbuild` is available (via `build_rpm.sh`), and `SHA256SUMS.txt` for the produced packages. Invoked by `make build`.
+* Step 0 runs `python -m build` with `TMPDIR` set **only for that command** to a project-local `.build_tmp` directory on disk. That avoids heavy use of RAM-backed `/tmp` on memory-constrained machines. The variable is not exported to the rest of the script so downstream tools (for example `dpkg-deb` inside `build_deb.sh`) keep using the system default temporary directory.
 * `build_deb.sh`: Generates a Debian archive.
 * `build_rpm.sh`: Generates a Fedora RPM (requires `rpm-build`).
 * `PKGBUILD`: Standard Arch build recipe.
 
 ---
 
-## 9. Development and Test Environment
+## 10. Development and Test Environment
 
 ### QEMU VM Configuration
 
@@ -316,14 +341,14 @@ TTP employs a `Makefile` in the root directory to provide a unified entry point 
 
 ---
 
-## 10. Unit Tests - Specifications
+## 11. Unit Tests - Specifications
 
 *(Tests run without root, using `unittest.mock`)*
 
 * **`test_tor_detect.py`**: Verifies dictionary output across varying torrc and process states.
 * **`test_firewall.py`**: Asserts DNS redirect appears BEFORE loopback accept (critical). Verifies IPv6 drop.
-* **`test_dns.py`**: Asserts correct mode detection (resolvectl vs resolv.conf).
+* **`test_dns.py`**: Asserts correct mount --bind overlay and lazy umount.
 * **`test_state.py`**: Asserts lock creation, reading, and orphan detection.
 * **`test_cli.py`**: Verifies command orchestration and UI flow.
 * **`test_tor_control.py`**: Verifies Tor daemon interaction and IP checking logic.
-* **`test_tor_install.py`**: Asserts correct PM selection and torrc sanitization.
+* **`test_tor_install.py`**: Asserts correct PM selection, torrc generation, and service management.

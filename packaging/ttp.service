@@ -2,11 +2,10 @@
 [Unit]
 Description=Transparent Tor Proxy (TTP)
 
-# Ordering: This tells systemd not to start TTP until the network is up
-# AND the Tor daemon is running. This prevents errors if TTP tries to route
-# traffic to Tor before Tor itself has started. 
-# (Includes 'tor@default.service' for Debian multi-instance compatibility).
-After=network.target tor.service tor@default.service
+# Ordering: This tells systemd not to start TTP until the network is up.
+# TTP v0.3.0 manages the Tor service via systemctl, so the Tor daemon
+# will be started as part of the TTP startup flow.
+After=network.target
 
 # The [Service] section defines how the program is executed.
 [Service]
