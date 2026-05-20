@@ -81,6 +81,8 @@ def write_lock(
     *,
     pid: int | None = None,
     dns_backup: Any = None,
+    transport_port: int = 9041,
+    dns_port: int = 9054,
 ) -> None:
     """Write the session lock file with the current state.
 
@@ -90,6 +92,10 @@ def write_lock(
         PID to record.  Defaults to the current process.
     dns_backup:
         Original DNS data (resolv.conf mount target dictionary).
+    transport_port:
+        The customized or default TransPort port.
+    dns_port:
+        The customized or default DNSPort port.
     """
     try:
         ensure_runtime_dir()
@@ -97,6 +103,8 @@ def write_lock(
             "pid": pid if pid is not None else os.getpid(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "dns_backup": dns_backup,
+            "transport_port": transport_port,
+            "dns_port": dns_port,
         }
         LOCK_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     except OSError as e:

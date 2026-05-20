@@ -63,7 +63,7 @@ def test_start_tor_service(mock_generate, mock_write_unit, mock_run):
 
     start_tor_service("tor")
 
-    mock_generate.assert_called_once_with("tor")
+    mock_generate.assert_called_once_with("tor", transport_port=9041, dns_port=9054)
     mock_write_unit.assert_called_once_with("tor")
     assert mock_run.call_count == 2
     mock_run.assert_any_call(

@@ -77,13 +77,27 @@ def test_empty_torrc_not_configured(tmp_path: Path):
 
 
 def test_correct_torrc_is_configured(tmp_path: Path):
-    """torrc with correct ports -> is_configured = True."""
+    """torrc with correct default ports -> is_configured = True."""
     torrc = tmp_path / "torrc"
     torrc.write_text(
         "TransPort 9041\nDNSPort 9054\nControlSocket /run/tor/ttp/control.sock\n"
     )
 
     assert _check_config(torrc) is True
+
+
+def test_custom_ports_configured(tmp_path: Path):
+    """torrc with custom ports -> is_configured = True when ports are passed or default fallback matches."""
+    torrc = tmp_path / "torrc"
+    torrc.write_text(
+        "TransPort 9060\nDNSPort 9070\nControlSocket /run/tor/ttp/control.sock\n"
+    )
+
+    # 1. False if we check with default ports
+    assert _check_config(torrc, transport_port=9041, dns_port=9054) is False
+
+    # 2. True if we check with correct custom ports
+    assert _check_config(torrc, transport_port=9060, dns_port=9070) is True
 
 
 # Binary not found detection

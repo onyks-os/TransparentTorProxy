@@ -57,8 +57,12 @@ def _check_running() -> bool:
         return False
 
 
-def _check_config(torrc_path: Path | None = None) -> bool:
-    """Return ``True`` if *torrc* contains ``TransPort 9041``, ``DNSPort 9054``, and a ``ControlSocket``."""
+def _check_config(
+    torrc_path: Path | None = None,
+    transport_port: int | None = None,
+    dns_port: int | None = None,
+) -> bool:
+    """Return ``True`` if *torrc* contains ``TransPort <port>``, ``DNSPort <port>``, and a ``ControlSocket``."""
     if torrc_path is None:
         torrc_path = TORRC_PATH
     try:
@@ -66,8 +70,22 @@ def _check_config(torrc_path: Path | None = None) -> bool:
     except OSError:
         return False
 
-    has_transport = bool(re.search(r"^\s*TransPort\s+9041\b", content, re.MULTILINE))
-    has_dnsport = bool(re.search(r"^\s*DNSPort\s+9054\b", content, re.MULTILINE))
+    if transport_port is None or dns_port is None:
+        from ttp import state
+        lock = state.read_lock()
+        if lock:
+            if transport_port is None:
+                transport_port = lock.get("transport_port", 9041)
+            if dns_port is None:
+                dns_port = lock.get("dns_port", 9054)
+        else:
+            if transport_port is None:
+                transport_port = 9041
+            if dns_port is None:
+                dns_port = 9054
+
+    has_transport = bool(re.search(rf"^\s*TransPort\s+{transport_port}\b", content, re.MULTILINE))
+    has_dnsport = bool(re.search(rf"^\s*DNSPort\s+{dns_port}\b", content, re.MULTILINE))
     has_control = bool(re.search(r"^\s*ControlSocket\s+", content, re.MULTILINE))
     return has_transport and has_dnsport and has_control
 
@@ -178,7 +196,10 @@ def is_firewalld_active() -> bool:
         return False
 
 
-def detect_tor() -> dict:
+def detect_tor(
+    transport_port: int | None = None,
+    dns_port: int | None = None,
+) -> dict:
     """Run all detection checks and return a summary dictionary.
 
     Returns
@@ -196,7 +217,7 @@ def detect_tor() -> dict:
     return {
         "is_installed": installed,
         "is_running": _check_running() if installed else False,
-        "is_configured": _check_config() if installed else False,
+        "is_configured": _check_config(transport_port=transport_port, dns_port=dns_port) if installed else False,
         "tor_user": _detect_tor_user(),
         "version": _get_version() if installed else "",
         "is_fedora": is_fedora_family(),

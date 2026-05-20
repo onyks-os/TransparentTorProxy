@@ -425,7 +425,12 @@ def test_restart_active_session(
     assert result.exit_code == 0
     mock_stop.assert_called_once()
     mock_sleep.assert_called_once_with(1)
-    mock_start.assert_called_once_with(interface="wlan0", bootstrap_timeout=300)
+    mock_start.assert_called_once_with(
+        interface="wlan0",
+        bootstrap_timeout=300,
+        transport_port=9041,
+        dns_port=9054,
+    )
 
 
 @patch("ttp.cli.start")
@@ -436,7 +441,12 @@ def test_restart_inactive_session(mock_euid, mock_read, mock_stop, mock_start):
     result = runner.invoke(app, ["restart"])
     assert result.exit_code == 0
     mock_stop.assert_not_called()
-    mock_start.assert_called_once_with(interface=None, bootstrap_timeout=180)
+    mock_start.assert_called_once_with(
+        interface=None,
+        bootstrap_timeout=180,
+        transport_port=9041,
+        dns_port=9054,
+    )
 
 
 # check
@@ -658,3 +668,167 @@ def test_start_tmpfs_check_fails(mock_euid, mock_read, mock_check):
     assert result.exit_code == 1
     assert "Pre-flight Failed" in result.output
     assert "Insufficient space" in result.output
+
+
+# Custom Ports and Validation Tests
+
+@patch("ttp.cli._is_port_in_use", return_value=False)
+@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.cli.firewall.apply_rules")
+@patch(
+    "ttp.cli.tor_install.ensure_tor_ready",
+    return_value={
+        "is_installed": True,
+        "is_running": True,
+        "is_configured": True,
+        "tor_user": "debian-tor",
+        "version": "0.4.8.10",
+    },
+)
+@patch("ttp.cli.tor_install.setup_selinux_if_needed")
+@patch("ttp.cli.state.write_lock")
+@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("ttp.cli.state.is_orphan", return_value=False)
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_start_custom_ports_success(
+    mock_euid,
+    mock_orphan,
+    mock_read,
+    mock_write,
+    mock_selinux,
+    mock_ensure,
+    mock_apply_fw,
+    mock_iface,
+    mock_apply_dns,
+    mock_verify,
+    mock_in_use,
+):
+    """start with custom valid ports -> propagates them down correctly."""
+    result = runner.invoke(app, ["start", "--transport-port", "9080", "--dns-port", "9090"])
+    assert result.exit_code == 0
+    assert "Session active" in result.output
+    
+    mock_ensure.assert_called_once_with(transport_port=9080, dns_port=9090)
+    mock_apply_fw.assert_called_once_with(tor_user="debian-tor", transport_port=9080, dns_port=9090)
+    mock_write.assert_called_once_with(dns_backup={"interface": "eth0"}, transport_port=9080, dns_port=9090)
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_start_invalid_transport_port(mock_euid):
+    """start with privileged or invalid transport port -> validation error."""
+    # Under 1024
+    result = runner.invoke(app, ["start", "-t", "80"])
+    assert result.exit_code == 1
+    assert "Invalid Port" in result.output
+    assert "between 1024 and 65535" in result.output
+
+    # Over 65535
+    result = runner.invoke(app, ["start", "-t", "70000"])
+    assert result.exit_code == 1
+    assert "Invalid Port" in result.output
+    assert "between 1024 and 65535" in result.output
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_start_invalid_dns_port(mock_euid):
+    """start with privileged or invalid dns port -> validation error."""
+    # Under 1024
+    result = runner.invoke(app, ["start", "-d", "53"])
+    assert result.exit_code == 1
+    assert "Invalid Port" in result.output
+    assert "between 1024 and 65535" in result.output
+
+    # Over 65535
+    result = runner.invoke(app, ["start", "-d", "65536"])
+    assert result.exit_code == 1
+    assert "Invalid Port" in result.output
+    assert "between 1024 and 65535" in result.output
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_start_duplicate_ports(mock_euid):
+    """start with same port for transport and dns -> validation error."""
+    result = runner.invoke(app, ["start", "-t", "9000", "-d", "9000"])
+    assert result.exit_code == 1
+    assert "Port Conflict" in result.output
+    assert "cannot be the same" in result.output
+
+
+@patch("ttp.cli._is_port_in_use", return_value=True)
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_start_port_already_in_use(mock_euid, mock_in_use):
+    """start with port already in use -> pre-flight check error."""
+    result = runner.invoke(app, ["start", "-t", "9041"])
+    assert result.exit_code == 1
+    assert "Port In Use" in result.output
+    assert "already in use by another process" in result.output
+
+
+@patch("ttp.cli.start")
+@patch("ttp.cli.time.sleep")
+@patch("ttp.cli._do_stop")
+@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_restart_custom_ports(
+    mock_euid, mock_read, mock_stop, mock_sleep, mock_start
+):
+    """restart propagates custom ports to start command."""
+    result = runner.invoke(
+        app, ["restart", "-t", "9080", "-d", "9090"]
+    )
+    assert result.exit_code == 0
+    mock_stop.assert_called_once()
+    mock_start.assert_called_once_with(
+        interface=None,
+        bootstrap_timeout=180,
+        transport_port=9080,
+        dns_port=9090,
+    )
+
+
+@patch("ttp.tor_control.get_exit_ip", return_value="5.6.7.8")
+@patch("ttp.cli.state.is_orphan", return_value=False)
+@patch(
+    "ttp.cli.state.read_lock",
+    return_value={
+        "timestamp": "2025-04-10T14:32:01",
+        "pid": 12345,
+        "transport_port": 9080,
+        "dns_port": 9090,
+    },
+)
+def test_status_shows_custom_ports(mock_read, mock_orphan, mock_ip):
+    """status displays custom ports from the active lock file."""
+    result = runner.invoke(app, ["status"])
+    assert result.exit_code == 0
+    assert "ACTIVE" in result.output
+    assert "TransPort: 9080" in result.output
+    assert "DNSPort: 9090" in result.output
+
+
+@patch("ttp.tor_control.get_controller")
+@patch("urllib.request.urlopen")
+@patch(
+    "ttp.cli.state.read_lock",
+    return_value={
+        "transport_port": 9080,
+        "dns_port": 9090,
+    },
+)
+def test_check_shows_custom_ports(mock_read, mock_urlopen, mock_get_ctrl):
+    """check displays custom ports from the lock file."""
+    import json
+
+    mock_response = mock_urlopen.return_value.__enter__.return_value
+    mock_response.read.return_value = json.dumps(
+        {"IsTor": True, "IP": "100.200.100.200"}
+    ).encode()
+    mock_get_ctrl.return_value = True
+
+    result = runner.invoke(app, ["check"])
+    assert result.exit_code == 0
+    assert "TransPort:       9080" in result.output
+    assert "DNSPort:         9090" in result.output
+

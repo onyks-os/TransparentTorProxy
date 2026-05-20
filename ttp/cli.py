@@ -113,6 +113,24 @@ def _setup_logging() -> None:
 # Helpers
 
 
+def _is_port_in_use(port: int) -> bool:
+    """Return True if the port is already in use (bound) on localhost."""
+    import socket
+    # Check TCP
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", port))
+    except OSError:
+        return True
+    # Check UDP
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.bind(("127.0.0.1", port))
+    except OSError:
+        return True
+    return False
+
+
 def _require_root() -> None:
     """Exit with an error if the process is not running as root."""
     if os.geteuid() != 0:
@@ -213,9 +231,40 @@ def start(
         "--bootstrap-timeout",
         help="Timeout in seconds to wait for Tor to bootstrap.",
     ),
+    transport_port: int = typer.Option(
+        9041,
+        "--transport-port",
+        "-t",
+        help="Port for Tor's TransPort redirect.",
+    ),
+    dns_port: int = typer.Option(
+        9054,
+        "--dns-port",
+        "-d",
+        help="Port for Tor's DNSPort redirect.",
+    ),
 ) -> None:
     """Start the transparent Tor proxy session."""
     _require_root()
+
+    # Ports validation
+    if not (1024 <= transport_port <= 65535):
+        _print_error("Invalid Port", f"TransPort {transport_port} must be between 1024 and 65535.")
+        raise typer.Exit(code=1)
+
+    if not (1024 <= dns_port <= 65535):
+        _print_error("Invalid Port", f"DNSPort {dns_port} must be between 1024 and 65535.")
+        raise typer.Exit(code=1)
+
+    if transport_port == dns_port:
+        _print_error("Port Conflict", f"TransPort and DNSPort cannot be the same ({transport_port}).")
+        raise typer.Exit(code=1)
+
+    # Pre-flight check if ports are already in use
+    for port, name in [(transport_port, "TransPort"), (dns_port, "DNSPort")]:
+        if _is_port_in_use(port):
+            _print_error("Port In Use", f"The {name} port {port} is already in use by another process.")
+            raise typer.Exit(code=1)
 
     # Register signal handlers for safe cleanup.
     signal.signal(signal.SIGINT, _signal_handler)
@@ -252,7 +301,10 @@ def start(
     # Step 1 - Detect / install Tor.
     console.print(f"{_PREFIX} Detecting Tor...", end=" ")
     try:
-        info = tor_install.ensure_tor_ready()
+        info = tor_install.ensure_tor_ready(
+            transport_port=transport_port,
+            dns_port=dns_port,
+        )
     except TorError as exc:
         logger.error("Tor detection/install failed: %s", exc)
         console.print("[bold red]failed.[/]")
@@ -280,7 +332,11 @@ def start(
 
     # Step 2 - Apply stateless firewall rules.
     try:
-        firewall.apply_rules(tor_user=tor_user)
+        firewall.apply_rules(
+            tor_user=tor_user,
+            transport_port=transport_port,
+            dns_port=dns_port,
+        )
     except FirewallError as exc:
         _print_error("Firewall Setup Failed", str(exc))
         tor_install.stop_tor_service()
@@ -312,7 +368,11 @@ def start(
 
     # Step 4 - Write lock file.
     try:
-        state.write_lock(dns_backup=dns_backup)
+        state.write_lock(
+            dns_backup=dns_backup,
+            transport_port=transport_port,
+            dns_port=dns_port,
+        )
     except StateError as exc:
         logger.error("Failed to write lock: %s", exc)
         _print_error("Session Tracking Failed", str(exc))
@@ -397,6 +457,18 @@ def restart(
         "--bootstrap-timeout",
         help="Timeout in seconds to wait for Tor to bootstrap.",
     ),
+    transport_port: int = typer.Option(
+        9041,
+        "--transport-port",
+        "-t",
+        help="Port for Tor's TransPort redirect.",
+    ),
+    dns_port: int = typer.Option(
+        9054,
+        "--dns-port",
+        "-d",
+        help="Port for Tor's DNSPort redirect.",
+    ),
 ) -> None:
     """Restart the transparent Tor proxy session."""
     _require_root()
@@ -408,7 +480,12 @@ def restart(
     else:
         console.print(f"{_PREFIX} No active session found, starting a new one...")
 
-    start(interface=interface, bootstrap_timeout=bootstrap_timeout)
+    start(
+        interface=interface,
+        bootstrap_timeout=bootstrap_timeout,
+        transport_port=transport_port,
+        dns_port=dns_port,
+    )
 
 
 @app.command()
@@ -471,6 +548,8 @@ def status() -> None:
 
     exit_ip = tor_control.get_exit_ip()
     console.print(f"{_PREFIX} Status: [bold green]ACTIVE[/]")
+    console.print(f"{_PREFIX} TransPort: {lock.get('transport_port', 9041)}")
+    console.print(f"{_PREFIX} DNSPort: {lock.get('dns_port', 9054)}")
     console.print(f"{_PREFIX} Exit IP: {exit_ip}")
     console.print(f"{_PREFIX} Session started: {lock.get('timestamp', 'unknown')}")
     console.print(f"{_PREFIX} Process PID: {lock.get('pid', 'unknown')}")
@@ -507,7 +586,13 @@ def check() -> None:
     ctrl = tor_control.get_controller()
     circuit_stable = ctrl is not None
 
+    lock = state.read_lock()
+    transport_port = lock.get("transport_port", 9041) if lock else 9041
+    dns_port = lock.get("dns_port", 9054) if lock else 9054
+
     console.print(f"  [cyan]-[/cyan] Current IP:      {ip}")
+    console.print(f"  [cyan]-[/cyan] TransPort:       {transport_port}")
+    console.print(f"  [cyan]-[/cyan] DNSPort:         {dns_port}")
     console.print(
         f"  [cyan]-[/cyan] Tor Network:     {'[bold green]Yes (IsTor=True)[/]' if is_tor else '[bold red]No[/]'}"
     )

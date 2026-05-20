@@ -60,13 +60,28 @@ def test_write_lock(_use_tmp_lock):
     state.write_lock(
         pid=42,
         dns_backup={"mount_target": "/etc/resolv.conf"},
+        transport_port=9060,
+        dns_port=9070,
     )
 
     assert lock_path.exists()
     data = json.loads(lock_path.read_text())
     assert data["pid"] == 42
     assert data["dns_backup"] == {"mount_target": "/etc/resolv.conf"}
+    assert data["transport_port"] == 9060
+    assert data["dns_port"] == 9070
     assert "timestamp" in data
+
+
+def test_write_lock_defaults(_use_tmp_lock):
+    """write_lock uses correct default ports when none are specified."""
+    lock_path, _ = _use_tmp_lock
+    state.write_lock(pid=42)
+
+    assert lock_path.exists()
+    data = json.loads(lock_path.read_text())
+    assert data["transport_port"] == 9041
+    assert data["dns_port"] == 9054
 
 
 # read_lock with file returns dict

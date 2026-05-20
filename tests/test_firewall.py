@@ -99,6 +99,24 @@ def test_ruleset_logic_content(mock_run_nft, mock_run_string, mock_pwd):
     assert filter_block.strip().endswith("reject")
 
 
+@patch("ttp.firewall.pwd.getpwnam")
+@patch("ttp.firewall._run_nft_string")
+@patch("ttp.firewall._run_nft")
+def test_ruleset_custom_ports(mock_run_nft, mock_run_string, mock_pwd):
+    """Verify that custom ports are correctly injected in the ruleset."""
+    mock_pwd.return_value = MagicMock(pw_uid=110)
+    apply_rules(tor_user="debian-tor", transport_port=9060, dns_port=9070)
+
+    # Capture the ruleset string passed to _run_nft_string
+    ruleset = mock_run_string.call_args[0][0]
+
+    # Verify our custom ports are used
+    assert "127.0.0.1:9060" in ruleset
+    assert "127.0.0.1:9070" in ruleset
+    assert "127.0.0.1:9041" not in ruleset
+    assert "127.0.0.1:9054" not in ruleset
+
+
 # destroy_rules
 
 

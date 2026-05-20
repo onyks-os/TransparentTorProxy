@@ -18,7 +18,11 @@ logger = logging.getLogger("ttp")
 RULES_TEMP_PATH = LOCK_DIR / "ttp.rules"
 
 
-def apply_rules(tor_user: str) -> None:
+def apply_rules(
+    tor_user: str,
+    transport_port: int = 9041,
+    dns_port: int = 9054,
+) -> None:
     """Create the 'ttp' table and inject redirection rules.
 
     Orchestrates the process: Create -> Flush -> Inject.
@@ -43,9 +47,9 @@ def apply_rules(tor_user: str) -> None:
             chain prerouting {{
                 # Handle incoming traffic from other interfaces (e.g., if used as a gateway)
                 type nat hook prerouting priority dstnat; policy accept;
-                udp dport 53 dnat ip to 127.0.0.1:9054
-                tcp dport 53 dnat ip to 127.0.0.1:9054
-                ip protocol tcp dnat ip to 127.0.0.1:9041
+                udp dport 53 dnat ip to 127.0.0.1:{dns_port}
+                tcp dport 53 dnat ip to 127.0.0.1:{dns_port}
+                ip protocol tcp dnat ip to 127.0.0.1:{transport_port}
             }}
 
             chain output {{
@@ -56,14 +60,14 @@ def apply_rules(tor_user: str) -> None:
                 meta skuid {tor_uid} accept
 
                 # 2. DNS Redirection: Force all DNS queries to Tor's DNSPort
-                udp dport 53 dnat ip to 127.0.0.1:9054
-                tcp dport 53 dnat ip to 127.0.0.1:9054
+                udp dport 53 dnat ip to 127.0.0.1:{dns_port}
+                tcp dport 53 dnat ip to 127.0.0.1:{dns_port}
 
                 # 3. Local Exemption: Allow traffic to localhost (crucial for Tor's TransPort/DNSPort)
                 ip daddr 127.0.0.0/8 accept
 
                 # 4. TCP Redirection: Redirect all remaining TCP traffic to Tor's TransPort
-                ip protocol tcp dnat ip to 127.0.0.1:9041
+                ip protocol tcp dnat ip to 127.0.0.1:{transport_port}
             }}
 
             chain filter_out {{
