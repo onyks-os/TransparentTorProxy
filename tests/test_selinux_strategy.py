@@ -20,7 +20,7 @@ from ttp.tor_install import (
 )
 
 
-# ── OS Family Detection ──────────────────────────────────────────────
+# -- OS Family Detection ----------------------------------------------
 
 
 def test_is_fedora_family_true_fedora():
@@ -55,7 +55,7 @@ def test_is_fedora_family_fallback_to_redhat_release():
         assert is_fedora_family() is True
 
 
-# ── SELinux State Detection ──────────────────────────────────────────
+# -- SELinux State Detection ------------------------------------------
 
 
 def test_is_selinux_enforcing_true():
@@ -80,7 +80,7 @@ def test_is_selinux_enforcing_no_command():
         assert is_selinux_enforcing() is False
 
 
-# ── SELinux Module Management ────────────────────────────────────────
+# -- SELinux Module Management ----------------------------------------
 
 
 def test_is_selinux_module_installed_true():

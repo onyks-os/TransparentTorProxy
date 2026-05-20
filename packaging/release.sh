@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# ══════════════════════════════════════════════════════════════════════
 # TTP Release Builder
-# ══════════════════════════════════════════════════════════════════════
 #
 # This script orchestrates the full release pipeline for TTP:
 #
@@ -23,7 +21,6 @@
 #   - build, twine (pip install .[dev])
 #   - dpkg-deb  (comes with Debian/Ubuntu by default)
 #   - rpmbuild  (install with: sudo dnf install rpm-build)
-# ══════════════════════════════════════════════════════════════════════
 
 # Strict mode: exit on error (-e), error on undefined variables (-u),
 # and propagate pipe failures (-o pipefail).
@@ -39,25 +36,34 @@ VERSION=$(grep -m 1 '^version =' pyproject.toml | cut -d '"' -f 2)
 RELEASE_DIR="packaging"
 
 echo "============================================"
-echo "  TTP Release Builder — v${VERSION}"
+echo "  TTP Release Builder - v${VERSION}"
 echo "============================================"
 echo ""
 
-# ── Step 0: Verify Python Package ────────────────────────────────────
+# Step 0: verify Python package (wheel/sdist + twine)
 echo "[0/5] Building and verifying Python distribution..."
-rm -rf dist/ build/
-python3 -m build > /dev/null
+# Scope TMPDIR to this invocation only: exporting it breaks later steps
+# (e.g. dpkg-deb) after we rm -rf the directory below.
+BUILD_TMP="$(pwd)/.build_tmp"
+rm -rf dist/ build/ "$BUILD_TMP"
+mkdir -p "$BUILD_TMP"
+
+TMPDIR="$BUILD_TMP" python3 -m build > /dev/null
 python3 -m twine check dist/*
+
+rm -rf "$BUILD_TMP"
+
 echo "      [OK] Python metadata is valid."
 echo ""
 
-# ── Step 1: Clean old artifacts ──────────────────────────────────────
+# Step 1: clean old packaging artifacts
 echo "[1/5] Cleaning old system artifacts..."
+rm -rf "$(pwd)/.build_tmp"
 rm -f "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/SHA256SUMS.txt
 echo "      Done."
 echo ""
 
-# ── Step 2: Build .deb ───────────────────────────────────────────────
+# Step 2: build .deb
 echo "[2/5] Building Debian package (.deb)..."
 if bash "$RELEASE_DIR/build_deb.sh"; then
     echo "      [OK] .deb built successfully."
@@ -67,7 +73,7 @@ else
 fi
 echo ""
 
-# ── Step 3: Build .rpm ───────────────────────────────────────────────
+# Step 3: build .rpm
 echo "[3/5] Building RPM package (.rpm)..."
 if command -v rpmbuild >/dev/null 2>&1; then
     if bash "$RELEASE_DIR/build_rpm.sh"; then
@@ -81,7 +87,7 @@ else
 fi
 echo ""
 
-# ── Step 4: Generate SHA256 checksums ────────────────────────────────
+# Step 4: SHA256 checksums for packages
 echo "[4/5] Generating SHA256 checksums..."
 (
     cd "$RELEASE_DIR"
@@ -102,7 +108,7 @@ echo "[4/5] Generating SHA256 checksums..."
 )
 echo ""
 
-# ── Summary ──────────────────────────────────────────────────────────
+# Summary
 echo "============================================"
 echo "  Release artifacts ready:"
 echo "============================================"

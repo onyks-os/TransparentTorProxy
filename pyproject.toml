@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "transparent-tor-proxy"
-version = "0.2.0"
+version = "0.3.0"
 description = "Transparent Tor Proxy — route all system traffic through Tor"
 readme = "README.md"
 license = {text = "MIT"}
@@ -35,11 +35,33 @@ filterwarnings = [
     "ignore:setDaemon\\(\\) is deprecated:DeprecationWarning:stem.*"
 ]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "ttp",
+    "assets",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml"
+]
+exclude = [
+    "tests",
+    "scripts",
+    "packaging",
+    "dist",
+    "build",
+    "*.qcow2",
+    "*.iso",
+    "*.img",
+    "venv",
+    ".venv",
+    "__pycache__"
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["ttp"]
 
 [tool.bumpversion]
-current_version = "0.2.0"
+current_version = "0.3.0"
 commit = false
 tag = false
 

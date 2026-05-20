@@ -10,12 +10,22 @@ import os
 import subprocess
 import time
 import urllib.request
+from pathlib import Path
 
 import pytest
 
 # Skip the entire module if not running as root
 if os.geteuid() != 0:
     pytest.skip("Integration tests must be run as root", allow_module_level=True)
+
+# Skip when /run is not writable (e.g. sandboxed "root", minimal CI without tmpfs)
+try:
+    Path("/run/ttp").mkdir(parents=True, exist_ok=True)
+except OSError:
+    pytest.skip(
+        "Integration tests need a writable /run/ttp (use Docker integration or a real host)",
+        allow_module_level=True,
+    )
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -32,8 +42,25 @@ def ensure_clean_state():
 def test_full_ttp_flow():
     """Test the full TTP start -> verify -> refresh -> stop flow."""
     # 1. Start TTP
-    res = subprocess.run(["ttp", "--quiet", "start"], capture_output=True, text=True)
-    assert res.returncode == 0, f"ttp start failed: {res.stderr}\n{res.stdout}"
+    res = subprocess.run(
+        ["ttp", "start", "--bootstrap-timeout", "300"], capture_output=True, text=True
+    )
+    if res.returncode != 0:
+        status_res = subprocess.run(
+            ["systemctl", "status", "ttp-tor.service"], capture_output=True, text=True
+        )
+        journal_res = subprocess.run(
+            ["journalctl", "-xeu", "ttp-tor.service", "--no-pager"], capture_output=True, text=True
+        )
+        
+        error_msg = (
+            f"ttp start failed! (returncode {res.returncode})\n\n"
+            f"=== TTP STDOUT ===\n{res.stdout}\n"
+            f"=== TTP STDERR ===\n{res.stderr}\n\n"
+            f"=== SYSTEMCTL STATUS ===\n{status_res.stdout}\n\n"
+            f"=== JOURNALCTL ===\n{journal_res.stdout}\n"
+        )
+        pytest.fail(error_msg)
 
     # 2. Verify routing through Tor
     req = urllib.request.Request(
@@ -43,7 +70,7 @@ def test_full_ttp_flow():
     is_tor = False
     exit_ip = "unknown"
 
-    for _ in range(5):
+    for _ in range(15):
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
@@ -51,14 +78,18 @@ def test_full_ttp_flow():
                     is_tor = True
                     exit_ip = data.get("IP", "unknown")
                     break
+                else:
+                    time.sleep(2)
         except Exception:
             time.sleep(2)
 
-    assert is_tor, "Traffic is not routed through Tor!"
+    assert is_tor, (
+        f"Traffic is not routed through Tor!\nStart stdout:\n{res.stdout}\nStart stderr:\n{res.stderr}"
+    )
     assert exit_ip != "unknown", "Could not determine exit IP"
 
     # 3. Test Refresh Circuit
-    res = subprocess.run(["ttp", "--quiet", "refresh"], capture_output=True, text=True)
+    res = subprocess.run(["ttp", "refresh"], capture_output=True, text=True)
     assert res.returncode == 0, f"ttp refresh failed: {res.stderr}\n{res.stdout}"
 
     # 4. Stop TTP

@@ -1,7 +1,5 @@
 #!/bin/bash
-# ══════════════════════════════════════════════════════════════════════
-# TTP — Code Sync to VM
-# ══════════════════════════════════════════════════════════════════════
+# TTP - Code Sync to VM
 #
 # Syncs the TTP source code from the host machine into the active
 # QEMU VM. Auto-detects which VM is running by checking for QEMU
@@ -18,7 +16,6 @@
 #
 # Usage:
 #   ./send.sh
-# ══════════════════════════════════════════════════════════════════════
 
 # Get the absolute path to the project root
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -44,12 +41,11 @@ else
 fi
 
 REMOTE_HOST="localhost"
-DEST_FOLDER="$HOME/ttp/"
 
 echo "Sending code to $VM_TYPE VM (port $REMOTE_PORT)..."
 
-# Ensure the destination folder exists
-ssh -p $REMOTE_PORT $REMOTE_USER@$REMOTE_HOST "mkdir -p $DEST_FOLDER"
+# Ensure the destination folder exists ($HOME expands on the VM, not the host)
+ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" 'mkdir -p "$HOME/ttp"'
 
 # Sync using tar over ssh (robust fallback when rsync is missing on target)
 EXCLUDES=(
@@ -68,7 +64,7 @@ EXCLUDES=(
     --exclude='*.iso'
 )
 
-if tar -C "$ROOT_DIR" "${EXCLUDES[@]}" -cf - . | ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" "tar -C $DEST_FOLDER -xf -"; then
+if tar -C "$ROOT_DIR" "${EXCLUDES[@]}" -cf - . | ssh -p "$REMOTE_PORT" "$REMOTE_USER@$REMOTE_HOST" 'tar -C "$HOME/ttp" -xf -'; then
     echo "Sync completed!"
 else
     echo "Sync error."

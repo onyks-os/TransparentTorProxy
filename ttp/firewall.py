@@ -1,4 +1,4 @@
-"""Stateless Firewall Module — Isolation via dedicated nftables tables.
+"""Stateless Firewall Module - Isolation via dedicated nftables tables.
 
 This module implements a "Safe-Release" architecture:
 1. No system backups are performed (Stateless).
@@ -43,9 +43,9 @@ def apply_rules(tor_user: str) -> None:
             chain prerouting {{
                 # Handle incoming traffic from other interfaces (e.g., if used as a gateway)
                 type nat hook prerouting priority dstnat; policy accept;
-                udp dport 53 dnat ip to 127.0.0.1:9053
-                tcp dport 53 dnat ip to 127.0.0.1:9053
-                ip protocol tcp dnat ip to 127.0.0.1:9040
+                udp dport 53 dnat ip to 127.0.0.1:9054
+                tcp dport 53 dnat ip to 127.0.0.1:9054
+                ip protocol tcp dnat ip to 127.0.0.1:9041
             }}
 
             chain output {{
@@ -56,14 +56,14 @@ def apply_rules(tor_user: str) -> None:
                 meta skuid {tor_uid} accept
 
                 # 2. DNS Redirection: Force all DNS queries to Tor's DNSPort
-                udp dport 53 dnat ip to 127.0.0.1:9053
-                tcp dport 53 dnat ip to 127.0.0.1:9053
+                udp dport 53 dnat ip to 127.0.0.1:9054
+                tcp dport 53 dnat ip to 127.0.0.1:9054
 
                 # 3. Local Exemption: Allow traffic to localhost (crucial for Tor's TransPort/DNSPort)
                 ip daddr 127.0.0.0/8 accept
 
                 # 4. TCP Redirection: Redirect all remaining TCP traffic to Tor's TransPort
-                ip protocol tcp dnat ip to 127.0.0.1:9040
+                ip protocol tcp dnat ip to 127.0.0.1:9041
             }}
 
             chain filter_out {{
@@ -120,9 +120,9 @@ def destroy_rules() -> bool:
             ["nft", "list", "table", "inet", "ttp"], capture_output=True, check=False
         )
         if check.returncode != 0:
-            # The table is gone — destroy "failed" because it was already clean
+            # The table is gone - destroy "failed" because it was already clean
             return True
-        # The table still exists — destroy actually failed
+        # The table still exists - destroy actually failed
         logger.error(f"nft destroy failed: {result.stderr.strip()}")
         return False
 

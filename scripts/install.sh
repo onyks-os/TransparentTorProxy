@@ -1,7 +1,5 @@
 #!/bin/bash
-# ══════════════════════════════════════════════════════════════════════
-# TTP — Universal Installer
-# ══════════════════════════════════════════════════════════════════════
+# TTP - Universal Installer
 #
 # This script deploys TTP system-wide on any Linux distribution.
 # It is the recommended installation method for end users who clone
@@ -24,7 +22,6 @@
 #
 # To uninstall:
 #   sudo ./scripts/uninstall.sh
-# ══════════════════════════════════════════════════════════════════════
 
 # Ensure the script is run as root, as we need to modify system directories.
 if [ "$EUID" -ne 0 ]; then

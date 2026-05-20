@@ -1,4 +1,4 @@
-"""System inspection — Read-only detection of Tor and OS state.
+"""System inspection - Read-only detection of Tor and OS state.
 
 This module provides non-destructive system inspection functions to
 determine if Tor is installed, configured, and running. It also
@@ -18,21 +18,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-TORRC_PATH = Path("/etc/tor/torrc")
-
-
-def _get_service_name() -> str:
-    """Return the systemd service unit that runs the Tor daemon.
-
-    On Debian, the daemon lives in ``tor@default.service``.
-    ``tor.service`` is a multi-instance master that exits immediately
-    and always reports *active (exited)*.
-    """
-    import os
-
-    if os.path.exists("/etc/debian_version"):
-        return "tor@default"
-    return "tor"
+# Volatile runtime config path
+TORRC_PATH = Path("/run/tor/ttp/torrc")
 
 
 def _check_installed() -> bool:
@@ -57,32 +44,7 @@ def _get_version() -> str:
 
 
 def _check_running() -> bool:
-    """Return ``True`` if the Tor daemon is actually running.
-
-    Uses a two-step check:
-
-    1. ``systemctl is-active`` on the correct service unit
-       (``tor@default`` first, then ``tor``).
-    2. Verify that a ``tor`` process actually exists — guards against
-       the Debian multi-instance master which reports *active (exited)*
-       even though no daemon is running.
-    """
-    service = _get_service_name()
-    try:
-        result = subprocess.run(
-            ["systemctl", "is-active", service],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        systemd_active = result.stdout.strip() == "active"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        systemd_active = False
-
-    if not systemd_active:
-        return False
-
-    # Double-check: is there an actual tor process?
+    """Return ``True`` if a tor process is currently running."""
     try:
         result = subprocess.run(
             ["pgrep", "-x", "tor"],
@@ -92,12 +54,11 @@ def _check_running() -> bool:
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        # pgrep not available — trust systemd.
-        return systemd_active
+        return False
 
 
 def _check_config(torrc_path: Path | None = None) -> bool:
-    """Return ``True`` if *torrc* contains ``TransPort 9040``, ``DNSPort 9053``, and ``ControlPort 9051``."""
+    """Return ``True`` if *torrc* contains ``TransPort 9041``, ``DNSPort 9054``, and a ``ControlSocket``."""
     if torrc_path is None:
         torrc_path = TORRC_PATH
     try:
@@ -105,12 +66,10 @@ def _check_config(torrc_path: Path | None = None) -> bool:
     except OSError:
         return False
 
-    has_transport = bool(re.search(r"^\s*TransPort\s+9040\b", content, re.MULTILINE))
-    has_dnsport = bool(re.search(r"^\s*DNSPort\s+9053\b", content, re.MULTILINE))
-    has_controlport = bool(
-        re.search(r"^\s*ControlPort\s+9051\b", content, re.MULTILINE)
-    )
-    return has_transport and has_dnsport and has_controlport
+    has_transport = bool(re.search(r"^\s*TransPort\s+9041\b", content, re.MULTILINE))
+    has_dnsport = bool(re.search(r"^\s*DNSPort\s+9054\b", content, re.MULTILINE))
+    has_control = bool(re.search(r"^\s*ControlSocket\s+", content, re.MULTILINE))
+    return has_transport and has_dnsport and has_control
 
 
 def _detect_tor_user() -> str:
@@ -118,14 +77,14 @@ def _detect_tor_user() -> str:
 
     Detection order:
 
-    1. **Live process** — ``ps`` the running ``tor`` process and read
+    1. **Live process** - ``ps`` the running ``tor`` process and read
        its owner.  This is the only fully reliable method and handles
-       every distro (``debian-tor``, ``toranon``, ``tor``, …).
-    2. **``/etc/passwd``** — scan for well-known names as a static
+       every distro (``debian-tor``, ``toranon``, ``tor``, ...).
+    2. **``/etc/passwd``** - scan for well-known names as a static
        fallback when Tor is not running yet.
     3. Hard fallback to ``"tor"``.
     """
-    # 1. Check the running process — most reliable.
+    # 1. Check the running process - most reliable.
     #    Use ``user:32`` to avoid ps truncating long names like
     #    ``debian-tor`` (10 chars) to ``debian-+`` (8 chars).
     try:
@@ -139,13 +98,14 @@ def _detect_tor_user() -> str:
             parts = line.split(None, 1)
             if len(parts) == 2 and parts[1].strip() == "tor":
                 user = parts[0].strip()
-                # Sanity: reject truncated names (contain ``+``).
-                if "+" not in user:
+                # Sanity: reject truncated names (contain ``+``)
+                # and numeric UIDs (Tor requires a username string).
+                if "+" not in user and not user.isdigit():
                     return user
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
-    # 2. Static fallback — known distro usernames.
+    # 2. Static fallback - known distro usernames.
     _KNOWN_USERS = ("debian-tor", "toranon", "tor", "_tor")
     try:
         passwd = Path("/etc/passwd").read_text(encoding="utf-8")
@@ -202,15 +162,16 @@ def is_selinux_module_installed() -> bool:
 
 
 def is_firewalld_active() -> bool:
-    """Return ``True`` if the ``firewalld`` service is active."""
-    import shutil
-    if not shutil.which("systemctl"):
-        return False
+    """Return ``True`` if the ``firewalld`` service is active.
+
+    Uses ``pgrep`` to be agnostic of the init system (systemd, OpenRC, etc.).
+    """
     try:
         result = subprocess.run(
-            ["systemctl", "is-active", "--quiet", "firewalld"],
+            ["pgrep", "-x", "firewalld"],
             capture_output=True,
-            check=False,
+            text=True,
+            timeout=5,
         )
         return result.returncode == 0
     except (subprocess.SubprocessError, FileNotFoundError):
@@ -223,14 +184,13 @@ def detect_tor() -> dict:
     Returns
     -------
     dict with keys:
-        ``is_installed``  – bool
-        ``is_running``    – bool
-        ``is_configured`` – bool
-        ``tor_user``      – str  (``"debian-tor"`` or ``"tor"``)
-        ``version``       – str  (e.g. ``"0.4.8.10"``, or ``""``)
-        ``service_name``  – str  (e.g. ``"tor@default"`` or ``"tor"``)
-        ``is_fedora``     – bool
-        ``selinux``       – bool (True if Enforcing)
+        ``is_installed``  - bool
+        ``is_running``    - bool
+        ``is_configured`` - bool
+        ``tor_user``      - str  (``"debian-tor"`` or ``"tor"``)
+        ``version``       - str  (e.g. ``"0.4.8.10"``, or ``""``)
+        ``is_fedora``     - bool
+        ``selinux``       - bool (True if Enforcing)
     """
     installed = _check_installed()
     return {
@@ -239,7 +199,6 @@ def detect_tor() -> dict:
         "is_configured": _check_config() if installed else False,
         "tor_user": _detect_tor_user(),
         "version": _get_version() if installed else "",
-        "service_name": _get_service_name() if installed else "tor",
         "is_fedora": is_fedora_family(),
         "selinux": is_selinux_enforcing(),
         "selinux_module": is_selinux_module_installed(),

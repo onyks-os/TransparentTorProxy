@@ -146,8 +146,10 @@ packaging/SHA256SUMS.txt
 
 # Other
 .vscode
+.build_tmp
 tmp
-vms
+**/*.iso
+**/*.qcow2
 
 # Environments
 .env

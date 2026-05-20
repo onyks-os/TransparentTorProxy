@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# ══════════════════════════════════════════════════════════════════════
-# TTP — Docker Integration Test Runner
-# ══════════════════════════════════════════════════════════════════════
+# TTP - Docker Integration Test Runner
 #
 # Runs the full integration test suite (tests/test_integration.py)
 # inside a privileged Docker container with systemd. This is the
@@ -21,7 +19,6 @@
 #   ./run_integration_tests.sh [debian|fedora|arch]
 #
 # Note: Requires Docker with --privileged support. Podman works too.
-# ══════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
 # Get the absolute path to the project root
@@ -50,12 +47,23 @@ CID=$(docker run -d \
     --privileged \
     -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
     --cgroupns=host \
-    --tmpfs /tmp --tmpfs /run --tmpfs /run/lock \
+    --tmpfs /tmp:rw,exec,suid \
+    --tmpfs /run:rw,exec,suid \
+    --tmpfs /run/lock:rw,exec,suid \
     ttp-integration-"$DISTRO")
 
 # Wait for systemd to initialize
 echo "==> Waiting for systemd to boot..."
 sleep 5
+
+echo "==> Updating package manager cache for dynamic Tor installation..."
+if [ "$DISTRO" == "debian" ]; then
+    docker exec "$CID" apt-get update -y
+elif [ "$DISTRO" == "fedora" ]; then
+    docker exec "$CID" dnf makecache
+elif [ "$DISTRO" == "arch" ]; then
+    docker exec "$CID" pacman -Sy
+fi
 
 echo "==> Running integration tests inside container..."
 set +e

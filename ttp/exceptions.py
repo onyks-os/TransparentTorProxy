@@ -19,7 +19,7 @@ class FirewallError(TTPError):
 
 
 class DNSError(TTPError):
-    """Raised when DNS configuration (resolvectl, resolv.conf) fails."""
+    """Raised when DNS configuration (mount --bind overlay) fails."""
 
     pass
 

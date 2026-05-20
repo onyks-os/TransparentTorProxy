@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# ══════════════════════════════════════════════════════════════════════
-# TTP — Debian Package Builder
-# ══════════════════════════════════════════════════════════════════════
+# TTP - Debian Package Builder
 #
 # This script builds a native .deb package for Debian/Ubuntu systems.
 #
@@ -24,7 +22,6 @@
 #
 # Prerequisites:
 #   dpkg-deb (pre-installed on Debian/Ubuntu)
-# ══════════════════════════════════════════════════════════════════════
 
 # Strict mode: exit on error (-e), error on undefined variables (-u),
 # and propagate pipe failures (-o pipefail).

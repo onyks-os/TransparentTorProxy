@@ -1,4 +1,4 @@
-"""Tests for ttp.firewall — Stateless nftables management.
+"""Tests for ttp.firewall - Stateless nftables management.
 
 All tests mock subprocess.run so no real firewall rules are ever touched.
 """
@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock
 from ttp.firewall import apply_rules, destroy_rules
 from ttp.exceptions import FirewallError
 
-# ── apply_rules ────────────────────────────────────────────────────
+# apply_rules
 
 
 @patch("ttp.firewall.RULES_TEMP_PATH")
@@ -88,14 +88,18 @@ def test_ruleset_logic_content(mock_run_nft, mock_run_string, mock_pwd):
     assert "meta skuid 0 accept" in filter_block
     assert "ip daddr 127.0.0.0/8 accept" in filter_block
 
-    # 4. Check for IPv6 drop and final reject
+    # 4. DNAT targets match shifted TTP ports (9041 TransPort, 9054 DNSPort)
+    assert "127.0.0.1:9041" in ruleset
+    assert "127.0.0.1:9054" in ruleset
+
+    # 5. Check for IPv6 drop and final reject
     assert "meta nfproto ipv6 drop" in filter_block
     assert "reject" in filter_block
     # Reject must be the last rule
     assert filter_block.strip().endswith("reject")
 
 
-# ── destroy_rules ──────────────────────────────────────────────────
+# destroy_rules
 
 
 @patch("ttp.firewall.RULES_TEMP_PATH")

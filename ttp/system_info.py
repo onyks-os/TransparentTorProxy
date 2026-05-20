@@ -8,7 +8,7 @@ purely informational and is used by the `diagnose` command.
 KEY FEATURES:
 - OS detection (/etc/os-release).
 - Firewall inspection (nft list ruleset).
-- DNS status (resolvectl or /etc/resolv.conf).
+- DNS status (/etc/resolv.conf overlay).
 - TTP internal state (lock file contents).
 - Decoupled from the UI (returns a data dictionary).
 """
@@ -20,8 +20,8 @@ import platform
 import subprocess
 from typing import Dict
 
-from ttp import dns, state, tor_control
-from ttp.tor_detect import _get_service_name, detect_tor
+from ttp import state, tor_control
+from ttp.tor_detect import detect_tor
 
 
 def collect_diagnostics() -> Dict[str, str]:
@@ -55,24 +55,23 @@ def collect_diagnostics() -> Dict[str, str]:
         pass
     results["os"] = f"Hostname: {platform.node()}\nOS: {os_name}"
 
-    # 2. Tor Service
-    service = _get_service_name()
+    # 2. Tor Service (ttp-tor)
     try:
         svc_status = subprocess.run(
-            ["systemctl", "status", service, "--no-pager"],
+            ["systemctl", "status", "ttp-tor"],
             capture_output=True,
             text=True,
         ).stdout.strip()
         if not svc_status:
-            svc_status = "(Service not found or inactive)"
+            svc_status = "(ttp-tor service not found)"
         results["tor_service"] = svc_status
     except Exception as e:
         results["tor_service"] = str(e)
 
-    # 3. Tor Config
+    # 3. Tor Config (Volatile runtime config)
     try:
         torrc = subprocess.run(
-            ["grep", "-v", r"^\s*#\|^\s*$", "/etc/tor/torrc"],
+            ["grep", "-v", r"^\s*#\|^\s*$", "/run/tor/ttp/torrc"],
             capture_output=True,
             text=True,
         ).stdout.strip()
@@ -96,18 +95,22 @@ def collect_diagnostics() -> Dict[str, str]:
         results["nftables"] = str(e)
 
     # 5. DNS
-    dns_mode = dns.detect_dns_mode()
-    dns_info = f"Detected Mode: {dns_mode}\n\n"
+    dns_info = "Status: "
     try:
-        if dns_mode == "resolvectl":
-            dns_info += subprocess.run(
-                ["resolvectl", "status"],
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
+        # Check if /etc/resolv.conf is a mount point (our overlay)
+        mount_check = subprocess.run(
+            ["findmnt", "-n", "/etc/resolv.conf"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        if mount_check:
+            dns_info += f"ACTIVE OVERLAY\nMount details: {mount_check}\n\n"
         else:
-            with open("/etc/resolv.conf") as f:
-                dns_info += f.read()
+            dns_info += "Standard (No overlay detected)\n\n"
+
+        with open("/etc/resolv.conf") as f:
+            dns_info += f"Current /etc/resolv.conf:\n---\n{f.read()}"
         results["dns"] = dns_info
     except Exception as e:
         results["dns"] = dns_info + str(e)

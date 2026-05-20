@@ -1,7 +1,5 @@
 #!/bin/bash
-# ══════════════════════════════════════════════════════════════════════
-# TTP — QEMU Snapshot Manager
-# ══════════════════════════════════════════════════════════════════════
+# TTP - QEMU Snapshot Manager
 #
 # Manages QEMU internal snapshots for safe TTP testing. Snapshots
 # capture the entire disk state so you can instantly roll back if
@@ -18,7 +16,6 @@
 #
 # Usage:
 #   ./snapshot.sh {debian|arch|ubuntu} {save|load|list} [name]
-# ══════════════════════════════════════════════════════════════════════
 
 # Get the absolute path to the project root
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
