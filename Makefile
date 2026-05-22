@@ -6,7 +6,7 @@
 #   make verify           - lint + unit + integration + package build
 
 # .PHONY tells Make that these are command names, not actual files or directories.
-.PHONY: test integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi
+.PHONY: test integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi test-leak-ip test-leak-dns test-leak-webrtc check-leak
 
 # 1. Local unit tests (pytest, no root).
 test:
@@ -57,3 +57,18 @@ clean:
 	@echo "==> Cleaning build artifacts..."
 	rm -rf dist/ build/ .build_tmp/ ttp.egg-info/ packaging/*.deb packaging/*.rpm packaging/SHA256SUMS.txt
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+# 6. Offensive Leak Testing Suite (must run inside unproxied target environment, with REAL_PUBLIC_IP set)
+test-leak-ip:
+	@echo "==> Running Offensive IP Leak Test..."
+	pytest tests/leak/test_ip_leak.py -v -s
+
+test-leak-dns:
+	@echo "==> Running Offensive DNS Leak Test..."
+	pytest tests/leak/test_dns_leak.py -v -s
+
+test-leak-webrtc:
+	@echo "==> Running Offensive WebRTC STUN Leak Test..."
+	pytest tests/leak/test_webrtc_leak.py -v -s
+
+check-leak: test-leak-ip test-leak-dns test-leak-webrtc

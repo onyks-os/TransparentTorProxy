@@ -77,16 +77,25 @@ def test_ruleset_logic_content(mock_run_nft, mock_run_string, mock_pwd):
     assert "chain filter_out" in ruleset
 
     # 2. Check for UID exemptions in the NAT output chain (Order is critical)
-    output_block = ruleset.split("chain output")[1].split("}")[0]
+    output_block = ruleset.split("chain output")[1].split("chain filter_out")[0]
     # Tor exemption must be first
     assert "meta skuid 110 accept" in output_block
     assert output_block.find("meta skuid 110 accept") < output_block.find("dnat")
 
     # 3. Check for exemptions in the filter_out chain
-    filter_block = ruleset.split("chain filter_out")[1].split("}")[0]
+    filter_block = ruleset.split("chain filter_out")[1]
     assert "meta skuid 110 accept" in filter_block
-    assert "meta skuid 0 accept" in filter_block
+    # By default, root is NOT exempted (allow_root=False)
+    assert "meta skuid 0 accept" not in filter_block
     assert "ip daddr 127.0.0.0/8 accept" in filter_block
+
+    # Default LAN bypass should be present
+    lan_bypass_rule = "ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } accept"
+    assert lan_bypass_rule in output_block
+    assert lan_bypass_rule in filter_block
+
+    # DoT leak prevention must be present
+    assert "tcp dport 853 reject" in filter_block
 
     # 4. DNAT targets match shifted TTP ports (9041 TransPort, 9054 DNSPort)
     assert "127.0.0.1:9041" in ruleset
@@ -96,7 +105,38 @@ def test_ruleset_logic_content(mock_run_nft, mock_run_string, mock_pwd):
     assert "meta nfproto ipv6 drop" in filter_block
     assert "reject" in filter_block
     # Reject must be the last rule
-    assert filter_block.strip().endswith("reject")
+    clean_filter = filter_block.strip()
+    while clean_filter.endswith("}"):
+        clean_filter = clean_filter[:-1].strip()
+    assert clean_filter.endswith("reject")
+
+
+
+@patch("ttp.firewall.pwd.getpwnam")
+@patch("ttp.firewall._run_nft_string")
+@patch("ttp.firewall._run_nft")
+def test_ruleset_allow_root(mock_run_nft, mock_run_string, mock_pwd):
+    """Verify that allow_root=True injects meta skuid 0 accept in filter_out."""
+    mock_pwd.return_value = MagicMock(pw_uid=110)
+    apply_rules(tor_user="debian-tor", allow_root=True)
+
+    ruleset = mock_run_string.call_args[0][0]
+    filter_block = ruleset.split("chain filter_out")[1]
+    assert "meta skuid 0 accept" in filter_block
+
+
+@patch("ttp.firewall.pwd.getpwnam")
+@patch("ttp.firewall._run_nft_string")
+@patch("ttp.firewall._run_nft")
+def test_ruleset_no_lan_bypass(mock_run_nft, mock_run_string, mock_pwd):
+    """Verify that lan_bypass=False removes local subnet exemptions."""
+    mock_pwd.return_value = MagicMock(pw_uid=110)
+    apply_rules(tor_user="debian-tor", lan_bypass=False)
+
+    ruleset = mock_run_string.call_args[0][0]
+    lan_bypass_rule = "ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } accept"
+    assert lan_bypass_rule not in ruleset
+
 
 
 @patch("ttp.firewall.pwd.getpwnam")

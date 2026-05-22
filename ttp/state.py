@@ -83,6 +83,10 @@ def write_lock(
     dns_backup: Any = None,
     transport_port: int = 9041,
     dns_port: int = 9054,
+    allow_root: bool = False,
+    lan_bypass: bool = True,
+    watchdog_active: bool = False,
+    watchdog_pid: int | None = None,
 ) -> None:
     """Write the session lock file with the current state.
 
@@ -96,6 +100,14 @@ def write_lock(
         The customized or default TransPort port.
     dns_port:
         The customized or default DNSPort port.
+    allow_root:
+        True to allow root processes to bypass Tor.
+    lan_bypass:
+        True to exempt LAN subnet traffic from Tor routing.
+    watchdog_active:
+        True if the watchdog background daemon is active.
+    watchdog_pid:
+        PID of the active watchdog daemon if running.
     """
     try:
         ensure_runtime_dir()
@@ -105,10 +117,30 @@ def write_lock(
             "dns_backup": dns_backup,
             "transport_port": transport_port,
             "dns_port": dns_port,
+            "allow_root": allow_root,
+            "lan_bypass": lan_bypass,
+            "watchdog_active": watchdog_active,
+            "watchdog_pid": watchdog_pid,
         }
         LOCK_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     except OSError as e:
         raise StateError(f"Failed to write session lock file: {e}")
+
+
+def update_lock_keys(**kwargs: Any) -> None:
+    """Update specific keys in the existing lock file, preserving other keys.
+
+    If no lock file exists, this raises a StateError.
+    """
+    data = read_lock()
+    if data is None:
+        raise StateError("No active TTP session found to update.")
+    data.update(kwargs)
+    try:
+        ensure_runtime_dir()
+        LOCK_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except OSError as e:
+        raise StateError(f"Failed to update session lock file: {e}")
 
 
 def read_lock() -> dict[str, Any] | None:

@@ -430,6 +430,9 @@ def test_restart_active_session(
         bootstrap_timeout=300,
         transport_port=9041,
         dns_port=9054,
+        allow_root=False,
+        no_lan_bypass=False,
+        watchdog=False,
     )
 
 
@@ -446,6 +449,9 @@ def test_restart_inactive_session(mock_euid, mock_read, mock_stop, mock_start):
         bootstrap_timeout=180,
         transport_port=9041,
         dns_port=9054,
+        allow_root=False,
+        no_lan_bypass=False,
+        watchdog=False,
     )
 
 
@@ -453,14 +459,8 @@ def test_restart_inactive_session(mock_euid, mock_read, mock_stop, mock_start):
 
 
 @patch("ttp.tor_control.get_controller")
-@patch("urllib.request.urlopen")
-def test_check_success(mock_urlopen, mock_get_ctrl):
-    import json
-
-    mock_response = mock_urlopen.return_value.__enter__.return_value
-    mock_response.read.return_value = json.dumps(
-        {"IsTor": True, "IP": "100.200.100.200"}
-    ).encode()
+@patch("ttp.tor_control.verify_tor", return_value=(True, "100.200.100.200"))
+def test_check_success(mock_verify_tor, mock_get_ctrl):
     mock_get_ctrl.return_value = True
 
     result = runner.invoke(app, ["check"])
@@ -470,11 +470,11 @@ def test_check_success(mock_urlopen, mock_get_ctrl):
     assert "Yes (Controller connected)" in result.output
 
 
-@patch("urllib.request.urlopen", side_effect=Exception("Connection refused"))
-def test_check_failure(mock_urlopen):
+@patch("ttp.tor_control.verify_tor", return_value=(False, "unknown"))
+def test_check_failure(mock_verify_tor):
     result = runner.invoke(app, ["check"])
     assert result.exit_code == 1
-    assert "Failed to reach check.torproject.org" in result.output
+    assert "Failed to reach any IP verification endpoint" in result.output
 
 
 # check-leak
@@ -711,8 +711,8 @@ def test_start_custom_ports_success(
     assert "Session active" in result.output
     
     mock_ensure.assert_called_once_with(transport_port=9080, dns_port=9090)
-    mock_apply_fw.assert_called_once_with(tor_user="debian-tor", transport_port=9080, dns_port=9090)
-    mock_write.assert_called_once_with(dns_backup={"interface": "eth0"}, transport_port=9080, dns_port=9090)
+    mock_apply_fw.assert_called_once_with(tor_user="debian-tor", transport_port=9080, dns_port=9090, allow_root=False, lan_bypass=True)
+    mock_write.assert_called_once_with(dns_backup={"interface": "eth0"}, transport_port=9080, dns_port=9090, allow_root=False, lan_bypass=True)
 
 
 @patch("ttp.cli.os.geteuid", return_value=0)
@@ -785,6 +785,9 @@ def test_restart_custom_ports(
         bootstrap_timeout=180,
         transport_port=9080,
         dns_port=9090,
+        allow_root=False,
+        no_lan_bypass=False,
+        watchdog=False,
     )
 
 
@@ -809,7 +812,7 @@ def test_status_shows_custom_ports(mock_read, mock_orphan, mock_ip):
 
 
 @patch("ttp.tor_control.get_controller")
-@patch("urllib.request.urlopen")
+@patch("ttp.tor_control.verify_tor", return_value=(True, "100.200.100.200"))
 @patch(
     "ttp.cli.state.read_lock",
     return_value={
@@ -817,18 +820,125 @@ def test_status_shows_custom_ports(mock_read, mock_orphan, mock_ip):
         "dns_port": 9090,
     },
 )
-def test_check_shows_custom_ports(mock_read, mock_urlopen, mock_get_ctrl):
+def test_check_shows_custom_ports(mock_read, mock_verify_tor, mock_get_ctrl):
     """check displays custom ports from the lock file."""
-    import json
-
-    mock_response = mock_urlopen.return_value.__enter__.return_value
-    mock_response.read.return_value = json.dumps(
-        {"IsTor": True, "IP": "100.200.100.200"}
-    ).encode()
     mock_get_ctrl.return_value = True
 
     result = runner.invoke(app, ["check"])
     assert result.exit_code == 0
     assert "TransPort:       9080" in result.output
     assert "DNSPort:         9090" in result.output
+
+
+@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.cli.firewall.apply_rules")
+@patch(
+    "ttp.cli.tor_install.ensure_tor_ready",
+    return_value={"is_installed": True, "tor_user": "debian-tor", "version": "0.4.8.10"},
+)
+@patch("ttp.cli.tor_install.setup_selinux_if_needed")
+@patch("ttp.cli.state.write_lock")
+@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("ttp.cli.state.is_orphan", return_value=False)
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_start_with_allow_root_and_no_lan_bypass(
+    mock_euid,
+    mock_orphan,
+    mock_read,
+    mock_write,
+    mock_selinux,
+    mock_ensure,
+    mock_apply_fw,
+    mock_iface,
+    mock_apply_dns,
+    mock_verify,
+):
+    """start with --allow-root and --no-lan-bypass flags -> passes down options."""
+    result = runner.invoke(app, ["start", "--allow-root", "--no-lan-bypass"])
+    assert result.exit_code == 0
+    mock_apply_fw.assert_called_once_with(
+        tor_user="debian-tor",
+        transport_port=9041,
+        dns_port=9054,
+        allow_root=True,
+        lan_bypass=False,
+    )
+    mock_write.assert_called_once_with(
+        dns_backup={"interface": "eth0"},
+        transport_port=9041,
+        dns_port=9054,
+        allow_root=True,
+        lan_bypass=False,
+    )
+
+
+# watchdog commands
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.cli.state.read_lock", return_value=None)
+def test_watchdog_start_no_session(mock_read, mock_euid):
+    """watchdog start fails if no TTP session is running."""
+    result = runner.invoke(app, ["watchdog", "start"])
+    assert result.exit_code == 1
+    assert "No active TTP session found" in result.output
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
+@patch("ttp.watchdog.start_watchdog")
+def test_watchdog_start_success(mock_start_wd, mock_read, mock_euid):
+    """watchdog start succeeds when session is running."""
+    result = runner.invoke(app, ["watchdog", "start"])
+    assert result.exit_code == 0
+    assert "Watchdog daemon started successfully" in result.output
+    mock_start_wd.assert_called_once()
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.watchdog.stop_watchdog")
+def test_watchdog_stop(mock_stop_wd, mock_euid):
+    """watchdog stop calls watchdog.stop_watchdog."""
+    result = runner.invoke(app, ["watchdog", "stop"])
+    assert result.exit_code == 0
+    assert "Watchdog daemon stopped successfully" in result.output
+    mock_stop_wd.assert_called_once()
+
+
+@patch("ttp.cli.state.read_lock", return_value=None)
+def test_watchdog_status_no_session(mock_read):
+    """watchdog status indicates INACTIVE when no session exists."""
+    result = runner.invoke(app, ["watchdog", "status"])
+    assert result.exit_code == 0
+    assert "INACTIVE (TTP is not running)" in result.output
+
+
+@patch("ttp.cli.state.read_lock", return_value={"watchdog_active": False})
+def test_watchdog_status_inactive(mock_read):
+    """watchdog status shows INACTIVE if session exists but watchdog is disabled."""
+    result = runner.invoke(app, ["watchdog", "status"])
+    assert result.exit_code == 0
+    assert "Watchdog Status: INACTIVE" in result.output
+
+
+@patch("ttp.cli.state.read_lock", return_value={"watchdog_active": True, "watchdog_pid": 9999})
+def test_watchdog_status_active(mock_read):
+    """watchdog status shows ACTIVE and PID if running."""
+    result = runner.invoke(app, ["watchdog", "status"])
+    assert result.exit_code == 0
+    assert "Watchdog Status: ACTIVE" in result.output
+    assert "Watchdog PID: 9999" in result.output
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.watchdog.run_watchdog_loop")
+def test_watchdog_run(mock_run_loop, mock_euid):
+    """watchdog run hidden command executes run_watchdog_loop."""
+    result = runner.invoke(app, ["watchdog", "run", "--interval", "10"])
+    assert result.exit_code == 0
+    mock_run_loop.assert_called_once_with(interval_seconds=10)
+
+
 

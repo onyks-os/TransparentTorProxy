@@ -63,7 +63,7 @@ def test_start_tor_service(mock_generate, mock_write_unit, mock_run):
 
     start_tor_service("tor")
 
-    mock_generate.assert_called_once_with("tor", transport_port=9041, dns_port=9054)
+    mock_generate.assert_called_once_with("tor", transport_port=9041, dns_port=9054, block_doh=True)
     mock_write_unit.assert_called_once_with("tor")
     assert mock_run.call_count == 2
     mock_run.assert_any_call(
@@ -74,6 +74,32 @@ def test_start_tor_service(mock_generate, mock_write_unit, mock_run):
         ["systemctl", "restart", TTP_SERVICE_NAME],
         capture_output=True, text=True, check=True,
     )
+
+
+@patch("ttp.tor_install.os.makedirs")
+@patch("ttp.tor_install.shutil.chown")
+@patch("ttp.tor_install.os.chmod")
+def test_generate_torrc_doh_mitigation(mock_chmod, mock_chown, mock_makedirs, tmp_path: Path):
+    """generate_torrc writes MapAddress use-application-dns.net 0.0.0.0 if block_doh is True."""
+    runtime_dir = tmp_path / "run/tor"
+    cache_dir = tmp_path / "lib/cache"
+    torrc_path = runtime_dir / "torrc"
+
+    with (
+        patch.object(tor_install, "TOR_RUNTIME_DIR", runtime_dir),
+        patch.object(tor_install, "TOR_CACHE_DIR", cache_dir),
+    ):
+        # Genera con block_doh=True (default)
+        generate_torrc("debian-tor", block_doh=True)
+        assert torrc_path.exists()
+        content = torrc_path.read_text()
+        assert "MapAddress use-application-dns.net 0.0.0.0" in content
+
+        # Genera con block_doh=False
+        generate_torrc("debian-tor", block_doh=False)
+        content_no_doh = torrc_path.read_text()
+        assert "MapAddress use-application-dns.net 0.0.0.0" not in content_no_doh
+
 
 
 @patch("ttp.tor_install.subprocess.run")

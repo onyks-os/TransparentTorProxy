@@ -21,7 +21,7 @@ def test_nat_output_chain_ordering(mocked_firewall):
     apply_rules(tor_user="debian-tor")
     ruleset = mocked_firewall["mock_run_string"].call_args[0][0]
     
-    output_block = ruleset.split("chain output")[1].split("}")[0]
+    output_block = ruleset.split("chain output")[1].split("chain filter_out")[0]
     
     # 1. Tor exemption exists
     assert "meta skuid 110 accept" in output_block
@@ -39,11 +39,10 @@ def test_filter_out_chain_completeness(mocked_firewall):
     ruleset = mocked_firewall["mock_run_string"].call_args[0][0]
     
     assert "chain filter_out" in ruleset
-    filter_block = ruleset.split("chain filter_out")[1].split("}")[0]
+    filter_block = ruleset.split("chain filter_out")[1]
     
     expected_rules = [
         "meta skuid 110 accept",
-        "meta skuid 0 accept",
         "ip daddr 127.0.0.0/8 accept",
         "meta nfproto ipv6 drop",
         "reject"
@@ -52,8 +51,14 @@ def test_filter_out_chain_completeness(mocked_firewall):
     for rule in expected_rules:
         assert rule in filter_block, f"Missing critical rule in filter_out: {rule}"
         
+    # By default, root is NOT exempted (allow_root=False)
+    assert "meta skuid 0 accept" not in filter_block
+
     # The last rule must be reject
-    assert filter_block.strip().endswith("reject"), "Filter chain must end with 'reject' kill-switch"
+    clean_filter = filter_block.strip()
+    while clean_filter.endswith("}"):
+        clean_filter = clean_filter[:-1].strip()
+    assert clean_filter.endswith("reject"), "Filter chain must end with 'reject' kill-switch"
 
 def test_prerouting_chain_exists(mocked_firewall):
     """Prerouting chain should be present for gateway support."""

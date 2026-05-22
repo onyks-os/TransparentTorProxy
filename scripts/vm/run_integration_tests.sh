@@ -65,11 +65,37 @@ elif [ "$DISTRO" == "arch" ]; then
     docker exec "$CID" pacman -Sy
 fi
 
+echo "==> Caching container's unproxied public IP..."
+docker exec "$CID" sh -c "curl -s https://api.ipify.org > /tmp/real_public_ip.txt"
+
 echo "==> Running integration tests inside container..."
 set +e
 docker exec -it "$CID" /venv/bin/pytest /app/tests/test_integration.py -v -s
 TEST_EXIT=$?
 set -e
+
+if [ $TEST_EXIT -eq 0 ]; then
+    echo "==> Starting TTP in container for offensive leak tests..."
+    set +e
+    docker exec "$CID" ttp start --watchdog --bootstrap-timeout 300
+    START_EXIT=$?
+    set -e
+    
+    if [ $START_EXIT -eq 0 ]; then
+        echo "==> Running offensive anti-leak verification tests..."
+        set +e
+        REAL_IP=$(docker exec "$CID" cat /tmp/real_public_ip.txt)
+        docker exec -e REAL_PUBLIC_IP="$REAL_IP" "$CID" /venv/bin/pytest /app/tests/leak/ -v -s
+        TEST_EXIT=$?
+        set -e
+        
+        echo "==> Stopping TTP..."
+        docker exec "$CID" ttp stop
+    else
+        echo "==> Failed to start TTP inside the container!"
+        TEST_EXIT=$START_EXIT
+    fi
+fi
 
 echo "==> Cleaning up container..."
 docker stop "$CID"

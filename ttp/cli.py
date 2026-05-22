@@ -41,7 +41,7 @@ from ttp.exceptions import FirewallError, DNSError, StateError, TorError
 
 app = typer.Typer(
     name="ttp",
-    help="TTP - Transparent Tor Proxy. Route all traffic through Tor.",
+    help="TTP - Transparent Tor Proxy. Route all traffic through Tor.\n\nTo view specific options for a command, run: ttp <command> --help (e.g., ttp start --help)",
     add_completion=False,
 )
 console = Console()
@@ -87,7 +87,11 @@ def _setup_logging() -> None:
     """Configure logging based on the CLI state."""
     from logging.handlers import RotatingFileHandler
 
-    state.ensure_runtime_dir()
+    try:
+        state.ensure_runtime_dir()
+    except OSError:
+        # Runtime dir might not be writeable if run without root privileges (e.g. for sub-commands help).
+        pass
 
     try:
         # Volatile log, capped at 1MB to avoid filling RAM
@@ -119,12 +123,14 @@ def _is_port_in_use(port: int) -> bool:
     # Check TCP
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind(("127.0.0.1", port))
     except OSError:
         return True
     # Check UDP
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind(("127.0.0.1", port))
     except OSError:
         return True
@@ -187,6 +193,14 @@ def _do_stop() -> None:
     if lock is None:
         return
 
+    # Preventive shutdown of the watchdog to avoid triggering emergency killswitch
+    console.print(f"{_PREFIX} Stopping watchdog daemon...")
+    from ttp import watchdog as wd
+    try:
+        wd.stop_watchdog()
+    except Exception:
+        pass
+
     # Graceful circuit teardown BEFORE touching the firewall.
     # This ensures Tor closes all circuits cryptographically so no
     # cleartext RST packets leak when nftables rules are removed.
@@ -242,6 +256,22 @@ def start(
         "--dns-port",
         "-d",
         help="Port for Tor's DNSPort redirect.",
+    ),
+    allow_root: bool = typer.Option(
+        False,
+        "--allow-root",
+        help="Allow root processes to bypass Tor routing (not recommended, increases leak risk).",
+    ),
+    no_lan_bypass: bool = typer.Option(
+        False,
+        "--no-lan-bypass",
+        help="Do not bypass Tor routing for local subnets (RFC 1918 & Link-Local).",
+    ),
+    watchdog: bool = typer.Option(
+        False,
+        "--watchdog",
+        "-w",
+        help="Start the background watchdog daemon to monitor session integrity.",
     ),
 ) -> None:
     """Start the transparent Tor proxy session."""
@@ -330,12 +360,16 @@ def start(
             "  [yellow]If Tor fails to bootstrap, consider stopping it: sudo systemctl stop firewalld[/yellow]\n"
         )
 
+    lan_bypass = not no_lan_bypass
+
     # Step 2 - Apply stateless firewall rules.
     try:
         firewall.apply_rules(
             tor_user=tor_user,
             transport_port=transport_port,
             dns_port=dns_port,
+            allow_root=allow_root,
+            lan_bypass=lan_bypass,
         )
     except FirewallError as exc:
         _print_error("Firewall Setup Failed", str(exc))
@@ -372,6 +406,8 @@ def start(
             dns_backup=dns_backup,
             transport_port=transport_port,
             dns_port=dns_port,
+            allow_root=allow_root,
+            lan_bypass=lan_bypass,
         )
     except StateError as exc:
         logger.error("Failed to write lock: %s", exc)
@@ -396,6 +432,15 @@ def start(
         )
         if exit_ip != "unknown":
             console.print(f"{_PREFIX} [yellow]Detected IP: {exit_ip}[/]")
+
+    if watchdog:
+        console.print(f"{_PREFIX} Starting session watchdog daemon...")
+        from ttp import watchdog as wd
+        try:
+            wd.start_watchdog()
+        except Exception as e:
+            _print_error("Watchdog Error", f"Failed to start session watchdog: {e}")
+
     console.print(f"{_PREFIX} Use 'ttp stop' to terminate. 'ttp refresh' to change IP.")
 
     # One-time discrete message to encourage GitHub stars.
@@ -419,6 +464,13 @@ def stop(
 
     if restore_only:
         console.print(f"{_PREFIX} Forcing network restoration (restore-only)...")
+
+        # Stop watchdog first
+        from ttp import watchdog as wd
+        try:
+            wd.stop_watchdog()
+        except Exception:
+            pass
 
         # Graceful shutdown even in restore-only mode
         from ttp import tor_control
@@ -469,6 +521,22 @@ def restart(
         "-d",
         help="Port for Tor's DNSPort redirect.",
     ),
+    allow_root: bool = typer.Option(
+        False,
+        "--allow-root",
+        help="Allow root processes to bypass Tor routing (not recommended, increases leak risk).",
+    ),
+    no_lan_bypass: bool = typer.Option(
+        False,
+        "--no-lan-bypass",
+        help="Do not bypass Tor routing for local subnets (RFC 1918 & Link-Local).",
+    ),
+    watchdog: bool = typer.Option(
+        False,
+        "--watchdog",
+        "-w",
+        help="Start the background watchdog daemon to monitor session integrity.",
+    ),
 ) -> None:
     """Restart the transparent Tor proxy session."""
     _require_root()
@@ -485,6 +553,9 @@ def restart(
         bootstrap_timeout=bootstrap_timeout,
         transport_port=transport_port,
         dns_port=dns_port,
+        allow_root=allow_root,
+        no_lan_bypass=no_lan_bypass,
+        watchdog=watchdog,
     )
 
 
@@ -550,6 +621,14 @@ def status() -> None:
     console.print(f"{_PREFIX} Status: [bold green]ACTIVE[/]")
     console.print(f"{_PREFIX} TransPort: {lock.get('transport_port', 9041)}")
     console.print(f"{_PREFIX} DNSPort: {lock.get('dns_port', 9054)}")
+    console.print(f"{_PREFIX} LAN Bypass: {'[green]Enabled[/]' if lock.get('lan_bypass', True) else '[red]Disabled[/]'}")
+    console.print(f"{_PREFIX} Allow Root: {'[red]Yes[/]' if lock.get('allow_root', False) else '[green]No[/]'}")
+    
+    wd_active = lock.get("watchdog_active", False)
+    wd_pid = lock.get("watchdog_pid")
+    wd_status_str = f"[green]Active (PID {wd_pid})[/]" if wd_active else "[red]Inactive[/]"
+    console.print(f"{_PREFIX} Watchdog: {wd_status_str}")
+
     console.print(f"{_PREFIX} Exit IP: {exit_ip}")
     console.print(f"{_PREFIX} Session started: {lock.get('timestamp', 'unknown')}")
     console.print(f"{_PREFIX} Process PID: {lock.get('pid', 'unknown')}")
@@ -559,27 +638,19 @@ def status() -> None:
 def check() -> None:
     """Quickly verify Tor network connection and circuit state."""
     import time
-    import urllib.request
-    import json
     from ttp import tor_control
 
     console.print(f"{_PREFIX} Checking Tor network connection...")
 
     start_time = time.time()
-    try:
-        req = urllib.request.Request(
-            "https://check.torproject.org/api/ip",
-            headers={"User-Agent": "ttp/0.1"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-        latency = round((time.time() - start_time) * 1000)
+    # Call the highly resilient verify_tor() which retries 5 times across multiple endpoints
+    is_tor, ip = tor_control.verify_tor()
+    latency = round((time.time() - start_time) * 1000)
 
-        ip = data.get("IP", "Unknown")
-        is_tor = data.get("IsTor", False)
-    except Exception as e:
+    if ip == "unknown":
         console.print(
-            f"{_PREFIX} [bold red]Failed to reach check.torproject.org:[/bold red] {e}"
+            f"{_PREFIX} [bold red]Failed to reach any IP verification endpoint.[/bold red] "
+            "Please check your internet connection or Tor service state."
         )
         raise typer.Exit(code=1)
 
@@ -594,7 +665,17 @@ def check() -> None:
     console.print(f"  [cyan]-[/cyan] TransPort:       {transport_port}")
     console.print(f"  [cyan]-[/cyan] DNSPort:         {dns_port}")
     console.print(
+        f"  [cyan]-[/cyan] LAN Bypass:      {'[bold green]Enabled[/]' if lock and lock.get('lan_bypass', True) else '[bold red]Disabled[/]'}"
+    )
+    console.print(
+        f"  [cyan]-[/cyan] Allow Root:      {'[bold red]Yes[/]' if lock and lock.get('allow_root', False) else '[bold green]No[/]'}"
+    )
+    console.print(
         f"  [cyan]-[/cyan] Tor Network:     {'[bold green]Yes (IsTor=True)[/]' if is_tor else '[bold red]No[/]'}"
+    )
+    wd_active = lock.get("watchdog_active", False) if lock else False
+    console.print(
+        f"  [cyan]-[/cyan] Watchdog:        {'[bold green]Active[/]' if wd_active else '[bold red]Inactive[/]'}"
     )
     console.print(f"  [cyan]-[/cyan] API Latency:     {latency} ms")
     console.print(
@@ -817,6 +898,67 @@ def logs() -> None:
 
     console.print(f"{_PREFIX} Displaying logs from [bold]{_LOG_PATH}[/bold]...")
     console.print(_LOG_PATH.read_text(encoding="utf-8"))
+
+
+watchdog_app = typer.Typer(
+    name="watchdog",
+    help="Manage the TTP background session watchdog.",
+    add_completion=False,
+)
+app.add_typer(watchdog_app)
+
+
+@watchdog_app.command(name="start")
+def watchdog_start() -> None:
+    """Start the background session watchdog manually."""
+    _require_root()
+    if state.read_lock() is None:
+        _print_error("Session Error", "No active TTP session found. Start TTP first.")
+        raise typer.Exit(code=1)
+    from ttp import watchdog as wd
+    wd.start_watchdog()
+    console.print(f"{_PREFIX} Watchdog daemon started successfully.")
+
+
+@watchdog_app.command(name="stop")
+def watchdog_stop() -> None:
+    """Stop the background session watchdog manually."""
+    _require_root()
+    from ttp import watchdog as wd
+    wd.stop_watchdog()
+    console.print(f"{_PREFIX} Watchdog daemon stopped successfully.")
+
+
+@watchdog_app.command(name="status")
+def watchdog_status() -> None:
+    """Show the background session watchdog status."""
+    lock = state.read_lock()
+    if lock is None:
+        console.print(f"{_PREFIX} Status: [bold red]INACTIVE[/] (TTP is not running)")
+        raise typer.Exit(code=0)
+
+    active = lock.get("watchdog_active", False)
+    pid = lock.get("watchdog_pid")
+
+    if active:
+        console.print(f"{_PREFIX} Watchdog Status: [bold green]ACTIVE[/]")
+        console.print(f"{_PREFIX} Watchdog PID: {pid or 'unknown'}")
+    else:
+        console.print(f"{_PREFIX} Watchdog Status: [bold red]INACTIVE[/]")
+
+
+@watchdog_app.command(name="run", hidden=True)
+def watchdog_run(
+    interval: int = typer.Option(15, "--interval", help="Check interval in seconds.")
+) -> None:
+    """Internal entrypoint for running the watchdog daemon loop."""
+    _require_root()
+    from ttp import watchdog as wd
+    try:
+        wd.run_watchdog_loop(interval_seconds=interval)
+    except Exception as e:
+        logger.critical("Watchdog loop crashed: %s", e)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,8 @@ DESIGN PRINCIPLE:
 
 from __future__ import annotations
 
+from typing import Any
+
 import re
 import shutil
 import subprocess
@@ -199,7 +201,7 @@ def is_firewalld_active() -> bool:
 def detect_tor(
     transport_port: int | None = None,
     dns_port: int | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Run all detection checks and return a summary dictionary.
 
     Returns

@@ -48,6 +48,7 @@ The project is divided into independent Python modules. Each module has a single
 | `state.py`       | **State**        | Manages volatile lock file in `/run/ttp` and recovery logic.                     |
 | `tor_control.py` | **Control**      | Encapsulates Tor interaction (Stem, Bootstrap, IP Check).                        |
 | `system_info.py` | **Diagnostic**   | Gathers system state (torrc, rules, logs) for debugging.                         |
+| `watchdog.py`    | **Watchdog**     | Manages the session background watchdog, auto-healing, and emergency killswitch. |
 | `cli.py`         | **Interface**    | Typer entry point: start, stop, refresh, status, check, logs, etc.               |
 
 ### 2.1 Execution Flow - `start`
@@ -59,12 +60,14 @@ The project is divided into independent Python modules. Each module has a single
 5. **firewall**: Generates and atomically applies rules in isolated `inet ttp` table.
 6. **dns**: Clears any stale overlays (idempotency guard), then modifies active interface DNS using `mount --bind` overlay on `/etc/resolv.conf`.
 7. **state**: Initializes volatile runtime in `/run/ttp` and writes lock file.
-8. **cli**: Waits for Tor bootstrap via ControlSocket, verifies IP, and returns to the prompt.
+8. **cli**: Waits for Tor bootstrap via ControlSocket, verifies IP.
+9. **watchdog**: Starts the volatile systemd watchdog service (`ttp-watchdog.service`) if watchdog monitoring is enabled.
+10. **cli**: Returns to the prompt.
 
 ### 2.2 Execution Flow - `stop` / crash
 
 > [!NOTE]  
-> **Normal:** `ttp stop` -> graceful Tor `SHUTDOWN` -> restores firewall/DNS -> deletes lock.
+> **Normal:** `ttp stop` -> stops the watchdog service -> graceful Tor `SHUTDOWN` -> restores firewall/DNS -> deletes lock.
 
 > [!TIP]
 > **Emergency Restore:** `ttp stop --restore-only` bypasses session checks and forces network cleanup. Useful if TTP crashed and the lock file was lost.
@@ -112,9 +115,13 @@ Generates rules applied atomically via `nft -f` into the dedicated `inet ttp` ta
 1. **Stateless Logic**: No system-wide rule backups are performed. All modifications are isolated to the `ttp` table.
 2. **Atomic Cleanup**: Restoration is performed via `nft destroy table inet ttp`, which is faster and safer than rule-by-rule deletion.
 3. **Multi-Chain Architecture**:
-    * **NAT Hook (output/prerouting)**: Handles the actual redirection of TCP and DNS packets to Tor's ports (`9040` and `9053`).
-    * **Filter Hook (output)**: Implements the **Kill-Switch**. It explicitly allows Tor/Local/Root traffic and rejects everything else.
-4. **Execution Sequence**: Tor/Root exclusion -> Redirect DNS -> Accept loopback -> Redirect TCP -> Block IPv6 -> Reject All.
+    * **NAT Hook (output/prerouting)**: Handles the actual redirection of TCP and DNS packets to Tor's ports (`9041` and `9054`).
+    * **Filter Hook (output)**: Implements the **Kill-Switch**. It allows Tor, optional Root/LAN bypass, and local loopback traffic, while rejecting everything else.
+4. **Execution Sequence**: Tor/Root (optional) exclusion -> LAN Bypass (optional) -> Redirect DNS -> Accept loopback -> Redirect TCP -> Block DoT -> Block IPv6 -> Reject All.
+5. **Selective Root Routing**: By default, root and `sudo` traffic is routed through Tor. The `--allow-root` CLI flag allows root processes to bypass Tor (allowing system updates or Tor bootstrapping).
+6. **LAN Bypass**: Automatically active by default. Excludes RFC 1918 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) and Link-Local (169.254.0.0/16) subnets from redirection, allowing communication with local devices (NAS, printers). Can be disabled via `--no-lan-bypass`.
+7. **DNS-over-TLS (DoT) Prevention**: Drops outbound port 853 connections (`tcp dport 853 reject` inside `filter_out`) to prevent encrypted DNS queries from leaking or bypassing the Tor resolver.
+8. **Emergency Killswitch**: The `apply_emergency_killswitch()` function replaces the table rules with a minimal configuration that drops all inbound, outbound, and forwarded physical interface traffic while allowing only local loopback (`lo`). Used by the watchdog during critical integrity failures.
 
 ### 3.4 `dns.py`
 
@@ -125,7 +132,9 @@ Implements a **stateless overlay** by bind-mounting a volatile resolver file fro
 * **Non-destructive:** Does not alter disk metadata; the original file is preserved "under" the mount.
 * **Lazy Teardown:** Uses `umount -l` (lazy) on shutdown to ensure immediate release even if processes are currently reading the file.
 * **Volatile:** Being a `mount --bind` on a `tmpfs` file, it evaporates on hard reboot.
-* **Architectural Limit (DoH/DoT):** DNS-over-HTTPS (port 443) and DNS-over-TLS (port 853) traffic is intercepted by the TCP NAT and anonymized via Tor. However, since these protocols use encrypted wrappers, they bypass Tor's internal resolver. While the traffic remains anonymous, the queries are not handled by the Tor daemon itself, which may lead to fingerprinting if using specific providers (e.g., NextDNS).
+* **DoH/DoT Leak Mitigation:**
+  * **DoT (port 853)**: Actively blocked at the firewall level (see `firewall.py`).
+  * **DoH (port 443)**: Browser-level DNS-over-HTTPS is mitigated by mapping Mozilla's canary domain `use-application-dns.net` to `0.0.0.0` inside the generated `torrc` file. This signals to compliant browsers that DoH should be disabled, forcing them to fall back to the system's DNS resolver which is safely routed through Tor.
 
 ### 3.5 `state.py`
 
@@ -156,9 +165,21 @@ Pure data gathering module, decoupled from UI.
 * Captures DNS state from `/etc/resolv.conf` overlay.
 * Returns results as a flat dictionary for the CLI to render.
 
-### 3.9 Architecture Graph & Module Interactions
+### 3.9 `watchdog.py`
 
-The following dependency graph illustrates how modules interact with each other and with the underlying Linux system. `cli.py` acts as the controller, coordinating the specialized modules.
+Implements continuous, proactive session monitoring and auto-healing features to ensure absolute traffic security.
+
+* **Volatile Service Daemon**: Configures and writes a dynamic systemd service unit (`/run/systemd/system/ttp-watchdog.service`) that runs the command `ttp watchdog run`. Because it resides in `/run/`, it evaporates on system reboot.
+* **Continuous Monitoring Loop**: Inspects the core subsystems every 15 seconds:
+  1. **DNS Integrity**: Confirms `/etc/resolv.conf` (or its realpath) is still a valid active `mount --bind` mountpoint.
+  2. **Firewall Integrity**: Confirms that the `inet ttp` nftables table exists and contains the `filter_out` chain.
+  3. **Tor daemon health**: Confirms the ControlSocket is open and active, falling back to checking if the systemd `ttp-tor.service` is in an active state.
+* **Auto-Healing ("First Strike")**: If an integrity check fails, the watchdog triggers a single-strike recovery attempt based on the failing component (e.g. re-running DNS overlay, regenerating firewall rules, or restarting the `ttp-tor` service). It then sleeps for 3 seconds to let changes stabilize.
+* **Emergency Killswitch ("Second Strike")**: If the subsequent check still fails, the watchdog instantly activates the emergency killswitch via `firewall.apply_emergency_killswitch()`, completely isolating the physical network interfaces to prevent traffic leakage. It then alerts the user using a system-wide terminal broadcast (`wall`) and a critical desktop popup (`notify-send`).
+
+### 3.10 Architecture Graph & Module Interactions
+
+The following dependency graph illustrates how modules interact with each other and with the underlying Linux system. `cli.py` acts as the controller, coordinating the specialized modules, and `watchdog.py` runs as a daemon monitoring session health.
 
 ```mermaid
 %%{init: {
@@ -186,6 +207,7 @@ graph TD
     DNS["dns.py<br/>Routing"]:::module
     CONTROL["tor_control.py<br/>Stem / Tor API"]:::module
     SYSINFO["system_info.py<br/>Diagnostics"]:::module
+    WATCHDOG["watchdog.py<br/>Session Integrity"]:::module
 
     TOR(("Tor Daemon")):::system
     KERNEL(("Linux Kernel / OS")):::system
@@ -197,6 +219,7 @@ graph TD
     CLI -->|4. Redirects queries| DNS
     CLI -->|5. Starts ttp-tor| TOR
     CLI -->|6. Verifies & rotates IP| CONTROL
+    CLI -->|7. Starts integrity checks| WATCHDOG
     CLI -->|Generates reports| SYSINFO
 
     %% Inter-module Dependencies
@@ -205,6 +228,9 @@ graph TD
     SYSINFO -->|Reads lock file| STATE
     SYSINFO -->|Reads DNS config| DNS
     SYSINFO -->|Checks Bootstrap| CONTROL
+    WATCHDOG -->|Reads state lock| STATE
+    WATCHDOG -->|Restores DNS overlay| DNS
+    WATCHDOG -->|Re-applies/isolates firewall| FIREWALL
 
     %% System Interactions
     INSTALL -->|Generates volatile torrc & unit| KERNEL
@@ -213,6 +239,7 @@ graph TD
     DETECT -->|Scans processes & OS| KERNEL
     TOR -->|Managed via systemctl| KERNEL
     CONTROL -->|ControlSocket / Port| TOR
+    WATCHDOG -->|Monitors ttp-tor & writes service| KERNEL
 ```
 
 ---
@@ -221,9 +248,9 @@ graph TD
 
 *All commands require `sudo`.*
 
-* `ttp start` (with optional `--interface` and `--bootstrap-timeout`)
+* `ttp start` (with optional `--interface`, `--bootstrap-timeout`, `--allow-root`, `--no-lan-bypass`, and `--watchdog`/`-w`)
 * `ttp stop` (with optional `--restore-only`)
-* `ttp restart`
+* `ttp restart` (with same options as `start`)
 * `ttp refresh`
 * `ttp status`
 * `ttp check`
@@ -231,6 +258,10 @@ graph TD
 * `ttp logs`
 * `ttp diagnose`
 * `ttp uninstall`
+* `ttp watchdog start` (manually starts the watchdog daemon)
+* `ttp watchdog stop` (manually stops the watchdog daemon)
+* `ttp watchdog status` (displays watchdog status and PID)
+* `ttp watchdog run` (internal command running the continuous monitoring loop)
 
 ---
 
@@ -346,9 +377,10 @@ TTP employs a `Makefile` in the root directory to provide a unified entry point 
 *(Tests run without root, using `unittest.mock`)*
 
 * **`test_tor_detect.py`**: Verifies dictionary output across varying torrc and process states.
-* **`test_firewall.py`**: Asserts DNS redirect appears BEFORE loopback accept (critical). Verifies IPv6 drop.
-* **`test_dns.py`**: Asserts correct mount --bind overlay and lazy umount.
+* **`test_firewall.py`**: Asserts DNS redirect appears BEFORE loopback accept (critical). Verifies IPv6 drop, DoT rejection, and emergency killswitch table application.
+* **`test_dns.py`**: Asserts correct mount --bind overlay, stale mount cleanup, and lazy umount.
 * **`test_state.py`**: Asserts lock creation, reading, and orphan detection.
-* **`test_cli.py`**: Verifies command orchestration and UI flow.
-* **`test_tor_control.py`**: Verifies Tor daemon interaction and IP checking logic.
-* **`test_tor_install.py`**: Asserts correct PM selection, torrc generation, and service management.
+* **`test_cli.py`**: Verifies command orchestration, option injection, UI flow, and non-root OSError safety.
+* **`test_tor_control.py`**: Verifies Tor daemon interaction, IP checking logic, and circuit bootstrap/rotation.
+* **`test_tor_install.py`**: Asserts correct PM selection, torrc generation (including DoH blocking mapping), and service management.
+* **`test_watchdog.py`**: Verifies volatile systemd unit generation, watchdog start/stop flow (mocking systemctl commands), integrity check behavior under healthy/failing states, auto-healing routing for DNS/Firewall/Tor, emergency killswitch execution, and watchdog main loop iteration logic.

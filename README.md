@@ -56,6 +56,10 @@ If you want to contribute to making transparent proxying safer and more robust, 
 
 ## Features
 
+* **Watchdog Daemon & Emergency Killswitch** - Background session daemon monitoring system integrity (Tor status, nftables table/chain presence, and DNS overlay mount) every 15s. Performs auto-healing or triggers total network lockout (killswitch) under persistent failure.
+* **LAN Bypass** - Excludes local subnets (RFC 1918 & Link-Local) dynamically from routing to allow direct access to local devices (NAS, printers).
+* **DNS Leak DoH/DoT Mitigation** - Blocks outgoing DoT on port 853 and injects a `MapAddress` rule in `torrc` to disable browser-level DoH (canary domain).
+* **Selective Root Routing** - Routes all root and `sudo` command traffic through Tor by default, with `--allow-root` to bypass if needed.
 * **Volatile Standard Core** - Fully volatile runtime. All session data, locks, and temporary configs are stored in `tmpfs` (/run/ttp), wiped automatically on reboot.
 * **Pre-flight Safety Check** - Verifies sufficient `tmpfs` space before execution to prevent out-of-memory crashes mid-setup.
 * **DNS leak prevention** - Stateless `mount --bind` overlay strategy for `/etc/resolv.conf`, with automatic stale mount cleanup for absolute idempotency.
@@ -86,8 +90,8 @@ Choose the method that best fits your needs. **Native packages are strongly reco
 
 Installing via native packages ensures that all system dependencies (`tor`, `nftables`) and kernel-level optimizations (SELinux) are managed by your OS package manager.
 
-* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.3.0_all.deb`
-* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.3.0-1.fc43.noarch.rpm`
+* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.3.5_all.deb`
+* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.3.5-1.fc43.noarch.rpm`
 * **Arch Linux**: `cd packaging && makepkg -si`
 
 ---
@@ -146,12 +150,40 @@ sudo ln -s ~/.local/share/ttp-venv/bin/ttp /usr/local/bin/ttp
 ## Usage
 
 > [!IMPORTANT]
-> All commands require `sudo`. Except `ttp status` and `ttp --help`.
+> All commands require `sudo`. Except `ttp status`, `ttp check`, `ttp check-leak`, `ttp watchdog status`, and `ttp --help`.
+
+### Recommended Modes (Operational Security Profiles)
+
+Depending on your security model and task, we recommend the following setups:
+
+#### 1. Daily Privacy Profile (Standard)
+* **Goal**: Anonymize general browsing, bypass geographic restrictions, or hide ISP snooping with minimal overhead.
+* **Command**:
+  ```bash
+  sudo ttp start
+  ```
+* **Why**: Runs without background active processes (no watchdog overhead), utilizing extremely efficient `nftables` redirect rules and local bypass for smooth home/work LAN printer/NAS sharing.
+
+#### 2. Maximum Security Profile (High-Risk)
+* **Goal**: Whistleblowing, high-risk activity, total protection against accidental cleartext leaks or network state changes.
+* **Command**:
+  ```bash
+  sudo ttp start --watchdog --no-lan-bypass
+  ```
+* **Why**: Starts the continuous background **Watchdog** daemon to monitor state integrity every 15s. Disables LAN bypass to prevent side-channel leaks to local LAN devices. If any component (DNS overlay, nftables, or Tor daemon) is tampered with or fails, the system instantly isolates the network completely (Emergency Killswitch) and notifies you.
+
+#### 3. Administrative / Maintenance Profile
+* **Goal**: Perform local updates (e.g., `apt update`, `dnf upgrade`) or maintenance that requires high bandwidth or direct native route while Tor is active, or speed up initial bootstrapping.
+* **Command**:
+  ```bash
+  sudo ttp start --allow-root
+  ```
+* **Why**: Routes all default user/system processes through Tor, but exempts system root processes (`uid 0`) allowing them to communicate directly in cleartext for updates or troubleshooting. (Use with caution: increases risk of tool/script leaks if run under sudo).
 
 ### Start the proxy
 
 ```bash
-sudo ttp start [--interface <iface>] [--bootstrap-timeout <seconds>]
+sudo ttp start [--interface <iface>] [--bootstrap-timeout <seconds>] [--allow-root] [--no-lan-bypass] [--watchdog]
 ```
 
 > [!TIP]
@@ -209,7 +241,7 @@ sudo ttp status
 ### Restart the session
 
 ```bash
-sudo ttp restart [--interface <iface>] [--bootstrap-timeout <seconds>]
+sudo ttp restart [--interface <iface>] [--bootstrap-timeout <seconds>] [--allow-root] [--no-lan-bypass] [--watchdog]
 ```
 
 *Shortcut for `ttp stop` followed by `ttp start`. Convenient for applying new settings or clearing network glitches.*
@@ -237,6 +269,19 @@ sudo ttp logs
 ```
 
 *Streams real-time logs from the volatile log file at `/run/ttp/ttp.log`.*
+
+### Manage session watchdog
+
+```bash
+# Start background session watchdog manually
+sudo ttp watchdog start
+
+# Stop background session watchdog manually
+sudo ttp watchdog stop
+
+# Show background session watchdog status
+ttp watchdog status
+```
 
 ## Manual Leak Verification
 
@@ -289,16 +334,19 @@ sudo ./scripts/uninstall.sh
           * `filter_out` (Filter): Acts as a **Kill-Switch**.
       * **Execution Sequence**:
           1. **Exclude Tor user** (prevents routing loops).
-          2. **Exclude root processes** (system stability).
-          3. **Intercept DNS** (UDP `:53`) and redirect to Tor's DNSPort.
-          4. **Accept loopback** and local traffic (required for redirected packets).
-          5. **Redirect all TCP** to Tor's TransPort (`:9040`).
-          6. **Drop all IPv6** output to prevent leaks.
-          7. **Kill-Switch (Reject)**: Terminate any cleartext traffic that bypassed redirection (e.g., pre-existing connections).
+          2. **Bypass local LAN traffic** (unless `--no-lan-bypass` is passed).
+          3. **Block DoT DNS leak** (reject TCP `dport 853`).
+          4. **Route root processes** (routed by default, unless `--allow-root` is passed).
+          5. **Intercept DNS** (UDP `:53`) and redirect to Tor's DNSPort.
+          6. **Accept loopback** and local traffic (required for redirected packets).
+          7. **Redirect all TCP** to Tor's TransPort (`:9040`).
+          8. **Drop all IPv6** output to prevent leaks.
+          9. **Kill-Switch (Reject)**: Terminate any cleartext traffic that bypassed redirection (e.g., pre-existing connections).
 6. **DNS** - redirects DNS resolution using a `mount --bind` overlay on `/etc/resolv.conf`.
 7. **Bootstrap** - waits for Tor to reach 100% bootstrap via the control interface.
 8. **Verification** - confirms traffic is routed through Tor via multiple endpoints (`check.torproject.org`, `ipify`, `ifconfig.me`).
 9. **State** - writes a JSON lock file at `/run/ttp/ttp.lock` (volatile) for recovery.
+10. **Watchdog** - if `--watchdog` / `-w` is active (or started manually), starts a volatile daemon systemd service (`ttp-watchdog.service`) that verifies Tor, nftables, and DNS overlay mount integrity. If integrity checks fail persistently (two consecutive strikes), it invokes `apply_emergency_killswitch()` to dynamically isolate the network and alert the user via `wall` and desktop notifications.
 
 ## Crash Recovery
 
@@ -400,8 +448,9 @@ sudo ttp diagnose
 │   ├── dns.py              # DNS leak prevention
 │   ├── state.py            # Lock file and crash recovery
 │   ├── tor_control.py      # Tor daemon interaction and API
+│   ├── watchdog.py         # Session integrity watchdog and auto-healing
 │   └── system_info.py      # System diagnostic gathering
-├── tests/                  # Unit tests (mocked)
+├── tests/                  # Unit tests (mocked) and test_watchdog.py
 └── docs/
     └── architecture.md     # Technical Architecture & Design
 ```

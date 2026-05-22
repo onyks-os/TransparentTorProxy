@@ -47,6 +47,7 @@ def generate_torrc(
     tor_user: str,
     transport_port: int = 9041,
     dns_port: int = 9054,
+    block_doh: bool = True,
 ) -> Path:
     """Generate a volatile ``torrc`` in ``/run/tor/ttp/torrc``.
 
@@ -61,6 +62,8 @@ def generate_torrc(
         The customized or default TransPort port.
     dns_port:
         The customized or default DNSPort port.
+    block_doh:
+        If True, block DNS-over-HTTPS by resolving its canary domain to 0.0.0.0.
 
     Returns
     -------
@@ -109,6 +112,9 @@ def generate_torrc(
         "ClientUseIPv6 0",
         f"DataDirectory {TOR_CACHE_DIR}",
     ]
+    if block_doh:
+        lines.append("MapAddress use-application-dns.net 0.0.0.0")
+
     if tor_user != "root":
         lines.append(f"User {tor_user}")
 
@@ -163,6 +169,7 @@ def start_tor_service(
     tor_user: str,
     transport_port: int = 9041,
     dns_port: int = 9054,
+    block_doh: bool = True,
 ) -> None:
     """Generate the runtime torrc and start a dedicated TTP Tor service.
 
@@ -182,8 +189,15 @@ def start_tor_service(
         The customized or default TransPort port.
     dns_port:
         The customized or default DNSPort port.
+    block_doh:
+        If True, block DNS-over-HTTPS via canary mapping.
     """
-    generate_torrc(tor_user, transport_port=transport_port, dns_port=dns_port)
+    generate_torrc(
+        tor_user,
+        transport_port=transport_port,
+        dns_port=dns_port,
+        block_doh=block_doh,
+    )
     _write_service_unit(tor_user)
 
     try:
@@ -369,6 +383,7 @@ def remove_selinux_module() -> None:
 def ensure_tor_ready(
     transport_port: int = 9041,
     dns_port: int = 9054,
+    block_doh: bool = True,
 ) -> dict[str, Any]:
     """Ensure Tor is installed and start it via the OS native service.
 
@@ -390,6 +405,11 @@ def ensure_tor_ready(
     tor_user = info.get("tor_user", "debian-tor")
 
     # Start Tor via the dedicated ttp-tor service
-    start_tor_service(tor_user, transport_port=transport_port, dns_port=dns_port)
+    start_tor_service(
+        tor_user,
+        transport_port=transport_port,
+        dns_port=dns_port,
+        block_doh=block_doh,
+    )
 
     return info
