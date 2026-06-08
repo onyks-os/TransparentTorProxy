@@ -40,7 +40,7 @@ except ImportError:
     Controller = None
     Signal = None
 
-# TTP instance control socket (never fall back to system Tor — see get_controller).
+# TTP instance control socket (never fall back to system Tor - see get_controller).
 _TTP_CONTROL_SOCKET = "/run/tor/ttp/control.sock"
 
 
@@ -72,7 +72,7 @@ def get_controller():
 
     Uses exclusively ``ControlSocket /run/tor/ttp/control.sock`` so
     bootstrap queries, NEWNYM, and shutdown signals always target TTP's
-    isolated instance — never ``tor.service`` or TCP ControlPort.
+    isolated instance - never ``tor.service`` or TCP ControlPort.
     Returns an authenticated :class:`stem.control.Controller` or ``None``.
     """
     if Controller is None:
@@ -110,24 +110,33 @@ def wait_for_bootstrap(
         time.sleep(2)
 
     if not controller:
-        raise TorError(f"Could not connect to Tor control interface after {bootstrap_conn_timeout}s.")
+        raise TorError(
+            f"Could not connect to Tor control interface after {bootstrap_conn_timeout}s."
+        )
 
     # 2. Monitor bootstrap progress.
-    with controller:
-        for _ in range(timeout):  # Use the provided timeout (default 90)
-            status = controller.get_info("status/bootstrap-phase")
-            match = re.search(r"PROGRESS=(\d+)", status)
-            progress_val = int(match.group(1)) if match else 0
+    try:
+        with controller:
+            for _ in range(timeout):  # Use the provided timeout (default 90)
+                status = controller.get_info("status/bootstrap-phase")
+                match = re.search(r"PROGRESS=(\d+)", status)
+                progress_val = int(match.group(1)) if match else 0
 
-            if progress_callback:
-                progress_callback(progress_val)
+                if progress_callback:
+                    progress_callback(progress_val)
 
-            if "PROGRESS=100" in status:
-                return True
+                if "PROGRESS=100" in status:
+                    return True
 
-            time.sleep(1)
+                time.sleep(1)
 
-        raise TorError("Tor bootstrap timed out.")
+            raise TorError("Tor bootstrap timed out.")
+    except Exception as e:
+        if isinstance(e, TorError):
+            raise
+        raise TorError(
+            f"Tor control socket communication failed during bootstrap: {e}"
+        ) from e
 
 
 def verify_tor() -> tuple[bool, str]:
@@ -184,8 +193,11 @@ def request_new_circuit() -> tuple[bool, str]:
             "Cannot connect to Tor control interface. Check that Tor is running."
         )
 
-    with ctrl:
-        ctrl.signal(Signal.NEWNYM)
+    try:
+        with ctrl:
+            ctrl.signal(Signal.NEWNYM)
+    except Exception as e:
+        raise TorError(f"Failed to request new circuit from Tor controller: {e}") from e
 
     new_ip = old_ip
 
@@ -240,4 +252,3 @@ def graceful_shutdown(timeout: int = 10) -> bool:
         return True
     except Exception:
         return False
-

@@ -1,13 +1,12 @@
-
-module ttp_tor_policy 1.0;
+module ttp_tor_policy 1.1;
 
 require {
 	type tor_t;
-	type tor_port_t;
+	type unreserved_port_t;
+	class tcp_socket name_bind;
 	class udp_socket name_bind;
 }
 
 #============= tor_t ==============
-
-#!!!! This avc can be allowed using the boolean 'tor_bind_all_unreserved_ports'
-allow tor_t tor_port_t:udp_socket name_bind;
+allow tor_t unreserved_port_t:tcp_socket name_bind;
+allow tor_t unreserved_port_t:udp_socket name_bind;

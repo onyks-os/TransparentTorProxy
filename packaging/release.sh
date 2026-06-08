@@ -59,7 +59,7 @@ echo ""
 # Step 1: clean old packaging artifacts
 echo "[1/5] Cleaning old system artifacts..."
 rm -rf "$(pwd)/.build_tmp"
-rm -f "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/SHA256SUMS.txt
+rm -f "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.whl "$RELEASE_DIR"/SHA256SUMS.txt
 echo "      Done."
 echo ""
 
@@ -87,12 +87,18 @@ else
 fi
 echo ""
 
+# Step 3.5: copy python artifacts
+echo "[3.5/5] Copying Python source distribution and wheel to release directory..."
+cp dist/*.tar.gz dist/*.whl "$RELEASE_DIR"/
+echo "      Done."
+echo ""
+
 # Step 4: SHA256 checksums for packages
 echo "[4/5] Generating SHA256 checksums..."
 (
     cd "$RELEASE_DIR"
     PACKAGES=()
-    for ext in deb rpm; do
+    for ext in deb rpm tar.gz whl; do
         for f in *."$ext"; do
             [ -f "$f" ] && PACKAGES+=("$f")
         done
@@ -112,8 +118,7 @@ echo ""
 echo "============================================"
 echo "  Release artifacts ready:"
 echo "============================================"
-ls -lh "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/SHA256SUMS.txt 2>/dev/null || :
-ls -lh dist/* 2>/dev/null || :
+ls -lh "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.whl "$RELEASE_DIR"/SHA256SUMS.txt 2>/dev/null || :
 echo ""
 echo "SHA256 checksums:"
 cat "$RELEASE_DIR/SHA256SUMS.txt" 2>/dev/null || echo "N/A"

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon.png" width="200" alt="TTP Logo">
+  <img src="https://raw.githubusercontent.com/onyks-os/TransparentTorProxy/main/assets/icon.png" width="200" alt="TTP Logo">
 </p>
 
 <h1 align="center">
@@ -90,8 +90,8 @@ Choose the method that best fits your needs. **Native packages are strongly reco
 
 Installing via native packages ensures that all system dependencies (`tor`, `nftables`) and kernel-level optimizations (SELinux) are managed by your OS package manager.
 
-* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.3.5_all.deb`
-* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.3.5-1.fc43.noarch.rpm`
+* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.4.0_all.deb`
+* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.4.0-1.fc43.noarch.rpm`
 * **Arch Linux**: `cd packaging && makepkg -si`
 
 ---

@@ -90,6 +90,7 @@ run_step() {
 
 echo -e "\n${YELLOW}TTP Pre-release Verification Pipeline${NC}\n"
 
+run_step "Formatting Check (Ruff Format)" "ruff format --check ttp/ tests/"
 run_step "Linting (Ruff)" "ruff check ttp/ tests/"
 run_step "Unit Tests (Pytest)" "pytest tests/ -q"
 run_step "Integration (Debian)" "make integration-debian"

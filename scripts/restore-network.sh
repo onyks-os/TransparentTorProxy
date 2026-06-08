@@ -55,6 +55,6 @@ fi
 # 4. State Cleanup
 # Remove the lock file so that a subsequent 'ttp start' doesn't 
 # think a session is still active.
-rm -f /var/lib/ttp/ttp.lock
+rm -f /run/ttp/ttp.lock /var/lib/ttp/ttp.lock
 
 echo "[TTP-Emergency] Recovery complete. Your network should be back to normal."

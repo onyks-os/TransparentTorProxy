@@ -253,3 +253,44 @@ def test_is_firewalld_active_false():
 def test_is_firewalld_active_exception():
     with patch("subprocess.run", side_effect=FileNotFoundError):
         assert is_firewalld_active() is False
+
+
+def test_is_ipv6_supported_true():
+    """is_ipv6_supported returns True when IPv6 socket binding succeeds."""
+    from ttp.tor_detect import is_ipv6_supported
+
+    mock_socket_instance = MagicMock()
+    mock_socket_instance.__enter__.return_value = mock_socket_instance
+    with patch("socket.socket", return_value=mock_socket_instance):
+        assert is_ipv6_supported() is True
+        mock_socket_instance.bind.assert_called_once_with(("::1", 0))
+
+
+def test_is_ipv6_supported_false():
+    """is_ipv6_supported returns False when IPv6 socket binding raises OSError."""
+    from ttp.tor_detect import is_ipv6_supported
+
+    mock_socket_instance = MagicMock()
+    mock_socket_instance.__enter__.return_value = mock_socket_instance
+    mock_socket_instance.bind.side_effect = OSError("IPv6 not supported")
+    with patch("socket.socket", return_value=mock_socket_instance):
+        assert is_ipv6_supported() is False
+
+
+@patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/tor")
+@patch("ttp.tor_detect.subprocess.run")
+@patch("ttp.tor_detect._detect_tor_user", return_value="tor")
+@patch("ttp.tor_detect.is_ipv6_supported")
+def test_detect_tor_ipv6_propagation(mock_ipv6, mock_user, mock_run, mock_which):
+    """detect_tor correctly propagates the return value of is_ipv6_supported."""
+    mock_run.side_effect = _make_subprocess_side_effect(running=True)
+
+    # 1. When IPv6 is supported
+    mock_ipv6.return_value = True
+    res_true = detect_tor()
+    assert res_true["ipv6_supported"] is True
+
+    # 2. When IPv6 is not supported
+    mock_ipv6.return_value = False
+    res_false = detect_tor()
+    assert res_false["ipv6_supported"] is False

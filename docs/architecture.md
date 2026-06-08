@@ -117,7 +117,7 @@ Generates rules applied atomically via `nft -f` into the dedicated `inet ttp` ta
 3. **Multi-Chain Architecture**:
     * **NAT Hook (output/prerouting)**: Handles the actual redirection of TCP and DNS packets to Tor's ports (`9041` and `9054`).
     * **Filter Hook (output)**: Implements the **Kill-Switch**. It allows Tor, optional Root/LAN bypass, and local loopback traffic, while rejecting everything else.
-4. **Execution Sequence**: Tor/Root (optional) exclusion -> LAN Bypass (optional) -> Redirect DNS -> Accept loopback -> Redirect TCP -> Block DoT -> Block IPv6 -> Reject All.
+4. **Execution Sequence**: Tor/Root (optional) exclusion → **DNS Redirect** (before LAN bypass, to prevent gateway DNS leak) → LAN Bypass (optional) → Accept loopback → Redirect TCP → Block DoT → Block IPv6 → Reject All.
 5. **Selective Root Routing**: By default, root and `sudo` traffic is routed through Tor. The `--allow-root` CLI flag allows root processes to bypass Tor (allowing system updates or Tor bootstrapping).
 6. **LAN Bypass**: Automatically active by default. Excludes RFC 1918 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) and Link-Local (169.254.0.0/16) subnets from redirection, allowing communication with local devices (NAS, printers). Can be disabled via `--no-lan-bypass`.
 7. **DNS-over-TLS (DoT) Prevention**: Drops outbound port 853 connections (`tcp dport 853 reject` inside `filter_out`) to prevent encrypted DNS queries from leaking or bypassing the Tor resolver.
@@ -377,7 +377,7 @@ TTP employs a `Makefile` in the root directory to provide a unified entry point 
 *(Tests run without root, using `unittest.mock`)*
 
 * **`test_tor_detect.py`**: Verifies dictionary output across varying torrc and process states.
-* **`test_firewall.py`**: Asserts DNS redirect appears BEFORE loopback accept (critical). Verifies IPv6 drop, DoT rejection, and emergency killswitch table application.
+* **`test_firewall.py`**: Asserts DNS redirect appears BEFORE LAN bypass (critical - gateway DNS leak prevention), BEFORE loopback accept, BEFORE TCP redirect. Verifies IPv6 drop, DoT rejection, DoH IP-level blocking, and emergency killswitch table application.
 * **`test_dns.py`**: Asserts correct mount --bind overlay, stale mount cleanup, and lazy umount.
 * **`test_state.py`**: Asserts lock creation, reading, and orphan detection.
 * **`test_cli.py`**: Verifies command orchestration, option injection, UI flow, and non-root OSError safety.

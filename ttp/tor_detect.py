@@ -74,6 +74,7 @@ def _check_config(
 
     if transport_port is None or dns_port is None:
         from ttp import state
+
         lock = state.read_lock()
         if lock:
             if transport_port is None:
@@ -86,7 +87,9 @@ def _check_config(
             if dns_port is None:
                 dns_port = 9054
 
-    has_transport = bool(re.search(rf"^\s*TransPort\s+{transport_port}\b", content, re.MULTILINE))
+    has_transport = bool(
+        re.search(rf"^\s*TransPort\s+{transport_port}\b", content, re.MULTILINE)
+    )
     has_dnsport = bool(re.search(rf"^\s*DNSPort\s+{dns_port}\b", content, re.MULTILINE))
     has_control = bool(re.search(r"^\s*ControlSocket\s+", content, re.MULTILINE))
     return has_transport and has_dnsport and has_control
@@ -176,7 +179,10 @@ def is_selinux_module_installed() -> bool:
         result = subprocess.run(
             ["semodule", "-l"], capture_output=True, text=True, timeout=10
         )
-        return "ttp_tor_policy" in result.stdout
+        # Check if ttp_tor_policy is installed with version 1.1
+        import re
+
+        return bool(re.search(r"ttp_tor_policy\s+1\.1\b", result.stdout))
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
 
@@ -198,6 +204,18 @@ def is_firewalld_active() -> bool:
         return False
 
 
+def is_ipv6_supported() -> bool:
+    """Return ``True`` if the system supports IPv6 loopback and socket operations."""
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
+            s.bind(("::1", 0))
+        return True
+    except OSError:
+        return False
+
+
 def detect_tor(
     transport_port: int | None = None,
     dns_port: int | None = None,
@@ -214,16 +232,20 @@ def detect_tor(
         ``version``       - str  (e.g. ``"0.4.8.10"``, or ``""``)
         ``is_fedora``     - bool
         ``selinux``       - bool (True if Enforcing)
+        ``ipv6_supported``- bool (True if IPv6 loopback is supported)
     """
     installed = _check_installed()
     return {
         "is_installed": installed,
         "is_running": _check_running() if installed else False,
-        "is_configured": _check_config(transport_port=transport_port, dns_port=dns_port) if installed else False,
+        "is_configured": _check_config(transport_port=transport_port, dns_port=dns_port)
+        if installed
+        else False,
         "tor_user": _detect_tor_user(),
         "version": _get_version() if installed else "",
         "is_fedora": is_fedora_family(),
         "selinux": is_selinux_enforcing(),
         "selinux_module": is_selinux_module_installed(),
         "firewalld": is_firewalld_active(),
+        "ipv6_supported": is_ipv6_supported(),
     }

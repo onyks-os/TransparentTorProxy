@@ -42,26 +42,73 @@ def apply_rules(
         _run_nft(["flush", "table", "inet", "ttp"])
 
         # Construct dynamic rules based on options
+        from ttp.tor_detect import is_ipv6_supported
+
+        ipv6_avail = is_ipv6_supported()
+
         lan_rule = ""
+        lan6_rule = ""
         if lan_bypass:
             lan_rule = "ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } accept"
+            if ipv6_avail:
+                lan6_rule = "ip6 daddr { fc00::/7, fe80::/10 } accept"
 
         root_rule = ""
         if allow_root:
             root_rule = "meta skuid 0 accept"
 
+        # Local loopback checks
+        loopback_ipv4 = "ip daddr 127.0.0.0/8 accept"
+        loopback_ipv6 = "ip6 daddr ::1 accept" if ipv6_avail else ""
+
+        # Redirection rules
+        dns_redirect_ipv4 = f"udp dport 53 dnat ip to 127.0.0.1:{dns_port}\n                tcp dport 53 dnat ip to 127.0.0.1:{dns_port}"
+        dns_redirect_ipv6 = (
+            f"\n                udp dport 53 dnat ip6 to [::1]:{dns_port}\n                tcp dport 53 dnat ip6 to [::1]:{dns_port}"
+            if ipv6_avail
+            else ""
+        )
+
+        tcp_redirect_ipv4 = f"ip protocol tcp dnat ip to 127.0.0.1:{transport_port}"
+        tcp_redirect_ipv6 = (
+            f"\n                meta l4proto tcp dnat ip6 to [::1]:{transport_port}"
+            if ipv6_avail
+            else ""
+        )
+
+        ipv6_leak_prevention = "" if ipv6_avail else "meta nfproto ipv6 drop"
+
+        # DoH IP blocks
+        doh_ips_v4 = "{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112, 208.67.222.222, 208.67.220.220 }"
+        doh_reject_ipv4 = f"ip daddr {doh_ips_v4} tcp dport 443 reject"
+
+        doh_reject_ipv6 = ""
+        if ipv6_avail:
+            doh_ips_v6 = "{ 2606:4700:4700::1111, 2606:4700:4700::1001, 2001:4860:4860::8888, 2001:4860:4860::8844, 2620:fe::fe, 2620:fe::9, 2620:0:ccc::2, 2620:0:ccd::2 }"
+            doh_reject_ipv6 = f"ip6 daddr {doh_ips_v6} tcp dport 443 reject"
+
         # 2. Define the ruleset using a single atomic string.
         # PRIORITY -150: Ensures we run before firewalld/standard NAT.
-        # ORDER: Tor exclusion MUST be first to allow bootstrapping.
+        # RULE ORDER (critical for correctness):
+        #   a) Tor UID exemption - always first so Tor can reach the internet.
+        #   b) DNS redirect - BEFORE LAN bypass: a browser may query the LAN
+        #      gateway (e.g. 192.168.1.1:53) as its DNS resolver. Without this
+        #      ordering, the LAN bypass rule would accept those packets and they
+        #      would reach the real ISP resolver, causing a DNS leak.
+        #   c) LAN bypass - after DNS is captured, allow non-DNS LAN traffic.
+        #   d) Loopback / TCP redirect as usual.
         ruleset = f"""
         table inet ttp {{
             chain prerouting {{
                 # Handle incoming traffic from other interfaces (e.g., if used as a gateway)
                 type nat hook prerouting priority dstnat; policy accept;
+                # DNS MUST be redirected before LAN bypass (same reasoning as output chain)
+                {dns_redirect_ipv4}
+                {dns_redirect_ipv6}
                 {lan_rule}
-                udp dport 53 dnat ip to 127.0.0.1:{dns_port}
-                tcp dport 53 dnat ip to 127.0.0.1:{dns_port}
-                ip protocol tcp dnat ip to 127.0.0.1:{transport_port}
+                {lan6_rule}
+                {tcp_redirect_ipv4}
+                {tcp_redirect_ipv6}
             }}
 
             chain output {{
@@ -71,18 +118,23 @@ def apply_rules(
                 # 1. Tor user EXEMPTION: Allow the Tor daemon to reach the real internet
                 meta skuid {tor_uid} accept
 
-                # 2. LAN Bypass: Allow local subnet communication
-                {lan_rule}
+                # 2. DNS Redirection: MUST come before LAN bypass.
+                #    Browsers cache the LAN gateway IP (e.g. 192.168.1.1) as DNS resolver.
+                #    If LAN bypass ran first, those DNS queries would escape to the real ISP.
+                {dns_redirect_ipv4}
+                {dns_redirect_ipv6}
 
-                # 3. DNS Redirection: Force all DNS queries to Tor's DNSPort
-                udp dport 53 dnat ip to 127.0.0.1:{dns_port}
-                tcp dport 53 dnat ip to 127.0.0.1:{dns_port}
+                # 3. LAN Bypass: Allow local subnet communication (non-DNS)
+                {lan_rule}
+                {lan6_rule}
 
                 # 4. Local Exemption: Allow traffic to localhost (crucial for Tor's TransPort/DNSPort)
-                ip daddr 127.0.0.0/8 accept
+                {loopback_ipv4}
+                {loopback_ipv6}
 
                 # 5. TCP Redirection: Redirect all remaining TCP traffic to Tor's TransPort
-                ip protocol tcp dnat ip to 127.0.0.1:{transport_port}
+                {tcp_redirect_ipv4}
+                {tcp_redirect_ipv6}
             }}
 
             chain filter_out {{
@@ -97,15 +149,21 @@ def apply_rules(
 
                 # 3. LAN Bypass: Allow local subnet communication
                 {lan_rule}
+                {lan6_rule}
 
                 # 4. Allow traffic to localhost (required for NATed traffic)
-                ip daddr 127.0.0.0/8 accept
+                {loopback_ipv4}
+                {loopback_ipv6}
 
                 # 5. DoT (DNS-over-TLS) Leak Prevention: Block direct connections to port 853
                 tcp dport 853 reject
 
-                # 6. IPv6 Leak Prevention: TTP is IPv4-only
-                meta nfproto ipv6 drop
+                # 6. DoH (DNS-over-HTTPS) Leak Prevention: Block common public DoH resolvers on port 443
+                {doh_reject_ipv4}
+                {doh_reject_ipv6}
+
+                # 7. IPv6 Leak Prevention
+                {ipv6_leak_prevention}
 
                 # 7. Brutal Reject: Kill any cleartext traffic that bypassed NAT (e.g., pre-existing connections)
                 reject

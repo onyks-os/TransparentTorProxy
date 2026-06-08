@@ -87,6 +87,7 @@ def write_lock(
     lan_bypass: bool = True,
     watchdog_active: bool = False,
     watchdog_pid: int | None = None,
+    interface: str | None = None,
 ) -> None:
     """Write the session lock file with the current state.
 
@@ -108,6 +109,8 @@ def write_lock(
         True if the watchdog background daemon is active.
     watchdog_pid:
         PID of the active watchdog daemon if running.
+    interface:
+        The name of the primary active interface being proxyed.
     """
     try:
         ensure_runtime_dir()
@@ -121,6 +124,7 @@ def write_lock(
             "lan_bypass": lan_bypass,
             "watchdog_active": watchdog_active,
             "watchdog_pid": watchdog_pid,
+            "interface": interface,
         }
         LOCK_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     except OSError as e:

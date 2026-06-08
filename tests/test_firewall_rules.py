@@ -4,53 +4,59 @@ import pytest
 from unittest.mock import patch, MagicMock
 from ttp.firewall import apply_rules
 
+
 @pytest.fixture
 def mocked_firewall():
-    with patch("ttp.firewall.pwd.getpwnam") as mock_pwd, \
-         patch("ttp.firewall._run_nft_string") as mock_run_string, \
-         patch("ttp.firewall._run_nft") as mock_run_nft:
+    with (
+        patch("ttp.firewall.pwd.getpwnam") as mock_pwd,
+        patch("ttp.firewall._run_nft_string") as mock_run_string,
+        patch("ttp.firewall._run_nft") as mock_run_nft,
+        patch("ttp.tor_detect.is_ipv6_supported", return_value=False),
+    ):
         mock_pwd.return_value = MagicMock(pw_uid=110)
         yield {
             "mock_pwd": mock_pwd,
             "mock_run_string": mock_run_string,
-            "mock_run_nft": mock_run_nft
+            "mock_run_nft": mock_run_nft,
         }
+
 
 def test_nat_output_chain_ordering(mocked_firewall):
     """Tor exemption MUST be before any redirection in the NAT output chain."""
     apply_rules(tor_user="debian-tor")
     ruleset = mocked_firewall["mock_run_string"].call_args[0][0]
-    
+
     output_block = ruleset.split("chain output")[1].split("chain filter_out")[0]
-    
+
     # 1. Tor exemption exists
     assert "meta skuid 110 accept" in output_block
     # 2. Redirection exists
     assert "dnat" in output_block
-    
+
     # 3. Exemption is BEFORE dnat
     pos_exempt = output_block.find("meta skuid 110 accept")
     pos_dnat = output_block.find("dnat")
     assert pos_exempt < pos_dnat, "Tor exemption must precede NAT redirection!"
 
+
 def test_filter_out_chain_completeness(mocked_firewall):
     """Filter chain must contain all safety rules and end with reject."""
     apply_rules(tor_user="debian-tor")
     ruleset = mocked_firewall["mock_run_string"].call_args[0][0]
-    
+
     assert "chain filter_out" in ruleset
     filter_block = ruleset.split("chain filter_out")[1]
-    
+
     expected_rules = [
         "meta skuid 110 accept",
         "ip daddr 127.0.0.0/8 accept",
         "meta nfproto ipv6 drop",
-        "reject"
+        "reject",
     ]
-    
+
     for rule in expected_rules:
         assert rule in filter_block, f"Missing critical rule in filter_out: {rule}"
-        
+
     # By default, root is NOT exempted (allow_root=False)
     assert "meta skuid 0 accept" not in filter_block
 
@@ -58,12 +64,37 @@ def test_filter_out_chain_completeness(mocked_firewall):
     clean_filter = filter_block.strip()
     while clean_filter.endswith("}"):
         clean_filter = clean_filter[:-1].strip()
-    assert clean_filter.endswith("reject"), "Filter chain must end with 'reject' kill-switch"
+    assert clean_filter.endswith("reject"), (
+        "Filter chain must end with 'reject' kill-switch"
+    )
+
 
 def test_prerouting_chain_exists(mocked_firewall):
     """Prerouting chain should be present for gateway support."""
     apply_rules(tor_user="debian-tor")
     ruleset = mocked_firewall["mock_run_string"].call_args[0][0]
-    
+
     assert "chain prerouting" in ruleset
     assert "type nat hook prerouting" in ruleset
+
+
+def test_filter_out_chain_ipv6_supported():
+    """Verify that filter chain includes loopback and LAN bypass IPv6 and drops IPv6-only block when supported."""
+    with (
+        patch("ttp.firewall.pwd.getpwnam") as mock_pwd,
+        patch("ttp.firewall._run_nft_string") as mock_run_string,
+        patch("ttp.firewall._run_nft") as _mock_run_nft,
+        patch("ttp.tor_detect.is_ipv6_supported", return_value=True),
+    ):
+        mock_pwd.return_value = MagicMock(pw_uid=110)
+
+        apply_rules(tor_user="debian-tor")
+        ruleset = mock_run_string.call_args[0][0]
+
+        assert "chain filter_out" in ruleset
+        filter_block = ruleset.split("chain filter_out")[1]
+
+        assert "ip6 daddr ::1 accept" in filter_block
+        assert "ip6 daddr { fc00::/7, fe80::/10 } accept" in filter_block
+        assert "meta nfproto ipv6 drop" not in filter_block
+        assert "reject" in filter_block

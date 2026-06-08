@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 from typer.testing import CliRunner
 
-from ttp.cli import app
+from ttp.cli import app, _setup_logging as original_setup_logging
 
 runner = CliRunner()
 
@@ -495,7 +495,9 @@ def test_check_leak_success(mock_read, mock_urlopen, mock_which, mock_run):
     def side_effect(cmd, *args, **kwargs):
         mock_result = MagicMock()
         tokens = _mock_cmd_tokens(cmd)
-        if any(t == "check.torproject.org" for t in tokens) and not any(t == "TXT" for t in tokens):
+        if any(t == "check.torproject.org" for t in tokens) and not any(
+            t == "TXT" for t in tokens
+        ):
             mock_result.stdout = "2.2.2.2\n"
         elif any(t == "whoami.ipv4.akahelp.net" for t in tokens):
             mock_result.stdout = '"9.9.9.9"\n'
@@ -512,7 +514,9 @@ def test_check_leak_success(mock_read, mock_urlopen, mock_which, mock_run):
 @patch("shutil.which", return_value="/usr/bin/dig")
 @patch("urllib.request.urlopen")
 @patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
-def test_check_leak_akahelp_txt_ip_not_a_leak(mock_read, mock_urlopen, mock_which, mock_run):
+def test_check_leak_akahelp_txt_ip_not_a_leak(
+    mock_read, mock_urlopen, mock_which, mock_run
+):
     """Resolver IP from Akamai TXT must not set has_leaks (regression for false positives)."""
     import json
 
@@ -524,7 +528,9 @@ def test_check_leak_akahelp_txt_ip_not_a_leak(mock_read, mock_urlopen, mock_whic
     def side_effect(cmd, *args, **kwargs):
         mock_result = MagicMock()
         tokens = _mock_cmd_tokens(cmd)
-        if any(t == "check.torproject.org" for t in tokens) and not any(t == "TXT" for t in tokens):
+        if any(t == "check.torproject.org" for t in tokens) and not any(
+            t == "TXT" for t in tokens
+        ):
             mock_result.stdout = "2.2.2.2\n"
         elif any(t == "whoami.ipv4.akahelp.net" for t in tokens):
             mock_result.stdout = "192.168.50.1\n"
@@ -547,14 +553,17 @@ def test_check_leak_detected_istor_false(mock_read, mock_urlopen):
         {"IsTor": False, "IP": "8.8.8.8"}
     ).encode()
 
-    with patch("shutil.which", return_value="/usr/bin/dig"), patch(
-        "subprocess.run"
-    ) as mock_run:
+    with (
+        patch("shutil.which", return_value="/usr/bin/dig"),
+        patch("subprocess.run") as mock_run,
+    ):
 
         def side_effect(cmd, *args, **kwargs):
             mock_result = MagicMock()
             tokens = _mock_cmd_tokens(cmd)
-            if any(t == "check.torproject.org" for t in tokens) and not any(t == "TXT" for t in tokens):
+            if any(t == "check.torproject.org" for t in tokens) and not any(
+                t == "TXT" for t in tokens
+            ):
                 mock_result.stdout = "2.2.2.2\n"
             elif any(t == "whoami.ipv4.akahelp.net" for t in tokens):
                 mock_result.stdout = ""
@@ -610,7 +619,9 @@ def test_check_leak_empty_dig_a(mock_read, mock_run, mock_which, mock_urlopen):
     def side_effect(cmd, *args, **kwargs):
         m = MagicMock()
         tokens = _mock_cmd_tokens(cmd)
-        if any(t == "check.torproject.org" for t in tokens) and not any(t == "TXT" for t in tokens):
+        if any(t == "check.torproject.org" for t in tokens) and not any(
+            t == "TXT" for t in tokens
+        ):
             m.stdout = ""
         elif any(t == "whoami.ipv4.akahelp.net" for t in tokens):
             m.stdout = '"1.1.1.1"'
@@ -672,6 +683,7 @@ def test_start_tmpfs_check_fails(mock_euid, mock_read, mock_check):
 
 # Custom Ports and Validation Tests
 
+
 @patch("ttp.cli._is_port_in_use", return_value=False)
 @patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
 @patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
@@ -706,13 +718,28 @@ def test_start_custom_ports_success(
     mock_in_use,
 ):
     """start with custom valid ports -> propagates them down correctly."""
-    result = runner.invoke(app, ["start", "--transport-port", "9080", "--dns-port", "9090"])
+    result = runner.invoke(
+        app, ["start", "--transport-port", "9080", "--dns-port", "9090"]
+    )
     assert result.exit_code == 0
     assert "Session active" in result.output
-    
+
     mock_ensure.assert_called_once_with(transport_port=9080, dns_port=9090)
-    mock_apply_fw.assert_called_once_with(tor_user="debian-tor", transport_port=9080, dns_port=9090, allow_root=False, lan_bypass=True)
-    mock_write.assert_called_once_with(dns_backup={"interface": "eth0"}, transport_port=9080, dns_port=9090, allow_root=False, lan_bypass=True)
+    mock_apply_fw.assert_called_once_with(
+        tor_user="debian-tor",
+        transport_port=9080,
+        dns_port=9090,
+        allow_root=False,
+        lan_bypass=True,
+    )
+    mock_write.assert_called_once_with(
+        dns_backup={"interface": "eth0"},
+        transport_port=9080,
+        dns_port=9090,
+        allow_root=False,
+        lan_bypass=True,
+        interface="eth0",
+    )
 
 
 @patch("ttp.cli.os.geteuid", return_value=0)
@@ -771,13 +798,9 @@ def test_start_port_already_in_use(mock_euid, mock_in_use):
 @patch("ttp.cli._do_stop")
 @patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
 @patch("ttp.cli.os.geteuid", return_value=0)
-def test_restart_custom_ports(
-    mock_euid, mock_read, mock_stop, mock_sleep, mock_start
-):
+def test_restart_custom_ports(mock_euid, mock_read, mock_stop, mock_sleep, mock_start):
     """restart propagates custom ports to start command."""
-    result = runner.invoke(
-        app, ["restart", "-t", "9080", "-d", "9090"]
-    )
+    result = runner.invoke(app, ["restart", "-t", "9080", "-d", "9090"])
     assert result.exit_code == 0
     mock_stop.assert_called_once()
     mock_start.assert_called_once_with(
@@ -836,7 +859,11 @@ def test_check_shows_custom_ports(mock_read, mock_verify_tor, mock_get_ctrl):
 @patch("ttp.cli.firewall.apply_rules")
 @patch(
     "ttp.cli.tor_install.ensure_tor_ready",
-    return_value={"is_installed": True, "tor_user": "debian-tor", "version": "0.4.8.10"},
+    return_value={
+        "is_installed": True,
+        "tor_user": "debian-tor",
+        "version": "0.4.8.10",
+    },
 )
 @patch("ttp.cli.tor_install.setup_selinux_if_needed")
 @patch("ttp.cli.state.write_lock")
@@ -871,6 +898,7 @@ def test_start_with_allow_root_and_no_lan_bypass(
         dns_port=9054,
         allow_root=True,
         lan_bypass=False,
+        interface="eth0",
     )
 
 
@@ -923,7 +951,10 @@ def test_watchdog_status_inactive(mock_read):
     assert "Watchdog Status: INACTIVE" in result.output
 
 
-@patch("ttp.cli.state.read_lock", return_value={"watchdog_active": True, "watchdog_pid": 9999})
+@patch(
+    "ttp.cli.state.read_lock",
+    return_value={"watchdog_active": True, "watchdog_pid": 9999},
+)
 def test_watchdog_status_active(mock_read):
     """watchdog status shows ACTIVE and PID if running."""
     result = runner.invoke(app, ["watchdog", "status"])
@@ -941,4 +972,107 @@ def test_watchdog_run(mock_run_loop, mock_euid):
     mock_run_loop.assert_called_once_with(interval_seconds=10)
 
 
+# 9. JSON Logging Tests
+def test_json_formatter_records():
+    """JSONFormatter converts a LogRecord into a valid JSON string with expected keys."""
+    import logging
+    import json
+    from ttp.cli import JSONFormatter
 
+    formatter = JSONFormatter()
+    record = logging.LogRecord(
+        name="ttp.test",
+        level=logging.INFO,
+        pathname="test_cli.py",
+        lineno=10,
+        msg="Hello JSON logging!",
+        args=(),
+        exc_info=None,
+    )
+
+    formatted = formatter.format(record)
+    data = json.loads(formatted)
+
+    assert "timestamp" in data
+    assert data["level"] == "INFO"
+    assert data["logger"] == "ttp.test"
+    assert data["message"] == "Hello JSON logging!"
+    assert "exception" not in data
+
+    # Test with exception
+    try:
+        raise ValueError("Oops!")
+    except ValueError:
+        import sys
+
+        record_exc = logging.LogRecord(
+            name="ttp.test",
+            level=logging.ERROR,
+            pathname="test_cli.py",
+            lineno=20,
+            msg="An error occurred",
+            args=(),
+            exc_info=sys.exc_info(),
+        )
+
+    formatted_exc = formatter.format(record_exc)
+    data_exc = json.loads(formatted_exc)
+    assert "exception" in data_exc
+    assert "ValueError: Oops!" in data_exc["exception"]
+
+
+@patch("ttp.cli.state.ensure_runtime_dir")
+@patch("logging.handlers.RotatingFileHandler")
+@patch("logging.StreamHandler")
+def test_setup_logging_json(mock_stream, mock_file, mock_ensure):
+    """_setup_logging configures JSON formatter on handlers when log_format is 'json'."""
+    from ttp.cli import cli_state, JSONFormatter, logger
+
+    mock_file_handler = MagicMock()
+    mock_file.return_value = mock_file_handler
+
+    mock_stream_handler = MagicMock()
+    mock_stream.return_value = mock_stream_handler
+
+    # Save original state
+    orig_format = cli_state.log_format
+    orig_quiet = cli_state.quiet
+    orig_verbose = cli_state.verbose
+
+    try:
+        cli_state.log_format = "json"
+        cli_state.quiet = False
+        cli_state.verbose = True
+
+        original_setup_logging()
+
+        # Check file handler setup
+        mock_file.assert_called_once()
+        args, _ = mock_file_handler.setFormatter.call_args
+        assert isinstance(args[0], JSONFormatter)
+
+        # Check stream handler setup
+        mock_stream.assert_called_once()
+        args_s, _ = mock_stream_handler.setFormatter.call_args
+        assert isinstance(args_s[0], JSONFormatter)
+
+    finally:
+        # Restore state
+        cli_state.log_format = orig_format
+        cli_state.quiet = orig_quiet
+        cli_state.verbose = orig_verbose
+        for h in list(logger.handlers):
+            logger.removeHandler(h)
+
+
+def test_log_format_argument_parsing():
+    """Passing --log-format json updates cli_state.log_format accordingly."""
+    from ttp.cli import cli_state
+
+    orig_format = cli_state.log_format
+    try:
+        # Run help or a dummy run command to trigger main callback
+        runner.invoke(app, ["--log-format", "json", "watchdog", "status"])
+        assert cli_state.log_format == "json"
+    finally:
+        cli_state.log_format = orig_format

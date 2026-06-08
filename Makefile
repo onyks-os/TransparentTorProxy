@@ -6,7 +6,7 @@
 #   make verify           - lint + unit + integration + package build
 
 # .PHONY tells Make that these are command names, not actual files or directories.
-.PHONY: test integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi test-leak-ip test-leak-dns test-leak-webrtc check-leak
+.PHONY: test integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi test-leak-ip test-leak-dns test-leak-webrtc check-leak tarball
 
 # 1. Local unit tests (pytest, no root).
 test:
@@ -35,10 +35,14 @@ verify:
 	@chmod +x scripts/verify.sh
 	@./scripts/verify.sh $(ARGS)
 
-# 4. Native packages (.deb / .rpm) via packaging/release.sh
+# 4. Native packages (.deb / .rpm) and Python release artifacts (Source Tarball & Wheel) via packaging/release.sh
 build:
-	@echo "==> Building Debian and RPM packages..."
+	@echo "==> Building Debian, RPM packages, and Python release artifacts..."
 	@./packaging/release.sh
+
+tarball:
+	@echo "==> Generating Source Tarball (sdist)..."
+	python3 -m build --sdist
 
 # Builds the Python wheel/sdist and uploads to TestPyPI
 testpypi: clean
@@ -55,7 +59,7 @@ pypi: clean
 # 5. Clean build artifacts and release outputs.
 clean:
 	@echo "==> Cleaning build artifacts..."
-	rm -rf dist/ build/ .build_tmp/ ttp.egg-info/ packaging/*.deb packaging/*.rpm packaging/SHA256SUMS.txt
+	rm -rf dist/ build/ .build_tmp/ ttp.egg-info/ packaging/*.deb packaging/*.rpm packaging/*.tar.gz packaging/*.whl packaging/SHA256SUMS.txt
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 # 6. Offensive Leak Testing Suite (must run inside unproxied target environment, with REAL_PUBLIC_IP set)

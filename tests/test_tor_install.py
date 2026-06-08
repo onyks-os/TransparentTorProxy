@@ -63,23 +63,31 @@ def test_start_tor_service(mock_generate, mock_write_unit, mock_run):
 
     start_tor_service("tor")
 
-    mock_generate.assert_called_once_with("tor", transport_port=9041, dns_port=9054, block_doh=True)
+    mock_generate.assert_called_once_with(
+        "tor", transport_port=9041, dns_port=9054, block_doh=True
+    )
     mock_write_unit.assert_called_once_with("tor")
     assert mock_run.call_count == 2
     mock_run.assert_any_call(
         ["systemctl", "daemon-reload"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     mock_run.assert_any_call(
         ["systemctl", "restart", TTP_SERVICE_NAME],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
 
 
 @patch("ttp.tor_install.os.makedirs")
 @patch("ttp.tor_install.shutil.chown")
 @patch("ttp.tor_install.os.chmod")
-def test_generate_torrc_doh_mitigation(mock_chmod, mock_chown, mock_makedirs, tmp_path: Path):
+def test_generate_torrc_doh_mitigation(
+    mock_chmod, mock_chown, mock_makedirs, tmp_path: Path
+):
     """generate_torrc writes MapAddress use-application-dns.net 0.0.0.0 if block_doh is True."""
     runtime_dir = tmp_path / "run/tor"
     cache_dir = tmp_path / "lib/cache"
@@ -94,12 +102,14 @@ def test_generate_torrc_doh_mitigation(mock_chmod, mock_chown, mock_makedirs, tm
         assert torrc_path.exists()
         content = torrc_path.read_text()
         assert "MapAddress use-application-dns.net 0.0.0.0" in content
+        assert "MapAddress cloudflare-dns.com 0.0.0.0" in content
+        assert "MapAddress dns.google 0.0.0.0" in content
 
         # Genera con block_doh=False
         generate_torrc("debian-tor", block_doh=False)
         content_no_doh = torrc_path.read_text()
         assert "MapAddress use-application-dns.net 0.0.0.0" not in content_no_doh
-
+        assert "MapAddress cloudflare-dns.com 0.0.0.0" not in content_no_doh
 
 
 @patch("ttp.tor_install.subprocess.run")
@@ -130,7 +140,9 @@ def test_stop_tor_service(mock_run, tmp_path: Path):
 
     mock_run.assert_any_call(
         ["systemctl", "stop", TTP_SERVICE_NAME],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert not fake_unit.exists()  # Unit file was removed
     # daemon-reload was called after removal
@@ -143,26 +155,31 @@ def test_stop_tor_service(mock_run, tmp_path: Path):
 @patch("ttp.tor_install.os.makedirs")
 @patch("ttp.tor_install.shutil.chown")
 @patch("ttp.tor_install.os.chmod")
-def test_generate_torrc_creates_file(mock_chmod, mock_chown, mock_makedirs, tmp_path: Path):
+def test_generate_torrc_creates_file(
+    mock_chmod, mock_chown, mock_makedirs, tmp_path: Path
+):
     """generate_torrc writes a valid torrc and sets directory permissions."""
     runtime_dir = tmp_path / "run/tor"
     cache_dir = tmp_path / "lib/cache"
-    
+
     with (
         patch.object(tor_install, "TOR_RUNTIME_DIR", runtime_dir),
         patch.object(tor_install, "TOR_CACHE_DIR", cache_dir),
     ):
         # We also need to mock Path.write_text and Path.mkdir to avoid actual FS changes during testing
-        with patch("ttp.tor_install.Path.write_text"), patch("ttp.tor_install.Path.mkdir"):
+        with (
+            patch("ttp.tor_install.Path.write_text"),
+            patch("ttp.tor_install.Path.mkdir"),
+        ):
             generate_torrc("debian-tor")
 
         # Verify directory creation
         mock_makedirs.assert_any_call(str(cache_dir), exist_ok=True)
-        
+
         # Check chown calls
         mock_chown.assert_any_call(runtime_dir, user="debian-tor", group="debian-tor")
         mock_chown.assert_any_call(str(cache_dir), user="debian-tor")
-        
+
         # Check chmod calls
         mock_chmod.assert_any_call(runtime_dir, 0o700)
         mock_chmod.assert_any_call(str(cache_dir), 0o700)
@@ -240,7 +257,7 @@ def test_is_selinux_module_installed_true():
         patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
         mock_run.return_value = MagicMock(
-            returncode=0, stdout="ttp_tor_policy  1.0\nother_mod 2.1"
+            returncode=0, stdout="ttp_tor_policy  1.1\nother_mod 2.1"
         )
         assert is_selinux_module_installed() is True
 

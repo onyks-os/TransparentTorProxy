@@ -50,9 +50,11 @@ def test_full_ttp_flow():
             ["systemctl", "status", "ttp-tor.service"], capture_output=True, text=True
         )
         journal_res = subprocess.run(
-            ["journalctl", "-xeu", "ttp-tor.service", "--no-pager"], capture_output=True, text=True
+            ["journalctl", "-xeu", "ttp-tor.service", "--no-pager"],
+            capture_output=True,
+            text=True,
         )
-        
+
         error_msg = (
             f"ttp start failed! (returncode {res.returncode})\n\n"
             f"=== TTP STDOUT ===\n{res.stdout}\n"
@@ -118,16 +120,18 @@ def test_custom_ports_flow():
     res = subprocess.run(
         ["ttp", "start", "-t", "9081", "-d", "9091", "--bootstrap-timeout", "300"],
         capture_output=True,
-        text=True
+        text=True,
     )
     if res.returncode != 0:
         status_res = subprocess.run(
             ["systemctl", "status", "ttp-tor.service"], capture_output=True, text=True
         )
         journal_res = subprocess.run(
-            ["journalctl", "-xeu", "ttp-tor.service", "--no-pager"], capture_output=True, text=True
+            ["journalctl", "-xeu", "ttp-tor.service", "--no-pager"],
+            capture_output=True,
+            text=True,
         )
-        
+
         error_msg = (
             f"ttp start with custom ports failed! (returncode {res.returncode})\n\n"
             f"=== TTP STDOUT ===\n{res.stdout}\n"
@@ -180,4 +184,3 @@ def test_custom_ports_flow():
             time.sleep(2)
 
     assert not is_tor_after, "Traffic is STILL routed through Tor after 'ttp stop'!"
-

@@ -53,6 +53,7 @@ err_console = Console(stderr=True)
 class CLIState:
     verbose: bool = False
     quiet: bool = False
+    log_format: str = "text"
 
 
 cli_state = CLIState()
@@ -64,9 +65,13 @@ def main(
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress all output except errors."
     ),
+    log_format: str = typer.Option(
+        "text", "--log-format", help="Log format: 'text' or 'json'."
+    ),
 ):
     cli_state.verbose = verbose
     cli_state.quiet = quiet
+    cli_state.log_format = log_format.lower()
     if quiet:
         console.quiet = True
     _setup_logging()
@@ -79,6 +84,25 @@ def _print_error(title: str, msg: str) -> None:
     )
 
 
+class JSONFormatter(logging.Formatter):
+    """Format log records as single-line JSON objects."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        import json
+        from datetime import datetime, timezone
+
+        timestamp = datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat()
+        log_obj = {
+            "timestamp": timestamp,
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            log_obj["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_obj)
+
+
 _LOG_PATH = Path("/run/ttp/ttp.log")
 logger = logging.getLogger("ttp")
 
@@ -86,6 +110,10 @@ logger = logging.getLogger("ttp")
 def _setup_logging() -> None:
     """Configure logging based on the CLI state."""
     from logging.handlers import RotatingFileHandler
+    import logging
+
+    for h in list(logger.handlers):
+        logger.removeHandler(h)
 
     try:
         state.ensure_runtime_dir()
@@ -96,44 +124,83 @@ def _setup_logging() -> None:
     try:
         # Volatile log, capped at 1MB to avoid filling RAM
         handler = RotatingFileHandler(_LOG_PATH, maxBytes=1048576, backupCount=1)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-        )
+        if cli_state.log_format == "json":
+            handler.setFormatter(JSONFormatter())
+        else:
+            handler.setFormatter(
+                logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+            )
         logger.addHandler(handler)
         logger.setLevel(logging.DEBUG if cli_state.verbose else logging.INFO)
     except OSError:
         # Non-fatal - logging is best-effort.
         pass
 
-    if cli_state.verbose and not cli_state.quiet:
-        from rich.logging import RichHandler
+    if not cli_state.quiet:
+        if cli_state.log_format == "json":
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(JSONFormatter())
+            console_handler.setLevel(
+                logging.DEBUG if cli_state.verbose else logging.INFO
+            )
+            logger.addHandler(console_handler)
+            logger.setLevel(logging.DEBUG if cli_state.verbose else logging.INFO)
+        elif cli_state.verbose:
+            from rich.logging import RichHandler
 
-        rich_handler = RichHandler(console=console, show_path=False)
-        rich_handler.setLevel(logging.DEBUG)
-        logger.addHandler(rich_handler)
-        logger.setLevel(logging.DEBUG)
+            rich_handler = RichHandler(console=console, show_path=False)
+            rich_handler.setLevel(logging.DEBUG)
+            logger.addHandler(rich_handler)
+            logger.setLevel(logging.DEBUG)
 
 
 # Helpers
 
 
 def _is_port_in_use(port: int) -> bool:
-    """Return True if the port is already in use (bound) on localhost."""
+    """Return True if the port is already in use (bound) on localhost (IPv4/IPv6)."""
     import socket
-    # Check TCP
+    import errno
+
+    # Check IPv4 TCP
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind(("127.0.0.1", port))
     except OSError:
         return True
-    # Check UDP
+    # Check IPv4 UDP
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind(("127.0.0.1", port))
     except OSError:
         return True
+
+    # Check IPv6 TCP
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(("::1", port))
+            except OSError as e:
+                if e.errno == errno.EADDRINUSE:
+                    return True
+    except OSError:
+        pass
+
+    # Check IPv6 UDP
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(("::1", port))
+            except OSError as e:
+                if e.errno == errno.EADDRINUSE:
+                    return True
+    except OSError:
+        pass
+
     return False
 
 
@@ -196,6 +263,7 @@ def _do_stop() -> None:
     # Preventive shutdown of the watchdog to avoid triggering emergency killswitch
     console.print(f"{_PREFIX} Stopping watchdog daemon...")
     from ttp import watchdog as wd
+
     try:
         wd.stop_watchdog()
     except Exception:
@@ -279,21 +347,32 @@ def start(
 
     # Ports validation
     if not (1024 <= transport_port <= 65535):
-        _print_error("Invalid Port", f"TransPort {transport_port} must be between 1024 and 65535.")
+        _print_error(
+            "Invalid Port",
+            f"TransPort {transport_port} must be between 1024 and 65535.",
+        )
         raise typer.Exit(code=1)
 
     if not (1024 <= dns_port <= 65535):
-        _print_error("Invalid Port", f"DNSPort {dns_port} must be between 1024 and 65535.")
+        _print_error(
+            "Invalid Port", f"DNSPort {dns_port} must be between 1024 and 65535."
+        )
         raise typer.Exit(code=1)
 
     if transport_port == dns_port:
-        _print_error("Port Conflict", f"TransPort and DNSPort cannot be the same ({transport_port}).")
+        _print_error(
+            "Port Conflict",
+            f"TransPort and DNSPort cannot be the same ({transport_port}).",
+        )
         raise typer.Exit(code=1)
 
     # Pre-flight check if ports are already in use
     for port, name in [(transport_port, "TransPort"), (dns_port, "DNSPort")]:
         if _is_port_in_use(port):
-            _print_error("Port In Use", f"The {name} port {port} is already in use by another process.")
+            _print_error(
+                "Port In Use",
+                f"The {name} port {port} is already in use by another process.",
+            )
             raise typer.Exit(code=1)
 
     # Register signal handlers for safe cleanup.
@@ -408,6 +487,7 @@ def start(
             dns_port=dns_port,
             allow_root=allow_root,
             lan_bypass=lan_bypass,
+            interface=interface,
         )
     except StateError as exc:
         logger.error("Failed to write lock: %s", exc)
@@ -436,6 +516,7 @@ def start(
     if watchdog:
         console.print(f"{_PREFIX} Starting session watchdog daemon...")
         from ttp import watchdog as wd
+
         try:
             wd.start_watchdog()
         except Exception as e:
@@ -467,6 +548,7 @@ def stop(
 
         # Stop watchdog first
         from ttp import watchdog as wd
+
         try:
             wd.stop_watchdog()
         except Exception:
@@ -621,12 +703,18 @@ def status() -> None:
     console.print(f"{_PREFIX} Status: [bold green]ACTIVE[/]")
     console.print(f"{_PREFIX} TransPort: {lock.get('transport_port', 9041)}")
     console.print(f"{_PREFIX} DNSPort: {lock.get('dns_port', 9054)}")
-    console.print(f"{_PREFIX} LAN Bypass: {'[green]Enabled[/]' if lock.get('lan_bypass', True) else '[red]Disabled[/]'}")
-    console.print(f"{_PREFIX} Allow Root: {'[red]Yes[/]' if lock.get('allow_root', False) else '[green]No[/]'}")
-    
+    console.print(
+        f"{_PREFIX} LAN Bypass: {'[green]Enabled[/]' if lock.get('lan_bypass', True) else '[red]Disabled[/]'}"
+    )
+    console.print(
+        f"{_PREFIX} Allow Root: {'[red]Yes[/]' if lock.get('allow_root', False) else '[green]No[/]'}"
+    )
+
     wd_active = lock.get("watchdog_active", False)
     wd_pid = lock.get("watchdog_pid")
-    wd_status_str = f"[green]Active (PID {wd_pid})[/]" if wd_active else "[red]Inactive[/]"
+    wd_status_str = (
+        f"[green]Active (PID {wd_pid})[/]" if wd_active else "[red]Inactive[/]"
+    )
     console.print(f"{_PREFIX} Watchdog: {wd_status_str}")
 
     console.print(f"{_PREFIX} Exit IP: {exit_ip}")
@@ -714,7 +802,7 @@ def check_leak() -> None:
     has_leaks = False
     console.print(f"{_PREFIX} Running leak tests...")
 
-    # 1. Authoritative Tor exit check (stdlib only — no curl).
+    # 1. Authoritative Tor exit check (stdlib only - no curl).
     try:
         req = urllib.request.Request(
             "https://check.torproject.org/api/ip",
@@ -765,7 +853,7 @@ def check_leak() -> None:
             if cli_state.verbose:
                 logger.debug("dig A check.torproject.org failed: %s", e, exc_info=True)
 
-        # 3. Akamai TXT: resolver identity (exit-side resolver) — presence of an IP is NOT a leak.
+        # 3. Akamai TXT: resolver identity (exit-side resolver) - presence of an IP is NOT a leak.
         cmd_txt = [dig_bin, "+short", "TXT", "whoami.ipv4.akahelp.net"]
         try:
             res_txt = subprocess.run(
@@ -916,6 +1004,7 @@ def watchdog_start() -> None:
         _print_error("Session Error", "No active TTP session found. Start TTP first.")
         raise typer.Exit(code=1)
     from ttp import watchdog as wd
+
     wd.start_watchdog()
     console.print(f"{_PREFIX} Watchdog daemon started successfully.")
 
@@ -925,6 +1014,7 @@ def watchdog_stop() -> None:
     """Stop the background session watchdog manually."""
     _require_root()
     from ttp import watchdog as wd
+
     wd.stop_watchdog()
     console.print(f"{_PREFIX} Watchdog daemon stopped successfully.")
 
@@ -949,11 +1039,12 @@ def watchdog_status() -> None:
 
 @watchdog_app.command(name="run", hidden=True)
 def watchdog_run(
-    interval: int = typer.Option(15, "--interval", help="Check interval in seconds.")
+    interval: int = typer.Option(15, "--interval", help="Check interval in seconds."),
 ) -> None:
     """Internal entrypoint for running the watchdog daemon loop."""
     _require_root()
     from ttp import watchdog as wd
+
     try:
         wd.run_watchdog_loop(interval_seconds=interval)
     except Exception as e:

@@ -43,6 +43,6 @@ fi
 echo "[TTP] Removing application files..."
 rm -f /usr/local/bin/ttp
 rm -rf /opt/ttp
-rm -rf /var/lib/ttp  # This directory contains lock files and firewall backups.
+rm -rf /var/lib/ttp  # This directory contains the persistent cache and sentinel.
 
 echo "[TTP] Uninstallation complete. The system has been restored."

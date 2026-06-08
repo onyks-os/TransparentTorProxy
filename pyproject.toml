@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "transparent-tor-proxy"
-version = "0.3.5"
-description = "Transparent Tor Proxy — route all system traffic through Tor"
+version = "0.4.0"
+description = "Transparent Tor Proxy - route all system traffic through Tor"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -63,7 +63,7 @@ exclude = [
 packages = ["ttp"]
 
 [tool.bumpversion]
-current_version = "0.3.5"
+current_version = "0.4.0"
 commit = false
 tag = false
 

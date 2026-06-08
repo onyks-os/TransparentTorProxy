@@ -49,8 +49,15 @@ def start_watchdog() -> None:
     """Start the volatile watchdog service daemon and track it in the state lock."""
     _write_watchdog_service_unit()
     try:
-        subprocess.run(["systemctl", "daemon-reload"], capture_output=True, text=True, check=True)
-        subprocess.run(["systemctl", "start", WATCHDOG_SERVICE_NAME], capture_output=True, text=True, check=True)
+        subprocess.run(
+            ["systemctl", "daemon-reload"], capture_output=True, text=True, check=True
+        )
+        subprocess.run(
+            ["systemctl", "start", WATCHDOG_SERVICE_NAME],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
 
         # Retrieve the PID of the watchdog process
         res = subprocess.run(
@@ -75,9 +82,16 @@ def start_watchdog() -> None:
 
 def stop_watchdog() -> None:
     """Stop the watchdog service and delete the volatile service unit."""
-    subprocess.run(["systemctl", "stop", WATCHDOG_SERVICE_NAME], capture_output=True, text=True, check=False)
+    subprocess.run(
+        ["systemctl", "stop", WATCHDOG_SERVICE_NAME],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     WATCHDOG_SERVICE_PATH.unlink(missing_ok=True)
-    subprocess.run(["systemctl", "daemon-reload"], capture_output=True, text=True, check=False)
+    subprocess.run(
+        ["systemctl", "daemon-reload"], capture_output=True, text=True, check=False
+    )
 
     try:
         state.update_lock_keys(watchdog_active=False, watchdog_pid=None)
@@ -85,6 +99,51 @@ def stop_watchdog() -> None:
         # Lock might be already removed or corrupt; ignore.
         pass
     logger.info("TTP watchdog service stopped and cleaned up.")
+
+
+def is_interface_online(interface: str) -> bool:
+    """Check if a network interface is physically online (has carrier and is up)."""
+    sys_path = Path(f"/sys/class/net/{interface}")
+    if not sys_path.exists():
+        return False
+    try:
+        # Check operstate
+        operstate_file = sys_path / "operstate"
+        if operstate_file.exists():
+            operstate = operstate_file.read_text().strip().lower()
+            # If state is explicitly down, it is offline
+            if operstate == "down":
+                return False
+
+        # Check carrier
+        carrier_file = sys_path / "carrier"
+        if carrier_file.exists():
+            carrier = carrier_file.read_text().strip()
+            if carrier == "0":
+                return False
+        return True
+    except OSError:
+        return False
+
+
+def has_default_route() -> bool:
+    """Return True if a default gateway route exists in the system."""
+    try:
+        route_path = Path("/proc/net/route")
+        if not route_path.exists():
+            return False
+        with open(route_path, "r") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 8:
+                    # Destination is 2nd column, Mask is 8th column
+                    dest = parts[1]
+                    mask = parts[7]
+                    if dest == "00000000" and mask == "00000000":
+                        return True
+    except OSError:
+        pass
+    return False
 
 
 def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
@@ -98,6 +157,7 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
     """
     # 1. DNS Overlay mount check
     from ttp.dns import RESOLV_CONF, _is_mount_point
+
     target = RESOLV_CONF
     if os.path.islink(str(RESOLV_CONF)):
         target = Path(os.path.realpath(str(RESOLV_CONF)))
@@ -105,23 +165,40 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
         return "dns", "resolv.conf overlay mount has been unmounted"
 
     # 2. Firewall Ruleset check
-    res = subprocess.run(["nft", "list", "table", "inet", "ttp"], capture_output=True, text=True, check=False)
+    res = subprocess.run(
+        ["nft", "list", "table", "inet", "ttp"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if res.returncode != 0:
         return "firewall", "nftables 'inet ttp' table is missing"
     if "chain filter_out" not in res.stdout:
-        return "firewall", "nftables 'inet ttp' table is incomplete (missing filter_out)"
+        return (
+            "firewall",
+            "nftables 'inet ttp' table is incomplete (missing filter_out)",
+        )
 
-    # 3. Tor Connection check
+    # 3. Tor Connection check: perform an *active* query to the control socket
+    #    to verify that the Tor daemon is actually responsive, not just that
+    #    the socket file exists (a stale socket would pass a mere close() check).
     from ttp.tor_control import get_controller
+
     ctrl = get_controller()
     if ctrl is not None:
         try:
-            ctrl.close()
+            with ctrl:
+                ctrl.get_info("status/bootstrap-phase")
         except Exception as e:
-            return "tor", f"failed to close Tor controller socket: {e}"
+            return "tor", f"Tor control interface unresponsive: {e}"
     else:
-        # Check systemd service status
-        res_tor = subprocess.run(["systemctl", "is-active", "ttp-tor"], capture_output=True, text=True, check=False)
+        # Control socket unavailable - fall back to systemd service status
+        res_tor = subprocess.run(
+            ["systemctl", "is-active", "ttp-tor"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if res_tor.stdout.strip() != "active":
             return "tor", "Tor systemd service is inactive/stopped"
 
@@ -140,16 +217,22 @@ def attempt_auto_healing(failed_component: str) -> bool:
     if not lock:
         return False
 
-    logger.warning("Watchdog: Initiating auto-healing for failed component '%s'...", failed_component)
+    logger.warning(
+        "Watchdog: Initiating auto-healing for failed component '%s'...",
+        failed_component,
+    )
     try:
         if failed_component == "dns":
             interface = dns.detect_active_interface()
             dns.apply_dns(interface)
-            logger.info("Watchdog: Auto-healed DNS overlay on interface '%s'.", interface)
+            logger.info(
+                "Watchdog: Auto-healed DNS overlay on interface '%s'.", interface
+            )
             return True
 
         elif failed_component == "firewall":
             from ttp.tor_detect import detect_tor
+
             tor_info = detect_tor()
             tor_user = tor_info.get("tor_user", "debian-tor")
 
@@ -164,8 +247,15 @@ def attempt_auto_healing(failed_component: str) -> bool:
             return True
 
         elif failed_component == "tor":
-            subprocess.run(["systemctl", "restart", "ttp-tor"], capture_output=True, text=True, check=True)
-            logger.info("Watchdog: Auto-healed Tor service by restarting ttp-tor service.")
+            subprocess.run(
+                ["systemctl", "restart", "ttp-tor"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            logger.info(
+                "Watchdog: Auto-healed Tor service by restarting ttp-tor service."
+            )
             return True
 
     except Exception as e:
@@ -177,7 +267,9 @@ def attempt_auto_healing(failed_component: str) -> bool:
 
 def trigger_emergency_killswitch(failed_component: str, err_msg: str) -> None:
     """Lock down network interfaces to prevent traffic leakage, then sound alert."""
-    logger.critical("EMERGENCY KILLSWITCH ACTIVATED! Reason: %s (%s)", failed_component, err_msg)
+    logger.critical(
+        "EMERGENCY KILLSWITCH ACTIVATED! Reason: %s (%s)", failed_component, err_msg
+    )
 
     # 1. Apply emergency total drop ruleset
     try:
@@ -210,35 +302,106 @@ def trigger_emergency_killswitch(failed_component: str, err_msg: str) -> None:
 
 def run_watchdog_loop(interval_seconds: int = 15) -> None:
     """Run the continuous monitoring loop, reacting to failures in real-time."""
-    logger.info("Watchdog: Monitoring loop started with interval of %d seconds.", interval_seconds)
+    logger.info(
+        "Watchdog: Monitoring loop started with interval of %d seconds.",
+        interval_seconds,
+    )
 
     # Allow startup stabilization
     time.sleep(2)
 
     while True:
-        # Check if the TTP session is still supposed to be active
-        lock = state.read_lock()
-        if lock is None:
-            logger.info("Watchdog: No active TTP lock file found. Exiting gracefully.")
-            break
-
-        failed_comp, err_msg = check_system_integrity()
-        if failed_comp is not None:
-            logger.warning("Watchdog: Integrity check failed! Component: %s. Error: %s", failed_comp, err_msg)
-
-            # First strike: attempt auto-healing
-            attempt_auto_healing(failed_comp)
-
-            # Brief stabilization delay after healing attempt
-            time.sleep(3)
-
-            # Re-check integrity
-            re_failed, re_err = check_system_integrity()
-            if re_failed is not None:
-                # Second strike / healing failed: trigger immediate lockdown
-                trigger_emergency_killswitch(re_failed, re_err)
+        try:
+            # Check if the TTP session is still supposed to be active
+            lock = state.read_lock()
+            if lock is None:
+                logger.info(
+                    "Watchdog: No active TTP lock file found. Exiting gracefully."
+                )
                 break
-            else:
-                logger.info("Watchdog: Auto-healing was successful. Session integrity restored.")
 
-        time.sleep(interval_seconds)
+            # Extract active interface from lock
+            interface = lock.get("interface")
+            if not interface:
+                interface = dns.detect_active_interface()
+
+            # Check if network link is online and gateway is present
+            online = is_interface_online(interface)
+            has_route = has_default_route()
+
+            if not online or not has_route:
+                logger.warning(
+                    "Watchdog: Network link is offline (Interface '%s' online=%s, DefaultRoute=%s). "
+                    "Suspending integrity monitoring to prevent false positives.",
+                    interface,
+                    online,
+                    has_route,
+                )
+                # Loop here until network link comes back
+                while True:
+                    time.sleep(5)
+                    # Check if lock still exists (e.g. ttp stop was run)
+                    lock = state.read_lock()
+                    if lock is None:
+                        break
+
+                    interface = lock.get("interface") or dns.detect_active_interface()
+                    if is_interface_online(interface) and has_default_route():
+                        logger.info(
+                            "Watchdog: Network link restored on '%s'. "
+                            "Waiting 10 seconds for Tor circuit stabilization...",
+                            interface,
+                        )
+                        time.sleep(10)
+                        break
+
+                # Re-read lock after exiting the offline loop
+                lock = state.read_lock()
+                if lock is None:
+                    logger.info(
+                        "Watchdog: No active TTP lock file found after recovery. Exiting gracefully."
+                    )
+                    break
+
+            failed_comp, err_msg = check_system_integrity()
+            if failed_comp is not None:
+                logger.warning(
+                    "Watchdog: Integrity check failed! Component: %s. Error: %s",
+                    failed_comp,
+                    err_msg,
+                )
+
+                # First strike: attempt auto-healing
+                healed = attempt_auto_healing(failed_comp)
+
+                if not healed:
+                    # Healing itself failed (e.g. can't reapply firewall rules) -
+                    # skip the re-check and trigger the killswitch immediately.
+                    logger.error(
+                        "Watchdog: Auto-healing command failed for '%s'. "
+                        "Triggering emergency killswitch immediately.",
+                        failed_comp,
+                    )
+                    trigger_emergency_killswitch(failed_comp, err_msg)
+                    break
+
+                # Brief stabilization delay after healing attempt
+                time.sleep(3)
+
+                # Re-check integrity after successful healing
+                re_failed, re_err = check_system_integrity()
+                if re_failed is not None:
+                    # Healing command ran but system is still broken: trigger lockdown
+                    trigger_emergency_killswitch(re_failed, re_err)
+                    break
+                else:
+                    logger.info(
+                        "Watchdog: Auto-healing was successful. Session integrity restored."
+                    )
+
+            time.sleep(interval_seconds)
+        except Exception as e:
+            logger.error(
+                "Watchdog loop encountered an unexpected error: %s", e, exc_info=True
+            )
+            time.sleep(5)

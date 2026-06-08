@@ -17,9 +17,7 @@ from ttp.system_info import collect_diagnostics
         "tor_user": "debian-tor",
     },
 )
-def test_collect_diagnostics_has_all_keys(
-    mock_detect, mock_read, mock_ctrl, mock_run
-):
+def test_collect_diagnostics_has_all_keys(mock_detect, mock_read, mock_ctrl, mock_run):
     """It should return a dictionary with all expected keys."""
     mock_run.return_value = MagicMock(stdout="mocked output", returncode=0)
 

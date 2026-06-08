@@ -65,8 +65,9 @@ elif [ "$DISTRO" == "arch" ]; then
     docker exec "$CID" pacman -Sy
 fi
 
-echo "==> Caching container's unproxied public IP..."
-docker exec "$CID" sh -c "curl -s https://api.ipify.org > /tmp/real_public_ip.txt"
+echo "==> Caching container's unproxied public IPs (IPv4/IPv6)..."
+docker exec "$CID" sh -c "curl -s --connect-timeout 5 https://api.ipify.org > /tmp/real_public_ip.txt"
+docker exec "$CID" sh -c "curl -s -6 --connect-timeout 5 https://ipv6.icanhazip.com > /tmp/real_public_ipv6.txt || touch /tmp/real_public_ipv6.txt"
 
 echo "==> Running integration tests inside container..."
 set +e
@@ -85,7 +86,8 @@ if [ $TEST_EXIT -eq 0 ]; then
         echo "==> Running offensive anti-leak verification tests..."
         set +e
         REAL_IP=$(docker exec "$CID" cat /tmp/real_public_ip.txt)
-        docker exec -e REAL_PUBLIC_IP="$REAL_IP" "$CID" /venv/bin/pytest /app/tests/leak/ -v -s
+        REAL_IPV6=$(docker exec "$CID" cat /tmp/real_public_ipv6.txt)
+        docker exec -e REAL_PUBLIC_IP="$REAL_IP" -e REAL_PUBLIC_IPV6="$REAL_IPV6" "$CID" /venv/bin/pytest /app/tests/leak/ -v -s
         TEST_EXIT=$?
         set -e
         

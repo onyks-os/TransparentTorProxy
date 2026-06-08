@@ -6,7 +6,7 @@ All system interactions (systemctl, nft, state lock, dns, firewall) are fully mo
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, mock_open
 
 import pytest
 
@@ -83,10 +83,14 @@ def test_stop_watchdog(mock_update, mock_run, temp_watchdog_path):
 def test_check_system_integrity_healthy(mock_get_ctrl, mock_run, mock_is_mount):
     """check_system_integrity returns (None, None) when all systems are healthy."""
     # Mock nftables ruleset to contain filter_out
-    mock_run.return_value = MagicMock(stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0)
+    mock_run.return_value = MagicMock(
+        stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0
+    )
 
-    # Mock Tor controller socket to successfully connect and close
+    # Mock Tor controller: supports context manager protocol for the 'with ctrl:' block
     mock_ctrl = MagicMock()
+    mock_ctrl.__enter__ = lambda s: s
+    mock_ctrl.__exit__ = MagicMock(return_value=False)
     mock_get_ctrl.return_value = mock_ctrl
 
     comp, err = wd.check_system_integrity()
@@ -94,7 +98,8 @@ def test_check_system_integrity_healthy(mock_get_ctrl, mock_run, mock_is_mount):
     assert comp is None
     assert err is None
     mock_is_mount.assert_called_once()
-    mock_ctrl.close.assert_called_once()
+    # Verify active Tor query was performed
+    mock_ctrl.get_info.assert_called_once_with("status/bootstrap-phase")
 
 
 @patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
@@ -123,7 +128,9 @@ def test_check_system_integrity_firewall_missing_table(mock_run, mock_is_mount):
 @patch("ttp.watchdog.subprocess.run")
 def test_check_system_integrity_firewall_incomplete_table(mock_run, mock_is_mount):
     """check_system_integrity detects when 'inet ttp' table is present but incomplete."""
-    mock_run.return_value = MagicMock(stdout="table inet ttp {\n  chain something_else {}\n}\n", returncode=0)
+    mock_run.return_value = MagicMock(
+        stdout="table inet ttp {\n  chain something_else {}\n}\n", returncode=0
+    )
 
     comp, err = wd.check_system_integrity()
     assert comp == "firewall"
@@ -134,13 +141,18 @@ def test_check_system_integrity_firewall_incomplete_table(mock_run, mock_is_moun
 @patch("ttp.dns._is_mount_point", return_value=True)
 @patch("ttp.watchdog.subprocess.run")
 @patch("ttp.tor_control.get_controller", return_value=None)
-def test_check_system_integrity_tor_socket_inactive_service(mock_get_ctrl, mock_run, mock_is_mount):
+def test_check_system_integrity_tor_socket_inactive_service(
+    mock_get_ctrl, mock_run, mock_is_mount
+):
     """check_system_integrity detects when Tor socket is closed and systemd service is inactive."""
+
     # nftables: OK
     # Tor service: inactive
     def run_side_effect(args, **kwargs):
         if args[0] == "nft":
-            return MagicMock(stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0)
+            return MagicMock(
+                stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0
+            )
         elif args[0] == "systemctl" and "is-active" in args:
             return MagicMock(stdout="inactive\n", returncode=0)
         return MagicMock(returncode=0)
@@ -152,8 +164,35 @@ def test_check_system_integrity_tor_socket_inactive_service(mock_get_ctrl, mock_
     assert "inactive/stopped" in err
 
 
+@patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
+@patch("ttp.dns._is_mount_point", return_value=True)
+@patch("ttp.watchdog.subprocess.run")
+@patch("ttp.tor_control.get_controller")
+def test_check_system_integrity_tor_unresponsive(
+    mock_get_ctrl, mock_run, mock_is_mount
+):
+    """check_system_integrity detects when Tor socket exists but get_info fails (stale/dead Tor)."""
+    mock_run.return_value = MagicMock(
+        stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0
+    )
+
+    # Simulate a stale socket: get_info raises an exception inside the 'with' block
+    mock_ctrl = MagicMock()
+    mock_ctrl.__enter__ = lambda s: s
+    mock_ctrl.__exit__ = MagicMock(return_value=False)
+    mock_ctrl.get_info.side_effect = Exception("Socket closed")
+    mock_get_ctrl.return_value = mock_ctrl
+
+    comp, err = wd.check_system_integrity()
+    assert comp == "tor"
+    assert "unresponsive" in err
+
+
 # 5. attempt_auto_healing
-@patch("ttp.watchdog.state.read_lock", return_value={"transport_port": 9041, "dns_port": 9054})
+@patch(
+    "ttp.watchdog.state.read_lock",
+    return_value={"transport_port": 9041, "dns_port": 9054},
+)
 @patch("ttp.dns.detect_active_interface", return_value="wlan0")
 @patch("ttp.dns.apply_dns")
 def test_attempt_auto_healing_dns(mock_apply_dns, mock_detect, mock_read):
@@ -164,7 +203,15 @@ def test_attempt_auto_healing_dns(mock_apply_dns, mock_detect, mock_read):
     mock_apply_dns.assert_called_once_with("wlan0")
 
 
-@patch("ttp.watchdog.state.read_lock", return_value={"transport_port": 9080, "dns_port": 9090, "allow_root": True, "lan_bypass": False})
+@patch(
+    "ttp.watchdog.state.read_lock",
+    return_value={
+        "transport_port": 9080,
+        "dns_port": 9090,
+        "allow_root": True,
+        "lan_bypass": False,
+    },
+)
 @patch("ttp.tor_detect.detect_tor", return_value={"tor_user": "custom-tor"})
 @patch("ttp.firewall.apply_rules")
 def test_attempt_auto_healing_firewall(mock_apply_fw, mock_detect_tor, mock_read):
@@ -187,7 +234,9 @@ def test_attempt_auto_healing_tor(mock_run, mock_read):
     """attempt_auto_healing('tor') restarts the systemd 'ttp-tor' service."""
     result = wd.attempt_auto_healing("tor")
     assert result is True
-    mock_run.assert_called_once_with(["systemctl", "restart", "ttp-tor"], capture_output=True, text=True, check=True)
+    mock_run.assert_called_once_with(
+        ["systemctl", "restart", "ttp-tor"], capture_output=True, text=True, check=True
+    )
 
 
 # 6. trigger_emergency_killswitch
@@ -219,13 +268,17 @@ def test_run_watchdog_loop_no_lock(mock_sleep, mock_read):
 @patch("ttp.watchdog.state.read_lock")
 @patch("ttp.watchdog.check_system_integrity")
 @patch("ttp.watchdog.attempt_auto_healing", return_value=True)
+@patch("ttp.watchdog.is_interface_online", return_value=True)
+@patch("ttp.watchdog.has_default_route", return_value=True)
 @patch("ttp.watchdog.time.sleep")
-def test_run_watchdog_loop_first_strike_healed(mock_sleep, mock_heal, mock_check, mock_read):
+def test_run_watchdog_loop_first_strike_healed(
+    mock_sleep, mock_has_route, mock_online, mock_heal, mock_check, mock_read
+):
     """run_watchdog_loop detects failure, heals successfully, and continues loop."""
     # Simulate a loop that runs once then exits because lock is removed
     mock_read.side_effect = [
         {"pid": 123},  # First check: active
-        None,          # Second check: exit loop
+        None,  # Second check: exit loop
     ]
     # First check: failed on firewall
     # Second check (after healing): healthy (None, None)
@@ -245,10 +298,14 @@ def test_run_watchdog_loop_first_strike_healed(mock_sleep, mock_heal, mock_check
 @patch("ttp.watchdog.state.read_lock", return_value={"pid": 123})
 @patch("ttp.watchdog.check_system_integrity")
 @patch("ttp.watchdog.attempt_auto_healing", return_value=True)
+@patch("ttp.watchdog.is_interface_online", return_value=True)
+@patch("ttp.watchdog.has_default_route", return_value=True)
 @patch("ttp.watchdog.trigger_emergency_killswitch")
 @patch("ttp.watchdog.time.sleep")
-def test_run_watchdog_loop_second_strike_killswitch(mock_sleep, mock_ks, mock_heal, mock_check, mock_read):
-    """run_watchdog_loop triggers emergency killswitch and exits if healing fails to restore integrity."""
+def test_run_watchdog_loop_second_strike_killswitch(
+    mock_sleep, mock_ks, mock_has_route, mock_online, mock_heal, mock_check, mock_read
+):
+    """run_watchdog_loop triggers emergency killswitch and exits if healing runs but system stays broken."""
     # First check: failed on tor
     # Second check (after healing): still failed on tor
     mock_check.side_effect = [
@@ -260,3 +317,113 @@ def test_run_watchdog_loop_second_strike_killswitch(mock_sleep, mock_ks, mock_he
 
     mock_heal.assert_called_once_with("tor")
     mock_ks.assert_called_once_with("tor", "service dead")
+
+
+@patch("ttp.watchdog.state.read_lock", return_value={"pid": 123})
+@patch("ttp.watchdog.check_system_integrity")
+@patch("ttp.watchdog.attempt_auto_healing", return_value=False)
+@patch("ttp.watchdog.is_interface_online", return_value=True)
+@patch("ttp.watchdog.has_default_route", return_value=True)
+@patch("ttp.watchdog.trigger_emergency_killswitch")
+@patch("ttp.watchdog.time.sleep")
+def test_run_watchdog_loop_healing_command_fails_immediate_killswitch(
+    mock_sleep, mock_ks, mock_has_route, mock_online, mock_heal, mock_check, mock_read
+):
+    """run_watchdog_loop triggers emergency killswitch immediately if the healing command itself fails."""
+    # Only one integrity check: healing fails immediately, no re-check should occur
+    mock_check.return_value = ("firewall", "nftables apply error")
+
+    wd.run_watchdog_loop(interval_seconds=1)
+
+    mock_heal.assert_called_once_with("firewall")
+    # Killswitch triggered without waiting for a second check
+    mock_ks.assert_called_once_with("firewall", "nftables apply error")
+    # Only one integrity check should have happened (no re-check after failed healing)
+    assert mock_check.call_count == 1
+
+
+# 8. Diagnostic helper tests and loop suspension
+@patch("ttp.watchdog.Path.exists", return_value=True)
+def test_is_interface_online_up(mock_exists):
+    """is_interface_online returns True if operstate is up and carrier is 1."""
+
+    def read_text_side_effect(self):
+        if "operstate" in str(self):
+            return "up\n"
+        elif "carrier" in str(self):
+            return "1\n"
+        return ""
+
+    with patch("ttp.watchdog.Path.read_text", read_text_side_effect):
+        assert wd.is_interface_online("eth0") is True
+
+
+@patch("ttp.watchdog.Path.exists", return_value=True)
+def test_is_interface_online_down(mock_exists):
+    """is_interface_online returns False if operstate is down or carrier is 0."""
+
+    # 1. operstate down
+    def read_text_down(self):
+        if "operstate" in str(self):
+            return "down\n"
+        return "1\n"
+
+    with patch("ttp.watchdog.Path.read_text", read_text_down):
+        assert wd.is_interface_online("eth0") is False
+
+    # 2. carrier 0
+    def read_text_carrier_zero(self):
+        if "operstate" in str(self):
+            return "up\n"
+        return "0\n"
+
+    with patch("ttp.watchdog.Path.read_text", read_text_carrier_zero):
+        assert wd.is_interface_online("eth0") is False
+
+
+@patch("ttp.watchdog.Path.exists", return_value=True)
+def test_has_default_route_true(mock_exists):
+    """has_default_route returns True if /proc/net/route has destination 00000000 and mask 00000000."""
+    mock_content = (
+        "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+        "eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n"
+    )
+    with patch("builtins.open", mock_open(read_data=mock_content)):
+        assert wd.has_default_route() is True
+
+
+@patch("ttp.watchdog.Path.exists", return_value=True)
+def test_has_default_route_false(mock_exists):
+    """has_default_route returns False if no default route exists."""
+    mock_content = (
+        "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+        "eth0\t0001A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n"
+    )
+    with patch("builtins.open", mock_open(read_data=mock_content)):
+        assert wd.has_default_route() is False
+
+
+@patch("ttp.watchdog.state.read_lock")
+@patch("ttp.watchdog.is_interface_online")
+@patch("ttp.watchdog.has_default_route")
+@patch("ttp.watchdog.time.sleep")
+@patch("ttp.watchdog.check_system_integrity")
+def test_run_watchdog_loop_suspends_and_resumes(
+    mock_check, mock_sleep, mock_has_route, mock_online, mock_read
+):
+    """run_watchdog_loop enters suspended state when network is offline, and resumes once online."""
+    mock_read.side_effect = [
+        {"interface": "eth0"},  # First iteration start
+        {"interface": "eth0"},  # Inside recovery loop check
+        None,  # Exit recovery loop / main loop exit
+    ]
+
+    mock_online.side_effect = [False, True]
+    mock_has_route.return_value = True
+
+    wd.run_watchdog_loop(interval_seconds=1)
+
+    assert mock_online.call_count == 2
+    mock_check.assert_not_called()
+    sleep_calls = [call[0][0] for call in mock_sleep.call_args_list]
+    assert 10 in sleep_calls

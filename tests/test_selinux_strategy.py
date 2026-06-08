@@ -88,7 +88,7 @@ def test_is_selinux_module_installed_true():
     with patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/semodule"):
         with patch("ttp.tor_detect.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
-                stdout="ttp_tor_policy\nother_mod\n", returncode=0
+                stdout="ttp_tor_policy  1.1\nother_mod\n", returncode=0
             )
             assert is_selinux_module_installed() is True
 
@@ -155,6 +155,4 @@ def test_remove_selinux_module_calls_semodule_r():
         patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
         remove_selinux_module()
-        mock_run.assert_any_call(
-            ["semodule", "-r", "ttp_tor_policy"], check=True
-        )
+        mock_run.assert_any_call(["semodule", "-r", "ttp_tor_policy"], check=True)
