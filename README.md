@@ -14,6 +14,7 @@
   <img src="https://img.shields.io/badge/Python-3.10+-yellow?style=for-the-badge&logo=python" alt="Python">
   <a href="https://github.com/onyks-os/TransparentTorProxy/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/onyks-os/TransparentTorProxy/ci.yml?style=for-the-badge&logo=github" alt="CI Status"></a>
   <a href="https://pypi.org/project/transparent-tor-proxy/"><img src="https://img.shields.io/pypi/dm/transparent-tor-proxy?style=for-the-badge&logo=pypi" alt="PyPI - Downloads"></a>
+  <a href="https://www.bestpractices.dev/projects/13164"><img src="https://img.shields.io/badge/dynamic/xml?url=https%3A%2F%2Fwww.bestpractices.dev%2Fprojects%2F13164%2Fbaseline&query=%2F%2F*%5Blocal-name()%3D%27text%27%5D%5Blast()%5D&label=OpenSSF%20Baseline&style=for-the-badge&color=0066a1" alt="OpenSSF Baseline"></a>
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </p>
 
