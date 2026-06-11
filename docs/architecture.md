@@ -20,6 +20,10 @@
 10. [Development and Test Environment](#10-development-and-test-environment)
 11. [Unit Tests - Specifications](#11-unit-tests--specifications)
 
+**Related documents:**
+- [interfaces.md](interfaces.md) — Full CLI, Tor, and system interface reference (OSPS-SA-02.01)
+- [security-assessment.md](security-assessment.md) — STRIDE threat model and risk assessment (OSPS-SA-03.01)
+
 ---
 
 ## 1. Project Goal
@@ -39,8 +43,8 @@ Unlike similar tools (TorGhost, Anonsurf), TTP is designed to:
 
 The project is divided into independent Python modules. Each module has a single responsibility and can be tested in isolation.
 
-| Module             | Area             | Responsibility                                                                   |
-| :----------------- | :--------------- | :------------------------------------------------------------------------------- |
+| Module           | Area             | Responsibility                                                                   |
+| :--------------- | :--------------- | :------------------------------------------------------------------------------- |
 | `tor_detect.py`  | **Detection**    | Checks Tor presence, status, config, user, and SELinux state.                    |
 | `tor_install.py` | **Installation** | Installs Tor via PM, manages SELinux policies, configures `torrc`.               |
 | `firewall.py`    | **Firewall**     | Generates and applies `nftables` rules in isolated `inet ttp` table (Stateless). |
@@ -112,29 +116,28 @@ Intervenes if detection fails or system needs optimization.
 
 Generates rules applied atomically via `nft -f` into the dedicated `inet ttp` table.
 
+**Design principles:**
+
 1. **Stateless Logic**: No system-wide rule backups are performed. All modifications are isolated to the `ttp` table.
-2. **Atomic Cleanup**: Restoration is performed via `nft destroy table inet ttp`, which is faster and safer than rule-by-rule deletion.
-3. **Multi-Chain Architecture**:
-    * **NAT Hook (output/prerouting)**: Handles the actual redirection of TCP and DNS packets to Tor's ports (`9041` and `9054`).
-    * **Filter Hook (output)**: Implements the **Kill-Switch**. It allows Tor, optional Root/LAN bypass, and local loopback traffic, while rejecting everything else.
-4. **Execution Sequence**: Tor/Root (optional) exclusion → **DNS Redirect** (before LAN bypass, to prevent gateway DNS leak) → LAN Bypass (optional) → Accept loopback → Redirect TCP → Block DoT → Block IPv6 → Reject All.
-5. **Selective Root Routing**: By default, root and `sudo` traffic is routed through Tor. The `--allow-root` CLI flag allows root processes to bypass Tor (allowing system updates or Tor bootstrapping).
-6. **LAN Bypass**: Automatically active by default. Excludes RFC 1918 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) and Link-Local (169.254.0.0/16) subnets from redirection, allowing communication with local devices (NAS, printers). Can be disabled via `--no-lan-bypass`.
-7. **DNS-over-TLS (DoT) Prevention**: Drops outbound port 853 connections (`tcp dport 853 reject` inside `filter_out`) to prevent encrypted DNS queries from leaking or bypassing the Tor resolver.
-8. **Emergency Killswitch**: The `apply_emergency_killswitch()` function replaces the table rules with a minimal configuration that drops all inbound, outbound, and forwarded physical interface traffic while allowing only local loopback (`lo`). Used by the watchdog during critical integrity failures.
+2. **Atomic Cleanup**: Restoration is performed via `nft destroy table inet ttp`, faster and safer than rule-by-rule deletion.
+3. **Multi-Chain Architecture**: A NAT hook (`output`/`prerouting`) handles redirection to Tor ports; a filter hook (`filter_out`) implements the Kill-Switch, rejecting everything that is not explicitly allowed.
+4. **Split Tunneling**: UIDs/GIDs are resolved via Python's `pwd`/`grp` libraries and injected as `meta skuid`/`meta skgid` rules — no shell interpolation.
+5. **Emergency Killswitch**: `apply_emergency_killswitch()` replaces the table with a minimal drop-all configuration (loopback exempt), used by the watchdog on persistent integrity failure.
+
+> For the complete chain structure, rule execution order, and external interface specification see [`interfaces.md § 3.1`](interfaces.md#31-nftables-firewall).
 
 ### 3.4 `dns.py`
 
 Implements a **stateless overlay** by bind-mounting a volatile resolver file from `/run/ttp/resolv.conf` over `/etc/resolv.conf`.
 
-* **Symlink Check:** Automatically resolves `/etc/resolv.conf` if it's a symlink (common on systemd systems) to apply the mount to the real physical target.
-* **Mount Guard:** Before applying the overlay, it parses `/proc/mounts` and iteratively unmounts any stale layers left by previous unclean exits, ensuring absolute idempotency.
-* **Non-destructive:** Does not alter disk metadata; the original file is preserved "under" the mount.
-* **Lazy Teardown:** Uses `umount -l` (lazy) on shutdown to ensure immediate release even if processes are currently reading the file.
-* **Volatile:** Being a `mount --bind` on a `tmpfs` file, it evaporates on hard reboot.
-* **DoH/DoT Leak Mitigation:**
-  * **DoT (port 853)**: Actively blocked at the firewall level (see `firewall.py`).
-  * **DoH (port 443)**: Browser-level DNS-over-HTTPS is mitigated by mapping Mozilla's canary domain `use-application-dns.net` to `0.0.0.0` inside the generated `torrc` file. This signals to compliant browsers that DoH should be disabled, forcing them to fall back to the system's DNS resolver which is safely routed through Tor.
+**Design rationale:**
+
+* **Non-destructive by design**: The original file is never modified on disk — the overlay is transparent to the OS and evaporates on reboot.
+* **Idempotency guard**: Before applying, `/proc/mounts` is scanned to remove any stale layers from prior unclean exits, ensuring multiple invocations are safe.
+* **Symlink safety**: The real path of `/etc/resolv.conf` is resolved before mounting (common issue on systemd-managed systems where it is a symlink to `systemd-resolved`).
+* **DoH/DoT mitigation**: DoT is blocked at the firewall layer (`firewall.py`); well-known DoH resolver IPs are blocked on port 443 to trigger system fallback; other unlisted DoH is routed through Tor; and DoH canary domains are mapped to `0.0.0.0` in the generated `torrc` to disable browser-level DoH where supported.
+
+> For mount source/target paths, teardown behavior, and the full attribute table see [`interfaces.md § 3.2`](interfaces.md#32-dns-subsystem).
 
 ### 3.5 `state.py`
 
@@ -142,7 +145,9 @@ Manages `/run/ttp/ttp.lock` (JSON) on a volatile `tmpfs` mount. This ensures tha
 
 ### 3.6 `cli.py`
 
-Typer CLI acting as the primary orchestrator. It manages the **TTP Tor service lifecycle** via a dedicated `ttp-tor.service` unit, handling signals (SIGINT/SIGTERM) to ensure clean network restoration. Exposes: `start`, `stop`, `refresh`, `status`, `diagnose`, `uninstall`.
+Typer CLI acting as the primary orchestrator. It manages the **TTP Tor service lifecycle** via a dedicated `ttp-tor.service` unit, handling signals (`SIGINT`/`SIGTERM`) to ensure clean network restoration.
+
+> For the full command reference, options, exit codes, and root-privilege requirements see [`interfaces.md § 1`](interfaces.md#1-command-line-interface-cli).
 
 ### 3.7 `tor_control.py`
 
@@ -172,9 +177,9 @@ Implements continuous, proactive session monitoring and auto-healing features to
 * **Volatile Service Daemon**: Configures and writes a dynamic systemd service unit (`/run/systemd/system/ttp-watchdog.service`) that runs the command `ttp watchdog run`. Because it resides in `/run/`, it evaporates on system reboot.
 * **Continuous Monitoring Loop**: Inspects the core subsystems every 15 seconds:
   1. **DNS Integrity**: Confirms `/etc/resolv.conf` (or its realpath) is still a valid active `mount --bind` mountpoint.
-  2. **Firewall Integrity**: Confirms that the `inet ttp` nftables table exists and contains the `filter_out` chain.
+  2. **Firewall Integrity**: Confirms that the `inet ttp` nftables table exists and contains the `filter_out` chain, as well as verifying any active bypass exceptions (users/groups) registered in the session lock.
   3. **Tor daemon health**: Confirms the ControlSocket is open and active, falling back to checking if the systemd `ttp-tor.service` is in an active state.
-* **Auto-Healing ("First Strike")**: If an integrity check fails, the watchdog triggers a single-strike recovery attempt based on the failing component (e.g. re-running DNS overlay, regenerating firewall rules, or restarting the `ttp-tor` service). It then sleeps for 3 seconds to let changes stabilize.
+* **Auto-Healing ("First Strike")**: If an integrity check fails, the watchdog triggers a single-strike recovery attempt based on the failing component (e.g. re-running DNS overlay, regenerating firewall rules including bypass configurations, or restarting the `ttp-tor` service). It then sleeps for 3 seconds to let changes stabilize.
 * **Emergency Killswitch ("Second Strike")**: If the subsequent check still fails, the watchdog instantly activates the emergency killswitch via `firewall.apply_emergency_killswitch()`, completely isolating the physical network interfaces to prevent traffic leakage. It then alerts the user using a system-wide terminal broadcast (`wall`) and a critical desktop popup (`notify-send`).
 
 ### 3.10 Architecture Graph & Module Interactions
@@ -246,22 +251,11 @@ graph TD
 
 ## 4. Command Line Interface
 
-*All commands require `sudo`.*
+The full CLI reference — all commands, options, exit codes, and privilege requirements — is maintained as the single authoritative source in:
 
-* `ttp start` (with optional `--interface`, `--bootstrap-timeout`, `--allow-root`, `--no-lan-bypass`, and `--watchdog`/`-w`)
-* `ttp stop` (with optional `--restore-only`)
-* `ttp restart` (with same options as `start`)
-* `ttp refresh`
-* `ttp status`
-* `ttp check`
-* `ttp check-leak`
-* `ttp logs`
-* `ttp diagnose`
-* `ttp uninstall`
-* `ttp watchdog start` (manually starts the watchdog daemon)
-* `ttp watchdog stop` (manually stops the watchdog daemon)
-* `ttp watchdog status` (displays watchdog status and PID)
-* `ttp watchdog run` (internal command running the continuous monitoring loop)
+**[`docs/interfaces.md § 1 — Command Line Interface`](interfaces.md#1-command-line-interface-cli)**
+
+Duplicated inline lists are intentionally omitted here to avoid version skew.
 
 ---
 
@@ -287,11 +281,11 @@ graph TD
 
 TTP follows a consistent visual identity to ensure professional representation across documentation and web-based platforms.
 
-| Asset | Path | Usage |
-| :--- | :--- | :--- |
-| **Project Logo** | `assets/icon.png` | Main branding, README header, and social previews. |
-| **Favicon Set** | `assets/favicon/` | Icons for web documentation and browser-based interfaces. |
-| **Web Manifest** | `assets/favicon/site.webmanifest` | PWA and mobile-friendly metadata. |
+| Asset            | Path                              | Usage                                                     |
+| :--------------- | :-------------------------------- | :-------------------------------------------------------- |
+| **Project Logo** | `assets/icon.png`                 | Main branding, README header, and social previews.        |
+| **Favicon Set**  | `assets/favicon/`                 | Icons for web documentation and browser-based interfaces. |
+| **Web Manifest** | `assets/favicon/site.webmanifest` | PWA and mobile-friendly metadata.                         |
 
 The brand color palette is primarily **Black (#000000)** and **Cyan (#22d3ee)**, reflecting the tool's focus on privacy and high-performance networking.
 
@@ -364,11 +358,11 @@ TTP employs a `Makefile` in the root directory to provide a unified entry point 
 
 ### Testing Strategy
 
-| Phase | Environment      | Goal                           | Status                             |
-| :---- | :--------------- | :----------------------------- | :--------------------------------- |
-| 1     | Unit (Host)      | pytest, fully mocked           | PASS                                |
-| 2     | Integration      | Docker testing (`.test` files) | PASS (Debian, Arch, Fedora)         |
-| 3     | Portability (VM) | Debian 13, Ubuntu              | PASS                                |
+| Phase | Environment      | Goal                           | Status                      |
+| :---- | :--------------- | :----------------------------- | :-------------------------- |
+| 1     | Unit (Host)      | pytest, fully mocked           | PASS                        |
+| 2     | Integration      | Docker testing (`.test` files) | PASS (Debian, Arch, Fedora) |
+| 3     | Portability (VM) | Debian 13, Ubuntu              | PASS                        |
 
 ---
 
@@ -377,7 +371,7 @@ TTP employs a `Makefile` in the root directory to provide a unified entry point 
 *(Tests run without root, using `unittest.mock`)*
 
 * **`test_tor_detect.py`**: Verifies dictionary output across varying torrc and process states.
-* **`test_firewall.py`**: Asserts DNS redirect appears BEFORE LAN bypass (critical - gateway DNS leak prevention), BEFORE loopback accept, BEFORE TCP redirect. Verifies IPv6 drop, DoT rejection, DoH IP-level blocking, and emergency killswitch table application.
+* **`test_firewall.py`**: Asserts DNS redirect appears BEFORE LAN bypass (critical - gateway DNS leak prevention), BEFORE loopback accept, BEFORE TCP redirect. Verifies IPv6 drop (when unsupported) or redirection (when supported), DoT rejection, DoH IP-level blocking, bypass user/group (split tunneling) rule injection, and emergency killswitch table application.
 * **`test_dns.py`**: Asserts correct mount --bind overlay, stale mount cleanup, and lazy umount.
 * **`test_state.py`**: Asserts lock creation, reading, and orphan detection.
 * **`test_cli.py`**: Verifies command orchestration, option injection, UI flow, and non-root OSError safety.

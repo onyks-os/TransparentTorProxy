@@ -141,6 +141,7 @@ def test_start_concurrency_error(mock_euid, mock_orphan, mock_read):
 # stop
 
 
+@patch("ttp.watchdog.stop_watchdog")
 @patch("ttp.cli.state.delete_lock")
 @patch("ttp.cli.dns.restore_dns")
 @patch("ttp.cli.firewall.destroy_rules")
@@ -154,7 +155,14 @@ def test_start_concurrency_error(mock_euid, mock_orphan, mock_read):
 )
 @patch("ttp.cli.os.geteuid", return_value=0)
 def test_stop_active_session(
-    mock_euid, mock_read, mock_graceful, mock_stop_tor, mock_fw, mock_dns, mock_del
+    mock_euid,
+    mock_read,
+    mock_graceful,
+    mock_stop_tor,
+    mock_fw,
+    mock_dns,
+    mock_del,
+    mock_stop_wd,
 ):
     """stop with active session -> graceful shutdown, then stops tor, restores network."""
     result = runner.invoke(app, ["stop"])
@@ -165,8 +173,10 @@ def test_stop_active_session(
     mock_fw.assert_called_once()
     mock_dns.assert_called_once()
     mock_del.assert_called_once()
+    mock_stop_wd.assert_called_once()
 
 
+@patch("ttp.watchdog.stop_watchdog")
 @patch("ttp.cli.state.delete_lock")
 @patch("ttp.cli.dns.restore_dns")
 @patch("ttp.cli.firewall.destroy_rules")
@@ -180,7 +190,14 @@ def test_stop_active_session(
 )
 @patch("ttp.cli.os.geteuid", return_value=0)
 def test_stop_graceful_shutdown_failure_continues(
-    mock_euid, mock_read, mock_graceful, mock_stop_tor, mock_fw, mock_dns, mock_del
+    mock_euid,
+    mock_read,
+    mock_graceful,
+    mock_stop_tor,
+    mock_fw,
+    mock_dns,
+    mock_del,
+    mock_stop_wd,
 ):
     """stop continues even if graceful_shutdown fails."""
     result = runner.invoke(app, ["stop"])
@@ -189,6 +206,7 @@ def test_stop_graceful_shutdown_failure_continues(
     mock_graceful.assert_called_once()
     mock_stop_tor.assert_called_once()
     mock_fw.assert_called_once()
+    mock_stop_wd.assert_called_once()
 
 
 @patch("ttp.cli.state.read_lock", return_value=None)
@@ -364,6 +382,7 @@ def test_start_with_bootstrap_timeout(
 # stop --restore-only
 
 
+@patch("ttp.watchdog.stop_watchdog")
 @patch("ttp.cli.state.delete_lock")
 @patch("ttp.cli.dns.restore_dns")
 @patch("ttp.cli.firewall.destroy_rules")
@@ -374,7 +393,7 @@ def test_start_with_bootstrap_timeout(
 )
 @patch("ttp.cli.os.geteuid", return_value=0)
 def test_stop_restore_only_with_lock(
-    mock_euid, mock_read, mock_stop_tor, mock_fw, mock_dns, mock_del
+    mock_euid, mock_read, mock_stop_tor, mock_fw, mock_dns, mock_del, mock_stop_wd
 ):
     result = runner.invoke(app, ["stop", "--restore-only"])
     assert result.exit_code == 0
@@ -383,8 +402,10 @@ def test_stop_restore_only_with_lock(
     mock_fw.assert_called_once()
     mock_dns.assert_called_once_with({"mount_target": "/etc/resolv.conf"})
     mock_del.assert_called_once()
+    mock_stop_wd.assert_called_once()
 
 
+@patch("ttp.watchdog.stop_watchdog")
 @patch("ttp.cli.state.delete_lock")
 @patch("ttp.cli.dns.restore_dns")
 @patch("ttp.cli.firewall.destroy_rules")
@@ -398,6 +419,7 @@ def test_stop_restore_only_no_lock(
     mock_fw,
     mock_dns,
     mock_del,
+    mock_stop_wd,
 ):
     result = runner.invoke(app, ["stop", "--restore-only"])
     assert result.exit_code == 0
@@ -406,6 +428,7 @@ def test_stop_restore_only_no_lock(
     mock_fw.assert_called_once()
     mock_dns.assert_called_once_with(None)
     mock_del.assert_called_once()
+    mock_stop_wd.assert_called_once()
 
 
 # restart
@@ -724,7 +747,12 @@ def test_start_custom_ports_success(
     assert result.exit_code == 0
     assert "Session active" in result.output
 
-    mock_ensure.assert_called_once_with(transport_port=9080, dns_port=9090)
+    mock_ensure.assert_called_once_with(
+        transport_port=9080,
+        dns_port=9090,
+        use_bridges=False,
+        bridges=[],
+    )
     mock_apply_fw.assert_called_once_with(
         tor_user="debian-tor",
         transport_port=9080,
@@ -1076,3 +1104,187 @@ def test_log_format_argument_parsing():
         assert cli_state.log_format == "json"
     finally:
         cli_state.log_format = orig_format
+
+
+@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.cli.firewall.apply_rules")
+@patch(
+    "ttp.cli.tor_install.ensure_tor_ready",
+    return_value={
+        "is_installed": True,
+        "is_running": True,
+        "is_configured": True,
+        "tor_user": "debian-tor",
+        "version": "0.4.8.10",
+    },
+)
+@patch("ttp.cli.tor_install.setup_selinux_if_needed")
+@patch("ttp.cli.state.write_lock")
+@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("ttp.cli.state.is_orphan", return_value=False)
+@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("pwd.getpwnam")
+@patch("grp.getgrnam")
+def test_start_with_bypass_user_and_group(
+    mock_grp_nam,
+    mock_pwd_nam,
+    mock_euid,
+    mock_orphan,
+    mock_read,
+    mock_write,
+    mock_selinux,
+    mock_ensure,
+    mock_apply_fw,
+    mock_iface,
+    mock_apply_dns,
+    mock_verify,
+):
+    """Test start command with valid bypass users and groups."""
+    mock_pwd_nam.side_effect = lambda name: (
+        MagicMock(pw_uid=1001) if name == "user1" else MagicMock(pw_uid=1002)
+    )
+    mock_grp_nam.return_value = MagicMock(gr_gid=2001)
+
+    result = runner.invoke(
+        app, ["start", "--bypass-user", "user1,user2", "--bypass-group", "group1"]
+    )
+    assert result.exit_code == 0
+    assert "Session active" in result.output
+
+    # Check write_lock is called with bypass_users/bypass_groups
+    _, kwargs_write = mock_write.call_args
+    assert kwargs_write["bypass_users"] == ["user1", "user2"]
+    assert kwargs_write["bypass_groups"] == ["group1"]
+
+    # Check apply_rules is called with bypass_uids/bypass_gids
+    _, kwargs_fw = mock_apply_fw.call_args
+    assert kwargs_fw["bypass_uids"] == [1001, 1002]
+    assert kwargs_fw["bypass_gids"] == [2001]
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("pwd.getpwnam", side_effect=KeyError)
+def test_start_with_invalid_bypass_user(mock_pwd_nam, mock_euid):
+    """Test start command with invalid bypass user returns an error."""
+    result = runner.invoke(app, ["start", "--bypass-user", "nonexistentuser"])
+    assert result.exit_code == 1
+    assert "User 'nonexistentuser' does not exist" in result.output
+
+
+# CLI Bridges Tests
+
+
+@patch("ttp.cli.state.write_lock")
+@patch("ttp.cli.tor_install.setup_selinux_if_needed")
+@patch("ttp.cli.tor_install.ensure_tor_ready")
+@patch("ttp.cli.firewall.apply_rules")
+@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.cli.dns.apply_dns", return_value={"resolv": "conf"})
+@patch("ttp.cli._verify_tor", return_value=(True, "198.51.100.1"))
+@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("ttp.cli.state.is_orphan", return_value=False)
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_start_with_bridges_direct(
+    mock_euid,
+    mock_orphan,
+    mock_read,
+    mock_verify,
+    mock_apply_dns,
+    mock_iface,
+    mock_apply_fw,
+    mock_ensure,
+    mock_selinux,
+    mock_write,
+):
+    """Test start command with direct --bridge option."""
+    result = runner.invoke(
+        app,
+        [
+            "start",
+            "--bridge",
+            "obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0",
+            "--bridge",
+            "snowflake 192.0.2.2:4321 601234567890ABCDEF",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Session active" in result.output
+
+    # check ensure_tor_ready arguments
+    _, kwargs_ensure = mock_ensure.call_args
+    assert kwargs_ensure["use_bridges"] is True
+    assert kwargs_ensure["bridges"] == [
+        "obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0",
+        "snowflake 192.0.2.2:4321 601234567890ABCDEF",
+    ]
+
+    # check write_lock arguments
+    _, kwargs_write = mock_write.call_args
+    assert kwargs_write["use_bridges"] is True
+    assert kwargs_write["bridges"] == [
+        "obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0",
+        "snowflake 192.0.2.2:4321 601234567890ABCDEF",
+    ]
+
+
+@patch("ttp.cli.state.write_lock")
+@patch("ttp.cli.tor_install.setup_selinux_if_needed")
+@patch("ttp.cli.tor_install.ensure_tor_ready")
+@patch("ttp.cli.firewall.apply_rules")
+@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.cli.dns.apply_dns", return_value={"resolv": "conf"})
+@patch("ttp.cli._verify_tor", return_value=(True, "198.51.100.1"))
+@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("ttp.cli.state.is_orphan", return_value=False)
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_start_with_bridge_file(
+    mock_euid,
+    mock_orphan,
+    mock_read,
+    mock_verify,
+    mock_apply_dns,
+    mock_iface,
+    mock_apply_fw,
+    mock_ensure,
+    mock_selinux,
+    mock_write,
+    tmp_path,
+):
+    """Test start command with --bridge-file parsing comments and empty lines."""
+    bridge_file = tmp_path / "my_bridges.txt"
+    bridge_file.write_text(
+        "# This is a comment\n"
+        "\n"
+        "obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0\n"
+        "   \n"
+        "snowflake 192.0.2.2:4321 601234567890ABCDEF\n"
+    )
+
+    result = runner.invoke(app, ["start", "--bridge-file", str(bridge_file)])
+    assert result.exit_code == 0
+    assert "Session active" in result.output
+
+    _, kwargs_ensure = mock_ensure.call_args
+    assert kwargs_ensure["use_bridges"] is True
+    assert kwargs_ensure["bridges"] == [
+        "obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0",
+        "snowflake 192.0.2.2:4321 601234567890ABCDEF",
+    ]
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_start_with_invalid_bridge_format(mock_euid):
+    """Test start command with invalid bridge format returns validation error."""
+    result = runner.invoke(app, ["start", "--bridge", "obfs4_no_ip_port"])
+    assert result.exit_code == 1
+    assert "Invalid Bridge Line" in result.output
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+def test_start_use_bridges_without_bridges(mock_euid):
+    """Test start command with --use-bridges but no bridges specified returns error."""
+    result = runner.invoke(app, ["start", "--use-bridges"])
+    assert result.exit_code == 1
+    assert "No Bridges Provided" in result.output

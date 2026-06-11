@@ -59,7 +59,7 @@ pypi: clean
 # 5. Clean build artifacts and release outputs.
 clean:
 	@echo "==> Cleaning build artifacts..."
-	rm -rf dist/ build/ .build_tmp/ ttp.egg-info/ packaging/*.deb packaging/*.rpm packaging/*.tar.gz packaging/*.whl packaging/SHA256SUMS.txt
+	rm -rf dist/ build/ .build_tmp/ ttp.egg-info/ packaging/*.deb packaging/*.rpm packaging/*.tar.gz packaging/*.whl packaging/SHA256SUMS.txt packaging/SHA256SUMS.txt.asc
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 # 6. Offensive Leak Testing Suite (must run inside unproxied target environment, with REAL_PUBLIC_IP set)

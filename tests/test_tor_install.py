@@ -64,7 +64,12 @@ def test_start_tor_service(mock_generate, mock_write_unit, mock_run):
     start_tor_service("tor")
 
     mock_generate.assert_called_once_with(
-        "tor", transport_port=9041, dns_port=9054, block_doh=True
+        "tor",
+        transport_port=9041,
+        dns_port=9054,
+        block_doh=True,
+        use_bridges=False,
+        bridges=None,
     )
     mock_write_unit.assert_called_once_with("tor")
     assert mock_run.call_count == 2
@@ -308,3 +313,87 @@ def test_remove_selinux_module_calls_remove(mock_run, mock_exists, mock_installe
     mock_run.return_value = MagicMock(returncode=0)
     remove_selinux_module()
     assert any("semodule" in str(c) and "-r" in str(c) for c in mock_run.call_args_list)
+
+
+# Pluggable Transports & Bridges Tests
+
+
+@patch("ttp.tor_install.os.makedirs")
+@patch("ttp.tor_install.shutil.chown")
+@patch("ttp.tor_install.os.chmod")
+def test_generate_torrc_with_bridges(
+    mock_chmod, mock_chown, mock_makedirs, tmp_path: Path
+):
+    """generate_torrc writes correct bridge options and ClientTransportPlugins."""
+    runtime_dir = tmp_path / "run/tor"
+    cache_dir = tmp_path / "lib/cache"
+    torrc_path = runtime_dir / "torrc"
+
+    bridges = [
+        "obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0",
+        "snowflake 192.0.2.2:4321 601234567890ABCDEF",
+    ]
+
+    with (
+        patch.object(tor_install, "TOR_RUNTIME_DIR", runtime_dir),
+        patch.object(tor_install, "TOR_CACHE_DIR", cache_dir),
+        patch("ttp.tor_install.shutil.which") as mock_which,
+    ):
+        mock_which.side_effect = lambda binary: f"/usr/bin/{binary}"
+        generate_torrc("debian-tor", use_bridges=True, bridges=bridges)
+
+        assert torrc_path.exists()
+        content = torrc_path.read_text()
+        assert "UseBridges 1" in content
+        assert "ClientTransportPlugin obfs4 exec /usr/bin/obfs4proxy" in content
+        assert (
+            "ClientTransportPlugin snowflake exec /usr/bin/snowflake-client" in content
+        )
+        assert "Bridge obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0" in content
+        assert "Bridge snowflake 192.0.2.2:4321 601234567890ABCDEF" in content
+
+
+@patch("ttp.tor_install.shutil.which")
+def test_ensure_pluggable_transports_already_installed(mock_which):
+    """ensure_pluggable_transports does nothing if transport helper is already in PATH."""
+    mock_which.return_value = "/usr/bin/obfs4proxy"
+    with patch("ttp.tor_install.subprocess.run") as mock_run:
+        tor_install.ensure_pluggable_transports(["obfs4"])
+        mock_run.assert_not_called()
+
+
+@patch("ttp.tor_install.shutil.which")
+@patch("ttp.tor_install.detect_package_manager")
+@patch("ttp.tor_install.subprocess.run")
+def test_ensure_pluggable_transports_auto_installs(mock_run, mock_detect, mock_which):
+    """ensure_pluggable_transports triggers install if missing."""
+    # First call: not found, Second call (double check): found
+    mock_which.side_effect = [None, "/usr/bin/obfs4proxy"]
+    mock_detect.return_value = "apt-get"
+    mock_run.return_value = MagicMock(returncode=0)
+
+    tor_install.ensure_pluggable_transports(["obfs4"])
+
+    assert mock_run.call_count == 2
+    mock_run.assert_any_call(["apt-get", "update"], capture_output=True, check=False)
+    mock_run.assert_any_call(
+        ["apt-get", "install", "-y", "obfs4proxy"], check=True, capture_output=True
+    )
+
+
+@patch("ttp.tor_install.shutil.which", return_value=None)
+def test_ensure_pluggable_transports_unsupported_pt(mock_which):
+    """ensure_pluggable_transports raises TorError for unsupported transports."""
+    with pytest.raises(TorError, match="Unsupported pluggable transport"):
+        tor_install.ensure_pluggable_transports(["shadow"])
+
+
+@patch("ttp.tor_install.shutil.which")
+@patch("ttp.tor_install.detect_package_manager")
+def test_ensure_pluggable_transports_no_package_manager(mock_detect, mock_which):
+    """ensure_pluggable_transports raises TorError if package manager not found."""
+    mock_which.return_value = None
+    mock_detect.return_value = None
+
+    with pytest.raises(TorError, match="no supported package manager was found"):
+        tor_install.ensure_pluggable_transports(["obfs4"])

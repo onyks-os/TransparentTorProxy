@@ -59,7 +59,7 @@ echo ""
 # Step 1: clean old packaging artifacts
 echo "[1/5] Cleaning old system artifacts..."
 rm -rf "$(pwd)/.build_tmp"
-rm -f "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.whl "$RELEASE_DIR"/SHA256SUMS.txt
+rm -f "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.whl "$RELEASE_DIR"/SHA256SUMS.txt "$RELEASE_DIR"/SHA256SUMS.txt.asc
 echo "      Done."
 echo ""
 
@@ -111,6 +111,20 @@ echo "[4/5] Generating SHA256 checksums..."
 
     sha256sum "${PACKAGES[@]}" > SHA256SUMS.txt
     echo "      [OK] SHA256SUMS.txt generated."
+
+    # GPG release signing
+    if command -v gpg >/dev/null 2>&1; then
+        if [ -n "$(gpg --list-secret-keys 2>/dev/null)" ]; then
+            echo "      [GPG] Secret key found. Signing SHA256SUMS.txt..."
+            gpg --detach-sign --armor --yes SHA256SUMS.txt
+            echo "      [OK] SHA256SUMS.txt.asc signature generated."
+        else
+            echo "      [!] GPG is installed, but no secret keys were found. Skipping automatic signing."
+            echo "          To sign manually: gpg --detach-sign --armor SHA256SUMS.txt"
+        fi
+    else
+        echo "      [!] GPG command not found. Skipping automatic signing."
+    fi
 )
 echo ""
 
@@ -118,7 +132,7 @@ echo ""
 echo "============================================"
 echo "  Release artifacts ready:"
 echo "============================================"
-ls -lh "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.whl "$RELEASE_DIR"/SHA256SUMS.txt 2>/dev/null || :
+ls -lh "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.whl "$RELEASE_DIR"/SHA256SUMS.txt "$RELEASE_DIR"/SHA256SUMS.txt.asc 2>/dev/null || :
 echo ""
 echo "SHA256 checksums:"
 cat "$RELEASE_DIR/SHA256SUMS.txt" 2>/dev/null || echo "N/A"

@@ -54,6 +54,8 @@ class CLIState:
     verbose: bool = False
     quiet: bool = False
     log_format: str = "text"
+    bypass_users: list[str] = []
+    bypass_groups: list[str] = []
 
 
 cli_state = CLIState()
@@ -204,6 +206,29 @@ def _is_port_in_use(port: int) -> bool:
     return False
 
 
+def _validate_bridge_line(line: str) -> None:
+    """Perform basic format validation on a bridge configuration line."""
+    parts = line.split()
+    if not parts:
+        raise ValueError("Empty bridge line")
+
+    # Check if first field is ip:port (vanilla bridge)
+    if ":" in parts[0]:
+        return
+
+    # Check if second field exists and is ip:port (PT bridge)
+    if len(parts) >= 2 and ":" in parts[1]:
+        first_word = parts[0].lower()
+        if first_word in {"obfs4", "snowflake", "meek", "meek_lite"}:
+            return
+        else:
+            raise ValueError(f"Unsupported pluggable transport: '{parts[0]}'")
+
+    raise ValueError(
+        "Invalid bridge format. Expected '<ip>:<port>' or '<transport> <ip>:<port>'"
+    )
+
+
 def _require_root() -> None:
     """Exit with an error if the process is not running as root."""
     if os.geteuid() != 0:
@@ -341,9 +366,121 @@ def start(
         "-w",
         help="Start the background watchdog daemon to monitor session integrity.",
     ),
+    bypass_user: Optional[list[str]] = typer.Option(
+        None,
+        "--bypass-user",
+        help="System user(s) to bypass Tor routing.",
+    ),
+    bypass_group: Optional[list[str]] = typer.Option(
+        None,
+        "--bypass-group",
+        help="System group(s) to bypass Tor routing.",
+    ),
+    use_bridges: bool = typer.Option(
+        False,
+        "--use-bridges",
+        help="Globally enable Tor bridges support.",
+    ),
+    bridge_file: Optional[Path] = typer.Option(
+        None,
+        "--bridge-file",
+        help="Path to a file containing Tor bridge lines.",
+    ),
+    bridge: Optional[list[str]] = typer.Option(
+        None,
+        "--bridge",
+        help="Individual Tor bridge line. Can be specified multiple times.",
+    ),
 ) -> None:
     """Start the transparent Tor proxy session."""
     _require_root()
+
+    # Resolve and validate bypass users and groups
+    import pwd
+    import grp
+
+    users = []
+    if bypass_user:
+        for u in bypass_user:
+            users.extend([item.strip() for item in u.split(",") if item.strip()])
+
+    groups = []
+    if bypass_group:
+        for g in bypass_group:
+            groups.extend([item.strip() for item in g.split(",") if item.strip()])
+
+    cli_state.bypass_users = users
+    cli_state.bypass_groups = groups
+
+    # Resolve and validate bridges
+    bridge_lines = []
+    if bridge_file:
+        if not bridge_file.exists():
+            _print_error("Bridge File Missing", f"File '{bridge_file}' not found.")
+            raise typer.Exit(code=1)
+        try:
+            for line in bridge_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    try:
+                        _validate_bridge_line(line)
+                        bridge_lines.append(line)
+                    except ValueError as exc:
+                        _print_error(
+                            "Invalid Bridge Line",
+                            f"Line '{line}' in file '{bridge_file}': {exc}",
+                        )
+                        raise typer.Exit(code=1)
+        except OSError as exc:
+            _print_error("Failed to read bridge file", str(exc))
+            raise typer.Exit(code=1)
+
+    if bridge:
+        for b in bridge:
+            b = b.strip()
+            if b:
+                try:
+                    _validate_bridge_line(b)
+                    bridge_lines.append(b)
+                except ValueError as exc:
+                    _print_error("Invalid Bridge Line", f"Bridge '{b}': {exc}")
+                    raise typer.Exit(code=1)
+
+    if use_bridges and not bridge_lines:
+        _print_error(
+            "No Bridges Provided",
+            "Bridges are enabled but no bridge lines or bridge files were specified.",
+        )
+        raise typer.Exit(code=1)
+
+    if bridge_lines:
+        use_bridges = True
+
+    bypass_uids = []
+    for u in users:
+        try:
+            if u.isdigit():
+                uid = int(u)
+                pwd.getpwuid(uid)
+            else:
+                uid = pwd.getpwnam(u).pw_uid
+            bypass_uids.append(uid)
+        except KeyError:
+            _print_error("Invalid User", f"User '{u}' does not exist on this system.")
+            raise typer.Exit(code=1)
+
+    bypass_gids = []
+    for g in groups:
+        try:
+            if g.isdigit():
+                gid = int(g)
+                grp.getgrgid(gid)
+            else:
+                gid = grp.getgrnam(g).gr_gid
+            bypass_gids.append(gid)
+        except KeyError:
+            _print_error("Invalid Group", f"Group '{g}' does not exist on this system.")
+            raise typer.Exit(code=1)
 
     # Ports validation
     if not (1024 <= transport_port <= 65535):
@@ -413,6 +550,8 @@ def start(
         info = tor_install.ensure_tor_ready(
             transport_port=transport_port,
             dns_port=dns_port,
+            use_bridges=use_bridges,
+            bridges=bridge_lines,
         )
     except TorError as exc:
         logger.error("Tor detection/install failed: %s", exc)
@@ -443,12 +582,19 @@ def start(
 
     # Step 2 - Apply stateless firewall rules.
     try:
+        kwargs_fw = {}
+        if bypass_uids:
+            kwargs_fw["bypass_uids"] = bypass_uids
+        if bypass_gids:
+            kwargs_fw["bypass_gids"] = bypass_gids
+
         firewall.apply_rules(
             tor_user=tor_user,
             transport_port=transport_port,
             dns_port=dns_port,
             allow_root=allow_root,
             lan_bypass=lan_bypass,
+            **kwargs_fw,
         )
     except FirewallError as exc:
         _print_error("Firewall Setup Failed", str(exc))
@@ -481,6 +627,18 @@ def start(
 
     # Step 4 - Write lock file.
     try:
+        kwargs_lock = {}
+        if users:
+            kwargs_lock["bypass_users"] = users
+        if groups:
+            kwargs_lock["bypass_groups"] = groups
+        if use_bridges:
+            kwargs_lock["use_bridges"] = use_bridges
+        if bridge_file:
+            kwargs_lock["bridge_file"] = str(bridge_file)
+        if bridge_lines:
+            kwargs_lock["bridges"] = bridge_lines
+
         state.write_lock(
             dns_backup=dns_backup,
             transport_port=transport_port,
@@ -488,6 +646,7 @@ def start(
             allow_root=allow_root,
             lan_bypass=lan_bypass,
             interface=interface,
+            **kwargs_lock,
         )
     except StateError as exc:
         logger.error("Failed to write lock: %s", exc)
@@ -619,6 +778,31 @@ def restart(
         "-w",
         help="Start the background watchdog daemon to monitor session integrity.",
     ),
+    bypass_user: Optional[list[str]] = typer.Option(
+        None,
+        "--bypass-user",
+        help="System user(s) to bypass Tor routing.",
+    ),
+    bypass_group: Optional[list[str]] = typer.Option(
+        None,
+        "--bypass-group",
+        help="System group(s) to bypass Tor routing.",
+    ),
+    use_bridges: bool = typer.Option(
+        False,
+        "--use-bridges",
+        help="Globally enable Tor bridges support.",
+    ),
+    bridge_file: Optional[Path] = typer.Option(
+        None,
+        "--bridge-file",
+        help="Path to a file containing Tor bridge lines.",
+    ),
+    bridge: Optional[list[str]] = typer.Option(
+        None,
+        "--bridge",
+        help="Individual Tor bridge line. Can be specified multiple times.",
+    ),
 ) -> None:
     """Restart the transparent Tor proxy session."""
     _require_root()
@@ -630,6 +814,18 @@ def restart(
     else:
         console.print(f"{_PREFIX} No active session found, starting a new one...")
 
+    kwargs_start = {}
+    if bypass_user is not None:
+        kwargs_start["bypass_user"] = bypass_user
+    if bypass_group is not None:
+        kwargs_start["bypass_group"] = bypass_group
+    if use_bridges:
+        kwargs_start["use_bridges"] = use_bridges
+    if bridge_file is not None:
+        kwargs_start["bridge_file"] = bridge_file
+    if bridge is not None:
+        kwargs_start["bridge"] = bridge
+
     start(
         interface=interface,
         bootstrap_timeout=bootstrap_timeout,
@@ -638,6 +834,7 @@ def restart(
         allow_root=allow_root,
         no_lan_bypass=no_lan_bypass,
         watchdog=watchdog,
+        **kwargs_start,
     )
 
 

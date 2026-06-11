@@ -88,6 +88,11 @@ def write_lock(
     watchdog_active: bool = False,
     watchdog_pid: int | None = None,
     interface: str | None = None,
+    bypass_users: list[str] | None = None,
+    bypass_groups: list[str] | None = None,
+    use_bridges: bool = False,
+    bridge_file: str | None = None,
+    bridges: list[str] | None = None,
 ) -> None:
     """Write the session lock file with the current state.
 
@@ -111,6 +116,16 @@ def write_lock(
         PID of the active watchdog daemon if running.
     interface:
         The name of the primary active interface being proxyed.
+    bypass_users:
+        List of system users bypassed from Tor routing.
+    bypass_groups:
+        List of system groups bypassed from Tor routing.
+    use_bridges:
+        True if Tor bridges support is enabled.
+    bridge_file:
+        Path to the bridge file, if provided.
+    bridges:
+        List of configured bridge lines.
     """
     try:
         ensure_runtime_dir()
@@ -125,8 +140,14 @@ def write_lock(
             "watchdog_active": watchdog_active,
             "watchdog_pid": watchdog_pid,
             "interface": interface,
+            "bypass_users": bypass_users if bypass_users is not None else [],
+            "bypass_groups": bypass_groups if bypass_groups is not None else [],
+            "use_bridges": use_bridges,
+            "bridge_file": bridge_file,
+            "bridges": bridges if bridges is not None else [],
         }
         LOCK_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.chmod(LOCK_PATH, 0o644)
     except OSError as e:
         raise StateError(f"Failed to write session lock file: {e}")
 
