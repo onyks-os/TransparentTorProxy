@@ -163,3 +163,21 @@ def test_check_tmpfs_space_os_error():
     with patch("ttp.state.shutil.disk_usage", side_effect=OSError("No such file")):
         # Should not raise - best-effort
         state.check_tmpfs_space()
+
+
+def test_write_lock_with_bridges(_use_tmp_lock):
+    """write_lock saves bridge metadata and read_lock returns it correctly."""
+    lock_path, _ = _use_tmp_lock
+    state.write_lock(
+        pid=100,
+        use_bridges=True,
+        bridge_file="/tmp/bridges.txt",
+        bridges=["obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0"],
+    )
+
+    data = state.read_lock()
+    assert data is not None
+    assert data["pid"] == 100
+    assert data["use_bridges"] is True
+    assert data["bridge_file"] == "/tmp/bridges.txt"
+    assert data["bridges"] == ["obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0"]

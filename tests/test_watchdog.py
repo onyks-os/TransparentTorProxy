@@ -228,14 +228,26 @@ def test_attempt_auto_healing_firewall(mock_apply_fw, mock_detect_tor, mock_read
     )
 
 
-@patch("ttp.watchdog.state.read_lock", return_value={"pid": 1234})
-@patch("ttp.watchdog.subprocess.run")
-def test_attempt_auto_healing_tor(mock_run, mock_read):
+@patch(
+    "ttp.watchdog.state.read_lock",
+    return_value={
+        "pid": 1234,
+        "transport_port": 9041,
+        "dns_port": 9054,
+        "use_bridges": True,
+        "bridges": ["obfs4 192.0.2.1:1234"],
+    },
+)
+@patch("ttp.tor_install.ensure_tor_ready")
+def test_attempt_auto_healing_tor(mock_ensure, mock_read):
     """attempt_auto_healing('tor') restarts the systemd 'ttp-tor' service."""
     result = wd.attempt_auto_healing("tor")
     assert result is True
-    mock_run.assert_called_once_with(
-        ["systemctl", "restart", "ttp-tor"], capture_output=True, text=True, check=True
+    mock_ensure.assert_called_once_with(
+        transport_port=9041,
+        dns_port=9054,
+        use_bridges=True,
+        bridges=["obfs4 192.0.2.1:1234"],
     )
 
 

@@ -179,6 +179,34 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
             "nftables 'inet ttp' table is incomplete (missing filter_out)",
         )
 
+    # Verify bypass rules if configured in state lock
+    lock = state.read_lock()
+    if lock:
+        import pwd
+        import grp
+
+        for u in lock.get("bypass_users", []):
+            try:
+                uid = int(u) if u.isdigit() else pwd.getpwnam(u).pw_uid
+                if f"meta skuid {uid} accept" not in res.stdout:
+                    return (
+                        "firewall",
+                        f"bypass rule for user '{u}' (UID {uid}) is missing",
+                    )
+            except KeyError:
+                return "firewall", f"bypass user '{u}' cannot be resolved on system"
+
+        for g in lock.get("bypass_groups", []):
+            try:
+                gid = int(g) if g.isdigit() else grp.getgrnam(g).gr_gid
+                if f"meta skgid {gid} accept" not in res.stdout:
+                    return (
+                        "firewall",
+                        f"bypass rule for group '{g}' (GID {gid}) is missing",
+                    )
+            except KeyError:
+                return "firewall", f"bypass group '{g}' cannot be resolved on system"
+
     # 3. Tor Connection check: perform an *active* query to the control socket
     #    to verify that the Tor daemon is actually responsive, not just that
     #    the socket file exists (a stale socket would pass a mere close() check).
@@ -232,9 +260,41 @@ def attempt_auto_healing(failed_component: str) -> bool:
 
         elif failed_component == "firewall":
             from ttp.tor_detect import detect_tor
+            import pwd
+            import grp
 
             tor_info = detect_tor()
             tor_user = tor_info.get("tor_user", "debian-tor")
+
+            # Resolve UIDs and GIDs for bypass rules
+            users = lock.get("bypass_users", [])
+            groups = lock.get("bypass_groups", [])
+
+            bypass_uids = []
+            for u in users:
+                try:
+                    if u.isdigit():
+                        bypass_uids.append(int(u))
+                    else:
+                        bypass_uids.append(pwd.getpwnam(u).pw_uid)
+                except KeyError:
+                    pass
+
+            bypass_gids = []
+            for g in groups:
+                try:
+                    if g.isdigit():
+                        bypass_gids.append(int(g))
+                    else:
+                        bypass_gids.append(grp.getgrnam(g).gr_gid)
+                except KeyError:
+                    pass
+
+            kwargs_fw = {}
+            if bypass_uids:
+                kwargs_fw["bypass_uids"] = bypass_uids
+            if bypass_gids:
+                kwargs_fw["bypass_gids"] = bypass_gids
 
             firewall.apply_rules(
                 tor_user=tor_user,
@@ -242,19 +302,22 @@ def attempt_auto_healing(failed_component: str) -> bool:
                 dns_port=lock.get("dns_port", 9054),
                 allow_root=lock.get("allow_root", False),
                 lan_bypass=lock.get("lan_bypass", True),
+                **kwargs_fw,
             )
             logger.info("Watchdog: Auto-healed firewall rules successfully.")
             return True
 
         elif failed_component == "tor":
-            subprocess.run(
-                ["systemctl", "restart", "ttp-tor"],
-                capture_output=True,
-                text=True,
-                check=True,
+            from ttp import tor_install
+
+            tor_install.ensure_tor_ready(
+                transport_port=lock.get("transport_port", 9041),
+                dns_port=lock.get("dns_port", 9054),
+                use_bridges=lock.get("use_bridges", False),
+                bridges=lock.get("bridges", []),
             )
             logger.info(
-                "Watchdog: Auto-healed Tor service by restarting ttp-tor service."
+                "Watchdog: Auto-healed Tor service by regenerating configuration and restarting ttp-tor."
             )
             return True
 

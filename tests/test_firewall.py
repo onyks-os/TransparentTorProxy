@@ -237,3 +237,31 @@ def test_destroy_rules_idempotent(mock_run):
     # Should not raise exception
     destroy_rules()
     assert mock_run.called
+
+
+@patch("ttp.firewall.pwd.getpwnam")
+@patch("ttp.firewall._run_nft_string")
+@patch("ttp.firewall._run_nft")
+@patch("ttp.tor_detect.is_ipv6_supported", return_value=False)
+def test_ruleset_bypass_rules(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd):
+    """Verify that generating rules with bypass_uids and bypass_gids adds skuid/skgid rules."""
+    mock_pwd.return_value = MagicMock(pw_uid=110)
+    apply_rules(
+        tor_user="debian-tor",
+        bypass_uids=[1001, 1002],
+        bypass_gids=[2001],
+    )
+
+    ruleset = mock_run_string.call_args[0][0]
+
+    # Verify output chain contains bypass rules
+    output_block = ruleset.split("chain output")[1].split("chain filter_out")[0]
+    assert "meta skuid 1001 ip daddr != 127.0.0.1 accept" in output_block
+    assert "meta skuid 1002 ip daddr != 127.0.0.1 accept" in output_block
+    assert "meta skgid 2001 ip daddr != 127.0.0.1 accept" in output_block
+
+    # Verify filter_out chain contains bypass rules
+    filter_block = ruleset.split("chain filter_out")[1]
+    assert "meta skuid 1001 accept" in filter_block
+    assert "meta skuid 1002 accept" in filter_block
+    assert "meta skgid 2001 accept" in filter_block

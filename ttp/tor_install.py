@@ -39,6 +39,97 @@ _PKG_COMMANDS = ["apt-get", "dnf", "pacman", "zypper"]
 
 logger = logging.getLogger("ttp")
 
+PT_MAP = {
+    "obfs4": {
+        "binary": "obfs4proxy",
+        "apt-get": "obfs4proxy",
+        "dnf": "obfs4",
+        "pacman": "obfs4proxy",
+        "zypper": "obfs4proxy",
+    },
+    "meek_lite": {
+        "binary": "obfs4proxy",
+        "apt-get": "obfs4proxy",
+        "dnf": "obfs4",
+        "pacman": "obfs4proxy",
+        "zypper": "obfs4proxy",
+    },
+    "snowflake": {
+        "binary": "snowflake-client",
+        "apt-get": "snowflake-client",
+        "dnf": "snowflake-client",
+        "pacman": "snowflake-client",
+        "zypper": "snowflake-client",
+    },
+}
+
+
+def ensure_pluggable_transports(required_transports: list[str]) -> None:
+    """Verify that required pluggable transport helper binaries are installed.
+
+    If a binary is missing, attempt to automatically install it via the local
+    package manager.
+    """
+    for pt in required_transports:
+        pt = pt.lower()
+        if pt not in PT_MAP:
+            raise TorError(f"Unsupported pluggable transport: '{pt}'")
+
+        pt_info = PT_MAP[pt]
+        binary = pt_info["binary"]
+
+        # Check if binary is in PATH
+        if shutil.which(binary):
+            continue
+
+        # Try to install
+        pm = detect_package_manager()
+        if pm is None:
+            raise TorError(
+                f"Pluggable transport helper '{binary}' for '{pt}' is missing, "
+                "and no supported package manager was found to install it."
+            )
+
+        pkg = pt_info.get(pm)
+        if not pkg:
+            raise TorError(
+                f"Pluggable transport helper '{binary}' for '{pt}' is missing, "
+                f"and the package name is not defined for package manager '{pm}'."
+            )
+
+        logger.info("Installing pluggable transport package '%s' via %s...", pkg, pm)
+        cmd = []
+        if pm == "apt-get":
+            # Ensure apt cache is updated if installing a new package
+            subprocess.run(["apt-get", "update"], capture_output=True, check=False)
+            cmd = ["apt-get", "install", "-y", pkg]
+        elif pm == "dnf":
+            cmd = ["dnf", "install", "-y", pkg]
+        elif pm == "pacman":
+            cmd = ["pacman", "-Sy", "--noconfirm", pkg]
+        elif pm == "zypper":
+            cmd = ["zypper", "install", "-y", pkg]
+
+        if not cmd:
+            raise TorError(f"Unsupported package manager for installation: {pm}")
+
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            logger.info("Successfully installed '%s'.", pkg)
+        except subprocess.CalledProcessError as e:
+            err_output = (
+                e.stderr.decode(errors="replace").strip() if e.stderr else str(e)
+            )
+            raise TorError(
+                f"Failed to install pluggable transport package '{pkg}' via {pm}: {err_output}"
+            ) from e
+
+        # Double check
+        if not shutil.which(binary):
+            raise TorError(
+                f"Pluggable transport helper '{binary}' was installed but is still not found in PATH."
+            )
+
 
 # Torrc generation
 
@@ -48,6 +139,8 @@ def generate_torrc(
     transport_port: int = 9041,
     dns_port: int = 9054,
     block_doh: bool = True,
+    use_bridges: bool = False,
+    bridges: Optional[list[str]] = None,
 ) -> Path:
     """Generate a volatile ``torrc`` in ``/run/tor/ttp/torrc``.
 
@@ -144,6 +237,28 @@ def generate_torrc(
         for domain in doh_domains:
             lines.append(f"MapAddress {domain} 0.0.0.0")
 
+    if use_bridges and bridges:
+        lines.append("UseBridges 1")
+        required_transports = []
+        for b in bridges:
+            parts = b.split()
+            if parts:
+                first_word = parts[0].lower()
+                if first_word in PT_MAP:
+                    if first_word not in required_transports:
+                        required_transports.append(first_word)
+
+        for pt in required_transports:
+            binary = PT_MAP[pt]["binary"]
+            binary_path = shutil.which(binary)
+            if binary_path:
+                lines.append(f"ClientTransportPlugin {pt} exec {binary_path}")
+            else:
+                lines.append(f"ClientTransportPlugin {pt} exec /usr/bin/{binary}")
+
+        for b in bridges:
+            lines.append(f"Bridge {b}")
+
     if tor_user != "root":
         lines.append(f"User {tor_user}")
 
@@ -199,6 +314,8 @@ def start_tor_service(
     transport_port: int = 9041,
     dns_port: int = 9054,
     block_doh: bool = True,
+    use_bridges: bool = False,
+    bridges: Optional[list[str]] = None,
 ) -> None:
     """Generate the runtime torrc and start a dedicated TTP Tor service.
 
@@ -220,12 +337,18 @@ def start_tor_service(
         The customized or default DNSPort port.
     block_doh:
         If True, block DNS-over-HTTPS via canary mapping.
+    use_bridges:
+        True to globally enable Tor bridges.
+    bridges:
+        List of bridge lines to append.
     """
     generate_torrc(
         tor_user,
         transport_port=transport_port,
         dns_port=dns_port,
         block_doh=block_doh,
+        use_bridges=use_bridges,
+        bridges=bridges,
     )
     _write_service_unit(tor_user)
 
@@ -413,6 +536,8 @@ def ensure_tor_ready(
     transport_port: int = 9041,
     dns_port: int = 9054,
     block_doh: bool = True,
+    use_bridges: bool = False,
+    bridges: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Ensure Tor is installed and start it via the OS native service.
 
@@ -433,12 +558,27 @@ def ensure_tor_ready(
 
     tor_user = info.get("tor_user", "debian-tor")
 
+    # If bridges are requested, ensure the corresponding pluggable transports are installed
+    if use_bridges and bridges:
+        required_transports = []
+        for b in bridges:
+            parts = b.split()
+            if parts:
+                first_word = parts[0].lower()
+                if first_word in PT_MAP:
+                    if first_word not in required_transports:
+                        required_transports.append(first_word)
+        if required_transports:
+            ensure_pluggable_transports(required_transports)
+
     # Start Tor via the dedicated ttp-tor service
     start_tor_service(
         tor_user,
         transport_port=transport_port,
         dns_port=dns_port,
         block_doh=block_doh,
+        use_bridges=use_bridges,
+        bridges=bridges,
     )
 
     return info

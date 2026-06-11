@@ -24,6 +24,8 @@ def apply_rules(
     dns_port: int = 9054,
     allow_root: bool = False,
     lan_bypass: bool = True,
+    bypass_uids: list[int] | None = None,
+    bypass_gids: list[int] | None = None,
 ) -> None:
     """Create the 'ttp' table and inject redirection rules.
 
@@ -56,6 +58,34 @@ def apply_rules(
         root_rule = ""
         if allow_root:
             root_rule = "meta skuid 0 accept"
+
+        # Construct bypass rules
+        bypass_rules_nat = []
+        bypass_rules_filter = []
+        if bypass_uids:
+            for uid in bypass_uids:
+                bypass_rules_nat.append(
+                    f"meta skuid {uid} ip daddr != 127.0.0.1 accept"
+                )
+                if ipv6_avail:
+                    bypass_rules_nat.append(f"meta skuid {uid} ip6 daddr != ::1 accept")
+                bypass_rules_filter.append(f"meta skuid {uid} accept")
+        if bypass_gids:
+            for gid in bypass_gids:
+                bypass_rules_nat.append(
+                    f"meta skgid {gid} ip daddr != 127.0.0.1 accept"
+                )
+                if ipv6_avail:
+                    bypass_rules_nat.append(f"meta skgid {gid} ip6 daddr != ::1 accept")
+                bypass_rules_filter.append(f"meta skgid {gid} accept")
+        bypass_rules_nat_str = (
+            "\n                ".join(bypass_rules_nat) if bypass_rules_nat else ""
+        )
+        bypass_rules_filter_str = (
+            "\n                ".join(bypass_rules_filter)
+            if bypass_rules_filter
+            else ""
+        )
 
         # Local loopback checks
         loopback_ipv4 = "ip daddr 127.0.0.0/8 accept"
@@ -118,6 +148,9 @@ def apply_rules(
                 # 1. Tor user EXEMPTION: Allow the Tor daemon to reach the real internet
                 meta skuid {tor_uid} accept
 
+                # 1b. Bypass users and groups
+                {bypass_rules_nat_str}
+
                 # 2. DNS Redirection: MUST come before LAN bypass.
                 #    Browsers cache the LAN gateway IP (e.g. 192.168.1.1) as DNS resolver.
                 #    If LAN bypass ran first, those DNS queries would escape to the real ISP.
@@ -143,6 +176,9 @@ def apply_rules(
 
                 # 1. Allow the Tor daemon
                 meta skuid {tor_uid} accept
+
+                # 1b. Bypass users and groups
+                {bypass_rules_filter_str}
 
                 # 2. Allow root processes (system maintenance, Tor bootstrapping) if explicitly allowed
                 {root_rule}

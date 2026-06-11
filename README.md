@@ -14,6 +14,7 @@
   <img src="https://img.shields.io/badge/Python-3.10+-yellow?style=for-the-badge&logo=python" alt="Python">
   <a href="https://github.com/onyks-os/TransparentTorProxy/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/onyks-os/TransparentTorProxy/ci.yml?style=for-the-badge&logo=github" alt="CI Status"></a>
   <a href="https://pypi.org/project/transparent-tor-proxy/"><img src="https://img.shields.io/pypi/dm/transparent-tor-proxy?style=for-the-badge&logo=pypi" alt="PyPI - Downloads"></a>
+  <a href="https://www.bestpractices.dev/projects/13164"><img src="https://img.shields.io/badge/dynamic/xml?url=https%3A%2F%2Fwww.bestpractices.dev%2Fprojects%2F13164%2Fbaseline&query=%2F%2F*%5Blocal-name()%3D%27text%27%5D%5Blast()%5D&label=OpenSSF%20Baseline&style=for-the-badge&color=0066a1" alt="OpenSSF Baseline"></a>
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </p>
 
@@ -58,12 +59,12 @@ If you want to contribute to making transparent proxying safer and more robust, 
 
 * **Watchdog Daemon & Emergency Killswitch** - Background session daemon monitoring system integrity (Tor status, nftables table/chain presence, and DNS overlay mount) every 15s. Performs auto-healing or triggers total network lockout (killswitch) under persistent failure.
 * **LAN Bypass** - Excludes local subnets (RFC 1918 & Link-Local) dynamically from routing to allow direct access to local devices (NAS, printers).
-* **DNS Leak DoH/DoT Mitigation** - Blocks outgoing DoT on port 853 and injects a `MapAddress` rule in `torrc` to disable browser-level DoH (canary domain).
+* **DNS Leak DoH/DoT Mitigation** - Blocks outgoing DoT on port 853, blocks well-known DoH resolvers at the firewall level, routes unlisted DoH traffic through Tor, and uses canary domains in `torrc` to disable browser-level DoH where supported.
 * **Selective Root Routing** - Routes all root and `sudo` command traffic through Tor by default, with `--allow-root` to bypass if needed.
 * **Volatile Standard Core** - Fully volatile runtime. All session data, locks, and temporary configs are stored in `tmpfs` (/run/ttp), wiped automatically on reboot.
 * **Pre-flight Safety Check** - Verifies sufficient `tmpfs` space before execution to prevent out-of-memory crashes mid-setup.
 * **DNS leak prevention** - Stateless `mount --bind` overlay strategy for `/etc/resolv.conf`, with automatic stale mount cleanup for absolute idempotency.
-* **IPv6 leak prevention** - all outgoing IPv6 is blocked to avoid ISP-level leaks.
+* **Native IPv6 Support & Redirection** - Dynamic IPv6 loopback detection, dual-stack or IPv4-only configuration based on system availability, and comprehensive IPv6 nftables redirection and leak prevention.
 * **Graceful Teardown** - On stop, TTP sends a cryptographic `SHUTDOWN` signal to Tor, ensuring all circuits are closed cleanly before the firewall rules are removed to prevent cleartext `RST` packet leaks.
 * **Native Tor Service Management** - Tor is managed via a dedicated volatile `ttp-tor.service` unit, ensuring zero interference with the system's own Tor service and no sandboxing issues.
 * **Atomic firewall rules** - `nftables` rules are loaded with `nft -f` (all-or-nothing), avoiding dangerous intermediate states.
@@ -334,14 +335,15 @@ sudo ./scripts/uninstall.sh
           * `filter_out` (Filter): Acts as a **Kill-Switch**.
       * **Execution Sequence**:
           1. **Exclude Tor user** (prevents routing loops).
-          2. **Bypass local LAN traffic** (unless `--no-lan-bypass` is passed).
-          3. **Block DoT DNS leak** (reject TCP `dport 853`).
-          4. **Route root processes** (routed by default, unless `--allow-root` is passed).
-          5. **Intercept DNS** (UDP `:53`) and redirect to Tor's DNSPort.
-          6. **Accept loopback** and local traffic (required for redirected packets).
-          7. **Redirect all TCP** to Tor's TransPort (`:9040`).
-          8. **Drop all IPv6** output to prevent leaks.
-          9. **Kill-Switch (Reject)**: Terminate any cleartext traffic that bypassed redirection (e.g., pre-existing connections).
+          2. **Exclude split-tunneling users/groups** (if configured).
+          3. **Route root processes** (routed by default, unless `--allow-root` is passed).
+          4. **Intercept DNS** (UDP/TCP `:53`) and redirect to Tor's DNSPort (IPv4/IPv6).
+          5. **Bypass local LAN traffic** (unless `--no-lan-bypass` is passed) (IPv4/IPv6).
+          6. **Accept loopback** and local traffic (IPv4/IPv6).
+          7. **Redirect all TCP** to Tor's TransPort (IPv4/IPv6).
+          8. **Block DoT** (port 853) and well-known **DoH** IP resolvers (port 443) to force fallback to Tor DNS.
+          9. **Drop unrouted IPv6** (only if IPv6 loopback is not supported by the system).
+          10. **Kill-Switch (Reject)**: Terminate any cleartext traffic that bypassed redirection (e.g., pre-existing connections).
 6. **DNS** - redirects DNS resolution using a `mount --bind` overlay on `/etc/resolv.conf`.
 7. **Bootstrap** - waits for Tor to reach 100% bootstrap via the control interface.
 8. **Verification** - confirms traffic is routed through Tor via multiple endpoints (`check.torproject.org`, `ipify`, `ifconfig.me`).
@@ -359,17 +361,18 @@ TTP is designed to always restore your network, even in edge cases:
 | `kill -9` / Power Outage | Next `ttp start` detects the orphaned lock file, clears any stale mount stacks, and auto-restores        |
 | Manual emergency         | Run `sudo ./scripts/restore-network.sh` to flush all nftables rules, reset DNS, and delete the lock file |
 
-## Known Behavior
+## Known Behavior & Limitations
 
 > [!WARNING]
 >
 > * **Tor Browser**: Applications using an explicit SOCKS5 proxy will create a double Tor hop. Use a regular browser instead while TTP is active.
-> * **Chromium-based Browsers (DoH Leak)**: Chrome, Brave, and Edge might use **DNS-over-HTTPS (DoH)**, which bypasses system DNS settings. To prevent leaks:
->   1. Disable **"Secure DNS"** in browser settings.
->   2. **Ideally**, avoid Chromium-based browsers entirely while using TTP; use **Firefox** instead (ensuring its own "DNS over HTTPS" setting is also disabled).
-> This still **DOES NOT** ensure the absence of leaks.
-> * **IPv6**: All IPv6 traffic is blocked to prevent leaks. Future versions may support IPv6 through Tor.
-> * **Exit IP variation**: Different connections may show different exit IPs due to Tor stream isolation. After `ttp refresh`, all connections get new circuits.
+> * **DNS-over-HTTPS (DoH)**: Normal browsers (Firefox, Chrome, Brave, Edge) may use DoH, bypassing system DNS. TTP mitigates this by blocking well-known DoH resolver IPs (forcing fallback to Tor DNS) and routing unlisted DoH traffic through Tor (which can, however, partially compromise anonymity). For maximum security, disable **DoH / "Secure DNS"** in your browser settings.
+> * **IPv6**: Fully supported when available. TTP dynamically detects IPv6 loopback and routes IPv6 traffic through Tor. If the host lacks IPv6 loopback support, TTP drops all outgoing IPv6 traffic to prevent leaks.
+> * **Exit IP variation**: Different connections may show different exit IPs due to Tor stream isolation.
+
+For a full breakdown of residual risks, architectural trust boundaries, and the STRIDE threat model, see:
+
+**[`docs/security-assessment.md`](docs/security-assessment.md)**
 
 ## Development & Testing
 
@@ -387,9 +390,9 @@ TTP uses a **Makefile** to automate and standardize the testing pipeline. This e
 | `make test`               | Runs fast **Unit Tests** locally (no root needed, fully mocked).          |
 | `make integration-debian` | Runs full system tests inside a privileged **Docker** container (Debian). |
 | `make integration-all`    | Runs integration tests for all supported distros (Debian, Fedora, Arch).  |
-| `make verify`         | Runs Unit Tests + All Integration Tests.           |
-| `make build`              | Generates native `.deb` and `.rpm` packages.                |
-| `make clean`              | Removes all build artifacts, caches, and temp files.          |
+| `make verify`             | Runs Unit Tests + All Integration Tests.                                  |
+| `make build`              | Generates native `.deb` and `.rpm` packages.                              |
+| `make clean`              | Removes all build artifacts, caches, and temp files.                      |
 
 ### Advanced: Real-World VM Testing
 
@@ -452,7 +455,9 @@ sudo ttp diagnose
 │   └── system_info.py      # System diagnostic gathering
 ├── tests/                  # Unit tests (mocked) and test_watchdog.py
 └── docs/
-    └── architecture.md     # Technical Architecture & Design
+    ├── architecture.md     # Technical Architecture & Design
+    ├── interfaces.md       # External interfaces reference (CLI, Tor, system)
+    └── security-assessment.md  # STRIDE threat model & risk assessment
 ```
 
 ## Contributing & Security
