@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/onyks-os/TransparentTorProxy/main/assets/icon.png" width="200" alt="TTP Logo">
-</p>
-
 <h1 align="center">
   TTP - Transparent Tor Proxy
 </h1>
@@ -14,6 +10,7 @@
   <img src="https://img.shields.io/badge/Python-3.10+-yellow?style=for-the-badge&logo=python" alt="Python">
   <a href="https://github.com/onyks-os/TransparentTorProxy/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/onyks-os/TransparentTorProxy/ci.yml?style=for-the-badge&logo=github" alt="CI Status"></a>
   <a href="https://pypi.org/project/transparent-tor-proxy/"><img src="https://img.shields.io/pypi/dm/transparent-tor-proxy?style=for-the-badge&logo=pypi" alt="PyPI - Downloads"></a>
+  <a href="https://www.bestpractices.dev/projects/13164"><img src="https://img.shields.io/cii/level/13164?style=for-the-badge" alt="OpenSSF Best Practices"></a>
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </p>
 
@@ -29,7 +26,7 @@
 ---
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/onyks-os/TransparentTorProxy/main/assets/gif/demo.gif" alt="TTP Demo">
+  <img src="https://raw.githubusercontent.com/onyks-os/TransparentTorProxy/main/assets/gif/demo_2.0.gif" alt="TTP Demo">
 </p>
 
 ---
@@ -57,6 +54,7 @@ If you want to contribute to making transparent proxying safer and more robust, 
 ## Features
 
 * **Watchdog Daemon & Emergency Killswitch** - Background session daemon monitoring system integrity (Tor status, nftables table/chain presence, and DNS overlay mount) every 15s. Performs auto-healing or triggers total network lockout (killswitch) under persistent failure.
+* **Split Tunneling (UID/GID Bypass)** - Allows specified local system users and groups to bypass Tor routing (`--bypass-user` / `--bypass-group`) and send traffic directly to the cleartext internet.
 * **LAN Bypass** - Excludes local subnets (RFC 1918 & Link-Local) dynamically from routing to allow direct access to local devices (NAS, printers).
 * **DNS Leak DoH/DoT Mitigation** - Blocks outgoing DoT on port 853 and injects a `MapAddress` rule in `torrc` to disable browser-level DoH (canary domain).
 * **Selective Root Routing** - Routes all root and `sudo` command traffic through Tor by default, with `--allow-root` to bypass if needed.
@@ -90,8 +88,8 @@ Choose the method that best fits your needs. **Native packages are strongly reco
 
 Installing via native packages ensures that all system dependencies (`tor`, `nftables`) and kernel-level optimizations (SELinux) are managed by your OS package manager.
 
-* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.4.0_all.deb`
-* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.4.0-1.fc43.noarch.rpm`
+* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.4.5_all.deb`
+* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.4.5-1.fc43.noarch.rpm`
 * **Arch Linux**: `cd packaging && makepkg -si`
 
 ---
@@ -180,14 +178,23 @@ Depending on your security model and task, we recommend the following setups:
   ```
 * **Why**: Routes all default user/system processes through Tor, but exempts system root processes (`uid 0`) allowing them to communicate directly in cleartext for updates or troubleshooting. (Use with caution: increases risk of tool/script leaks if run under sudo).
 
+#### 4. Split Tunneling / Bypass Profile
+* **Goal**: Exempt specific local system users or groups from Tor routing (e.g. letting a specific high-bandwidth script or database run on the direct internet).
+* **Command**:
+  ```bash
+  sudo ttp start --bypass-user user1,user2 --bypass-group group1
+  ```
+* **Why**: Generates dynamic nftables bypass rules for the resolved UIDs/GIDs of those users/groups, exempting their outbound connections from NAT redirection and the emergency killswitch.
+
 ### Start the proxy
 
 ```bash
-sudo ttp start [--interface <iface>] [--bootstrap-timeout <seconds>] [--allow-root] [--no-lan-bypass] [--watchdog]
+sudo ttp start [--interface <iface>] [--bootstrap-timeout <seconds>] [--allow-root] [--no-lan-bypass] [--watchdog] [--bypass-user <users>] [--bypass-group <groups>]
 ```
 
 > [!TIP]
-> Use `--bootstrap-timeout` (default: 180s) if you are on a slow network or Tor takes a long time to connect.
+> * Use `--bootstrap-timeout` (default: 180s) if you are on a slow network or Tor takes a long time to connect.
+> * `--bypass-user` and `--bypass-group` accept comma-separated lists of names (e.g., `--bypass-user user1,user2`) or multiple option flags. They are resolved to numeric UIDs/GIDs at startup. If a user or group does not exist on the local system, the startup fails with a validation error to prevent insecure cleartext leaks.
 
 ```text
 [TTP] Detecting Tor... found (v0.4.9.6), managed via system service (user: debian-tor).
@@ -241,7 +248,7 @@ sudo ttp status
 ### Restart the session
 
 ```bash
-sudo ttp restart [--interface <iface>] [--bootstrap-timeout <seconds>] [--allow-root] [--no-lan-bypass] [--watchdog]
+sudo ttp restart [--interface <iface>] [--bootstrap-timeout <seconds>] [--allow-root] [--no-lan-bypass] [--watchdog] [--bypass-user <users>] [--bypass-group <groups>]
 ```
 
 *Shortcut for `ttp stop` followed by `ttp start`. Convenient for applying new settings or clearing network glitches.*
@@ -478,3 +485,4 @@ It helps others discover the tool and motivates further development.
 ## License
 
 MIT. See [LICENSE](LICENSE) for more information.
+# test
