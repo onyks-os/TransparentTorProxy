@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/onyks-os/TransparentTorProxy/main/assets/icon.png" width="200" alt="TTP Logo">
-</p>
-
 <h1 align="center">
   TTP - Transparent Tor Proxy
 </h1>
@@ -30,7 +26,7 @@
 ---
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/onyks-os/TransparentTorProxy/main/assets/gif/demo.gif" alt="TTP Demo">
+  <img src="https://raw.githubusercontent.com/onyks-os/TransparentTorProxy/main/assets/gif/demo_2.0.gif" alt="TTP Demo">
 </p>
 
 ---
