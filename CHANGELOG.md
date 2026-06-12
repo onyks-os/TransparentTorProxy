@@ -5,24 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- **`docs/interfaces.md`** (OSPS-SA-02.01): New authoritative reference for all external interfaces — full CLI command table with options, exit codes and root-privilege requirements; Tor integration (managed ports, control protocol, `torrc` directives, pluggable transports); system integration (nftables table/chain/rule-order, DNS bind-mount overlay, volatile systemd units, filesystem path inventory); and external network endpoints used for verification.
-- **`docs/security-assessment.md`** (OSPS-SA-03.01): New STRIDE threat model and risk assessment covering all TTP components (`firewall.py`, `dns.py`, `tor_install.py`/`tor_control.py`, `state.py`, `watchdog.py`, `cli.py`), trust boundary diagram, known limitations table with severity ratings, supply chain security controls, and a 16-item security controls summary matrix.
-- **`MAINTAINERS.md`**: New governance document listing Project Lead, a `## Project Roles` table mapping each operational role (Code Reviewer, Release Manager, Security Officer, CI/CD Maintainer) to its current holder, access to sensitive resources, merge policy, and maintainer onboarding/offboarding process.
-- **`DEPENDENCIES.md`**: New dependency policy document covering runtime and dev/build Python dependencies with version constraints and licenses, system-level dependencies, optional dynamic dependencies (SELinux tools, pluggable transports), and policies for vetting, version pinning, vulnerability monitoring (`pip-audit --path .`), and upgrading.
-
-### Changed
-
-- **`CONTRIBUTING.md`**: Added `## Coding Standards` section (ruff check/format commands, PEP 8 reference, type annotation requirement, no-dead-code rule) and `## Developer Certificate of Origin (DCO)` section (sign-off requirement, `git commit -s` instructions, `git rebase --signoff` for retroactive signing, full DCO v1.1 text in collapsible block). Both sections added to the Table of Contents.
-- **`docs/architecture.md`**: Removed duplicated content now canonical in `interfaces.md`. Section 4 (CLI command list) replaced with a cross-reference. Section 3.3 (`firewall.py`) condensed to design principles only, with execution order detail referenced from `interfaces.md § 3.1`. Section 3.4 (`dns.py`) condensed to design rationale only, with attribute table referenced from `interfaces.md § 3.2`. Section 3.6 (`cli.py`) trimmed to remove inline command enumeration, referencing `interfaces.md § 1`.
-- **`README.md`**: `## Known Behavior` section renamed to `## Known Behavior & Limitations` and condensed — verbose inline explanations removed in favour of a reference to `docs/security-assessment.md` as the single source of truth for the risk breakdown.
-- **`SECURITY.md`**: `## Scope` bullet list condensed to a one-sentence summary with a cross-reference to `docs/security-assessment.md` for the full threat model.
-- **`docs/security-assessment.md`**: Dependency monitoring table (§ 5.2) replaced with a cross-reference to `DEPENDENCIES.md § 2.3` as the authoritative source for CVE scanning and Dependabot configuration.
-
-## [0.4.5] - 2026-06-11
+## [0.4.5] - 2026-06-12
 
 ### Added
 
@@ -30,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bypass Firewall Exceptions**: Generates `meta skuid <uid> accept` and `meta skgid <gid> accept` nftables rules placed at the top of the output, prerouting, and filter_out chains. This allows bypassed users and groups to access the cleartext internet directly, bypassing both Tor NAT redirection and the emergency killswitch.
 - **Watchdog Bypass Auto-Healing**: Updated the background watchdog daemon to read the bypassed users/groups from the session lock file, dynamically verify that their firewall bypass rules are active in the running nftables ruleset, and trigger auto-healing to restore them if missing or modified.
 - **Strict Lock Permissions**: The volatile lock file `/run/ttp/ttp.lock` is now created/updated with strict `0o644` permissions to protect active session state from unauthorized write access.
+- **`docs/interfaces.md`** (OSPS-SA-02.01): New authoritative reference for all external interfaces — full CLI command table with options, exit codes and root-privilege requirements; Tor integration (managed ports, control protocol, `torrc` directives, pluggable transports); system integration (nftables table/chain/rule-order, DNS bind-mount overlay, volatile systemd units, filesystem path inventory); and external network endpoints used for verification.
+- **`docs/security-assessment.md`** (OSPS-SA-03.01): New STRIDE threat model and risk assessment covering all TTP components (`firewall.py`, `dns.py`, `tor_install.py`/`tor_control.py`, `state.py`, `watchdog.py`, `cli.py`), trust boundary diagram, known limitations table with severity ratings, supply chain security controls, and a 16-item security controls summary matrix.
+- **`MAINTAINERS.md`**: New governance document listing Project Lead, a `## Project Roles` table mapping each operational role (Code Reviewer, Release Manager, Security Officer, CI/CD Maintainer) to its current holder, access to sensitive resources, merge policy, and maintainer onboarding/offboarding process.
+- **`DEPENDENCIES.md`**: New dependency policy document covering runtime and dev/build Python dependencies with version constraints and licenses, system-level dependencies, optional dynamic dependencies (SELinux tools, pluggable transports), and policies for vetting, version pinning, vulnerability monitoring (`pip-audit --path .`), and upgrading.
 
 ## [0.4.0] - 2026-06-09
 
@@ -42,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Extended DoH Domain Blocking**: Added `MapAddress` entries in `torrc` to neutralize DoH canary domains for Cloudflare (`use-application-dns.net`), Google, Quad9, OpenDNS, and AdGuard, signalling DoH-compliant browsers to fall back to the system resolver (which is safely routed through Tor).
 - **DoH IP-Level Blocking**: Added `filter_out` nftables rules to reject TCP port 443 traffic destined for well-known DoH resolver IPs (Cloudflare, Google, Quad9, OpenDNS) - both IPv4 and IPv6 - as a defence-in-depth measure against non-compliant browsers that ignore the canary domain.
 - **CI/CD: Ruff Format Check**: Added `ruff format --check` as the first step in `scripts/verify.sh` to enforce consistent formatting before any other pipeline step.
+- **`CONTRIBUTING.md`**: Added `## Coding Standards` section (ruff check/format commands, PEP 8 reference, type annotation requirement, no-dead-code rule) and `## Developer Certificate of Origin (DCO)` section (sign-off requirement, `git commit -s` instructions, `git rebase --signoff` for retroactive signing, full DCO v1.1 text in collapsible block). Both sections added to the Table of Contents.
+- **`docs/architecture.md`**: Removed duplicated content now canonical in `interfaces.md`. Section 4 (CLI command list) replaced with a cross-reference. Section 3.3 (`firewall.py`) condensed to design principles only, with execution order detail referenced from `interfaces.md § 3.1`. Section 3.4 (`dns.py`) condensed to design rationale only, with attribute table referenced from `interfaces.md § 3.2`. Section 3.6 (`cli.py`) trimmed to remove inline command enumeration, referencing `interfaces.md § 1`.
+- **`README.md`**: `## Known Behavior` section renamed to `## Known Behavior & Limitations` and condensed — verbose inline explanations removed in favour of a reference to `docs/security-assessment.md` as the single source of truth for the risk breakdown.
+- **`SECURITY.md`**: `## Scope` bullet list condensed to a one-sentence summary with a cross-reference to `docs/security-assessment.md` for the full threat model.
+- **`docs/security-assessment.md`**: Dependency monitoring table (§ 5.2) replaced with a cross-reference to `DEPENDENCIES.md § 2.3` as the authoritative source for CVE scanning and Dependabot configuration.
 
 ### Fixed
 
