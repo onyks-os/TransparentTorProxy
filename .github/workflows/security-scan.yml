@@ -1,0 +1,18 @@
+name: Security scan
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  vulnerability-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Scan dependencies
+        run: pip-audit

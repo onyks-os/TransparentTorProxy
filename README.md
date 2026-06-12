@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/Python-3.10+-yellow?style=for-the-badge&logo=python" alt="Python">
   <a href="https://github.com/onyks-os/TransparentTorProxy/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/onyks-os/TransparentTorProxy/ci.yml?style=for-the-badge&logo=github" alt="CI Status"></a>
   <a href="https://pypi.org/project/transparent-tor-proxy/"><img src="https://img.shields.io/pypi/dm/transparent-tor-proxy?style=for-the-badge&logo=pypi" alt="PyPI - Downloads"></a>
-  <a href="https://www.bestpractices.dev/projects/13164"><img src="https://img.shields.io/badge/dynamic/xml?url=https%3A%2F%2Fwww.bestpractices.dev%2Fprojects%2F13164%2Fbaseline&query=%2F%2F*%5Blocal-name()%3D%27text%27%5D%5Blast()%5D&label=OpenSSF%20Baseline&style=for-the-badge&color=0066a1" alt="OpenSSF Baseline"></a>
+  <a href="https://www.bestpractices.dev/projects/13164"><img src="https://img.shields.io/cii/level/13164?style=for-the-badge&label=OpenSSF%20Best%20Practices" alt="OpenSSF Best Practices"></a>
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </p>
 
@@ -90,6 +90,8 @@ Installing via native packages ensures that all system dependencies (`tor`, `nft
 * **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.4.0_all.deb`
 * **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.4.0-1.fc43.noarch.rpm`
 * **Arch Linux**: `cd packaging && makepkg -si`
+
+For instructions on how to verify the integrity and authenticity of the release assets, see the [Release Verification Guide](docs/verification.md).
 
 ---
 
@@ -456,14 +458,16 @@ sudo ttp diagnose
     └── security-assessment.md  # STRIDE threat model & risk assessment
 ```
 
-## Contributing & Security
+## Obtain, Feedback & Contributions
 
-Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
-
-* Check out our [Contributing Guidelines](CONTRIBUTING.md) to get started.
-* Please review our [Security Policy](SECURITY.md) before reporting vulnerabilities.
+- **Obtain**: TTP is available on [PyPI](https://pypi.org/project/transparent-tor-proxy/) and can also be downloaded from the [GitHub Releases](https://github.com/onyks-os/TransparentTorProxy/releases) page. For installation methods, see the [Installation](#installation) section.
+- **Feedback**: Report bugs, suggest enhancements, or request features by opening a ticket on the [GitHub Issues](https://github.com/onyks-os/TransparentTorProxy/issues) tracker.
+- **Contribute**: Contributions are always welcome! Review our [Contributing Guidelines](CONTRIBUTING.md) to learn how to submit code, follow coding standards, and run tests.
+- **Security**: Please review our [Security Policy](SECURITY.md) before reporting any vulnerabilities or security concerns.
 
 ## Support
+
+For version support status, EOL information, and support channels, please refer to the [Support Policy](SUPPORT.md).
 
 This project is maintained in my free time, and donations are highly appreciated.
 

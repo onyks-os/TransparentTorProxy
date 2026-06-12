@@ -13,6 +13,9 @@ First off, thank you for considering contributing to TTP! It's people like you w
   - [Coding Standards](#coding-standards)
   - [Architectural Principles](#architectural-principles)
   - [Testing](#testing)
+    - [When Tests Run](#when-tests-run)
+    - [Interpreting Results](#interpreting-results)
+    - [Test Policy for Major Changes](#test-policy-for-major-changes)
   - [Developer Certificate of Origin (DCO)](#developer-certificate-of-origin-dco)
   - [Pull Request Process](#pull-request-process)
   - [Security Best Practices for GitHub Actions](#security-best-practices-for-github-actions)
@@ -71,21 +74,13 @@ By participating in this project, you agree to maintain a professional and respe
 
 All contributions must conform to the following standards before being submitted. These checks are enforced automatically by the CI pipeline.
 
-- **Linting & Formatting**: Code must pass `ruff check` and `ruff format` without errors or warnings.
-
-  ```bash
-  # Check for linting issues
-  ruff check ttp/ tests/
-
-  # Auto-fix formatting
-  ruff format ttp/ tests/
-  ```
-
+- **Linting & Formatting**: Python code must pass `ruff check` and `ruff format` without errors or warnings.
+- **Shell Scripts**: All bash/shell scripts in `scripts/` and elsewhere must pass `shellcheck` without errors.
 - **Style Conventions**: Follow [PEP 8](https://peps.python.org/pep-0008/) naming and style conventions. `ruff` enforces this automatically.
 - **Type Annotations**: New functions and methods must include type annotations for all parameters and return values, consistent with the existing codebase.
 - **No dead code**: Remove unused imports, variables, and commented-out code blocks before submitting a PR.
 
-> PRs that fail `ruff check` will not be merged, regardless of functionality.
+> PRs that fail `ruff check` or `shellcheck` linting will not be merged.
 
 ## Architectural Principles
 
@@ -101,6 +96,34 @@ When writing code for TTP, please adhere to these core principles:
 
 - **Unit Tests**: Must pass on every PR. They are fully mocked and run without root.
 - **Integration Tests**: Should be run in a VM (see `README.md`) to verify actual network behavior.
+
+### When Tests Run
+
+- **Pull Requests**: Every PR automatically triggers the CI pipeline (GitHub Actions). The following checks are executed:
+  - Linting with `ruff check` and `ruff format`
+  - Shell scripting linting with ShellCheck
+  - Unit tests on Python versions 3.10, 3.11, 3.12, and 3.13
+- **Push to Main**: The same suite of tests and checks is run on any push to the main branch.
+- **Locally**: You can (and should) run `pytest tests/ -v` locally before submitting your pull request.
+
+### Interpreting Results
+
+- **All tests pass (green)**: The code is ready for review and potential merge.
+- **Any test fails (red)**: Blocks the merge. Review the logs, correct the issue, and push the updates.
+
+### Test Policy for Major Changes
+
+A change is considered **major** if it:
+- Adds a new significant feature (e.g., a new CLI command).
+- Modifies the firewall rules (`nftables`) or DNS resolution management.
+- Alters the crash-safety architecture.
+
+In these cases, the contributor **must**:
+- Add new unit tests to cover the functionality.
+- Update existing tests if the expected behavior changes.
+- Manually run integration tests in a virtual machine (VM).
+
+Pull requests will be blocked from merging if tests do not sufficiently cover the changes.
 
 ## Developer Certificate of Origin (DCO)
 
@@ -169,7 +192,7 @@ By making a contribution to this project, I certify that:
 ## Pull Request Process
 
 1. Create a branch from `main`.
-2. Ensure all tests pass.
+2. Ensure your code passes all linting checks (`ruff check`, `shellcheck`) and unit tests.
 3. Update the documentation (`README.md`, `architecture.md`) if needed.
 4. Submit the PR and wait for review.
 
