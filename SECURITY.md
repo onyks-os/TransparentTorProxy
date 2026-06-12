@@ -50,14 +50,16 @@ For the full STRIDE threat model, trust boundaries, risk severity ratings, and s
 
 **[`docs/security-assessment.md`](docs/security-assessment.md)**
 
-## Supported Versions
+## Release support policy
 
-We only provide security updates for the **latest minor version**.
+| Version | Support status | End of life |
+| ------- | -------------- | ------------ |
+| 0.4.x   | ✅ Security fixes | When 0.5.0 is released |
+| 0.3.x   | ❌ No longer supported | 2026-01-01 |
+| < 0.3   | ❌ Unsupported | |
 
-| Version | Supported |
-| ------- | --------- |
-| 0.4.x   | ✅         |
-| < 0.4   | ❌         |
+- Security fixes are provided only for the latest minor version.
+- If you need long-term support, please contact maintainers.
 
 ## Project Nature
 

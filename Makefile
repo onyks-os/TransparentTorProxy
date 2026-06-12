@@ -2,16 +2,28 @@
 #
 # Usage:
 #   make test             - unit tests only
+#   make fuzz             - property-based fuzz tests (Hypothesis)
+#   make audit            - dependency vulnerability scan
 #   make integration-all  - Docker tests (Debian, Fedora, Arch)
-#   make verify           - lint + unit + integration + package build
+#   make verify           - lint + unit + fuzz + audit + integration + package build
 
 # .PHONY tells Make that these are command names, not actual files or directories.
-.PHONY: test integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi test-leak-ip test-leak-dns test-leak-webrtc check-leak tarball
+.PHONY: test fuzz audit integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi test-leak-ip test-leak-dns test-leak-webrtc check-leak tarball
 
 # 1. Local unit tests (pytest, no root).
 test:
 	@echo "==> Running local Unit Tests..."
 	pytest tests/ -v
+
+# 1b. Property-based fuzz testing (Hypothesis, no root).
+fuzz:
+	@echo "==> Running Hypothesis Fuzz Tests..."
+	pytest fuzzing/fuzz_target.py -v
+
+# 1c. Dependency vulnerability scan (pip-audit).
+audit:
+	@echo "==> Running Dependency Audit (pip-audit)..."
+	pip-audit
 
 # 2. Integration tests (privileged Docker; retries once on failure for flaky Tor bootstrap).
 

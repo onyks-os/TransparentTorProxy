@@ -39,6 +39,11 @@ jobs:
       - name: Build release packages
         run: make build
 
+      - name: Generate SBOM
+        run: |
+          npm install -g @cyclonedx/cdxgen
+          cdxgen -o packaging/sbom.json
+
       - name: Sign packages with Sigstore
         uses: sigstore/gh-action-sigstore-python@v3.0.0
         with:
@@ -48,6 +53,7 @@ jobs:
             packaging/*.whl
             packaging/*.tar.gz
             packaging/SHA256SUMS.txt
+            packaging/sbom.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -59,4 +65,5 @@ jobs:
             packaging/*.tar.gz
             packaging/SHA256SUMS.txt
             packaging/*.sigstore
+            packaging/sbom.json
           generate_release_notes: true
