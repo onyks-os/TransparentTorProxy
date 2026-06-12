@@ -6,6 +6,9 @@ on:
   schedule:
     - cron: '0 0 * * 0'   # Weekly: every Sunday at midnight UTC
 
+permissions:
+  contents: read
+
 jobs:
   fuzz:
     name: Fuzz Test
