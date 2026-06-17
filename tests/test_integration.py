@@ -252,14 +252,13 @@ def test_split_tunneling_flow():
 
         # 4. Verify bypassed user's traffic is NOT routed through Tor (goes to real IP)
         cmd = [
-            "su",
-            "-s",
-            "/bin/sh",
-            bypass_user,
+            "python3",
             "-c",
-            "python3 -c \"import urllib.request, json; print(urllib.request.urlopen('https://check.torproject.org/api/ip', timeout=10).read().decode())\"",
+            "import urllib.request, json; print(urllib.request.urlopen('https://check.torproject.org/api/ip', timeout=10).read().decode())",
         ]
-        bypass_res = subprocess.run(cmd, capture_output=True, text=True)
+        bypass_res = subprocess.run(
+            cmd, capture_output=True, text=True, user=bypass_user
+        )
         assert bypass_res.returncode == 0, (
             f"Bypass user check failed: {bypass_res.stderr}"
         )

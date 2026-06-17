@@ -23,7 +23,7 @@ fuzz:
 # 1c. Dependency vulnerability scan (pip-audit).
 audit:
 	@echo "==> Running Dependency Audit (pip-audit)..."
-	pip-audit
+	pip-audit .
 
 # 2. Integration tests (privileged Docker; retries once on failure for flaky Tor bootstrap).
 

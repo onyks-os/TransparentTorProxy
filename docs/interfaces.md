@@ -57,6 +57,9 @@ Most commands require root privileges (`sudo`). Exceptions are noted in the tabl
 | `--watchdog`, `-w`    | flag  | off         | Start the background session integrity watchdog daemon after activation.                      |
 | `--bypass-user`       | `str` | —           | Comma-separated list of system users whose traffic bypasses Tor (split tunneling).            |
 | `--bypass-group`      | `str` | —           | Comma-separated list of system groups whose traffic bypasses Tor (split tunneling).           |
+| `--use-bridges`       | flag  | off         | Enable Tor bridges support.                                                                   |
+| `--bridge-file`       | `str` | —           | Path to a file containing Tor bridge lines.                                                   |
+| `--bridge`            | `str` | —           | Individual Tor bridge line (can be specified multiple times).                                 |
 
 ### 1.4 Exit Codes
 

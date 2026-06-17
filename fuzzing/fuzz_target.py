@@ -19,6 +19,7 @@ from hypothesis import strategies as st
 # 1. JSON lock file parsing (state.py)
 # ---------------------------------------------------------------------------
 
+
 @given(data=st.binary())
 @settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])
 def test_fuzz_json_lock_parsing(data: bytes) -> None:
@@ -53,6 +54,7 @@ def test_fuzz_json_lock_parsing(data: bytes) -> None:
 # 2. Tor version regex (tor_detect.py)
 # ---------------------------------------------------------------------------
 
+
 @given(data=st.text(min_size=0, max_size=500))
 @settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])
 def test_fuzz_tor_version_regex(data: str) -> None:
@@ -69,6 +71,7 @@ def test_fuzz_tor_version_regex(data: str) -> None:
 # ---------------------------------------------------------------------------
 # 3. Torrc configuration validation regexes (tor_detect.py)
 # ---------------------------------------------------------------------------
+
 
 @given(data=st.text(min_size=0, max_size=1000))
 @settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])
@@ -88,6 +91,7 @@ def test_fuzz_torrc_config_regex(data: str) -> None:
 # 4. OS family detection (tor_detect.py)
 # ---------------------------------------------------------------------------
 
+
 @given(data=st.text(min_size=0, max_size=500))
 @settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])
 def test_fuzz_os_release_detection(data: str) -> None:
@@ -102,6 +106,7 @@ def test_fuzz_os_release_detection(data: str) -> None:
 # ---------------------------------------------------------------------------
 # 5. /proc/mounts line parsing (dns.py)
 # ---------------------------------------------------------------------------
+
 
 @given(data=st.text(min_size=0, max_size=2000))
 @settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])
@@ -120,6 +125,7 @@ def test_fuzz_proc_mounts_parsing(data: str) -> None:
 # ---------------------------------------------------------------------------
 # 6. SELinux module detection regex (tor_detect.py)
 # ---------------------------------------------------------------------------
+
 
 @given(data=st.text(min_size=0, max_size=500))
 @settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])

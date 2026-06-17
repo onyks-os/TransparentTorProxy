@@ -108,9 +108,10 @@ Intervenes if detection fails or system needs optimization.
 1. Detects package manager (`apt-get`, `pacman`, `dnf`, `zypper`).
 2. Installs `tor`.
 3. **SELinux Optimization**: If on Fedora and enforcing, compiles the custom SELinux policy on-the-fly. The policy source (`.te`) is stored as an internal package resource and accessed via `importlib.resources`.
-4. Generates a volatile `torrc` in `/run/tor/ttp/torrc`.
-5. Writes a dedicated `ttp-tor.service` unit to `/run/systemd/system/` (volatile, evaporates on reboot).
-6. Starts the TTP Tor instance via `systemctl start ttp-tor`.
+4. **Tor Bridges & Pluggable Transports**: If bridges are enabled, verifies the presence of Pluggable Transport binaries (`obfs4proxy`, `snowflake-client`) in the system `PATH`. If missing, automatically installs them via the detected system package manager.
+5. Generates a volatile `torrc` in `/run/tor/ttp/torrc`, appending `UseBridges 1`, `ClientTransportPlugin` executable paths, and target `Bridge` lines if configured.
+6. Writes a dedicated `ttp-tor.service` unit to `/run/systemd/system/` (volatile, evaporates on reboot).
+7. Starts the TTP Tor instance via `systemctl start ttp-tor`.
 
 ### 3.3 `firewall.py`
 

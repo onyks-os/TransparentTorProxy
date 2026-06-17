@@ -44,11 +44,24 @@ We do not currently assign CVEs, but may do so in the future.
 
 ## Scope
 
-This policy applies to the TTP core modules and the CLI. Priority concerns include DNS leaks, IPv6 leaks, firewall bypasses, privilege escalation, and any mechanism that could deanonymize the user.
+This policy applies to the TTP core modules and the CLI. Priority concerns include privilege escalation and any mechanism that could deanonymize the user.
+
+The following are considered **critical scope targets**:
+1. **Firewall Bypass**: Successfully sending cleartext TCP/UDP traffic to the internet bypassing Tor (with LAN bypass disabled).
+2. **DNS Leak**: Successfully resolving an external domain by bypassing Tor's `DNSPort` redirection.
+3. **Watchdog Evasion**: Disabling firewall rules, stopping critical services, or unmounting the `/etc/resolv.conf` bind mount without the watchdog daemon detecting it or triggering the emergency network lockout (killswitch).
 
 For the full STRIDE threat model, trust boundaries, risk severity ratings, and security controls inventory, see:
 
 **[`docs/security-assessment.md`](docs/security-assessment.md)**
+
+## Informal Bug Bounty & Hall of Fame
+
+While there is no financial budget to offer monetary rewards, the project aims to recognize and honor security researchers who help make TTP safer.
+
+For valid, in-scope security vulnerability reports that are confirmed and resolved, the project offers:
+- **Permanent inclusion** in the [`HALL_OF_FAME.md`](HALL_OF_FAME.md) file at the root of the repository, including a link to the researcher's GitHub profile or personal website.
+- **Honorable mention** in the official GitHub Release Notes for the fixed version.
 
 ## Release support policy
 

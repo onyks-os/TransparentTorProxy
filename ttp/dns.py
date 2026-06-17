@@ -121,21 +121,27 @@ def restore_dns(backup: dict[str, Any] | None) -> None:
 
     mount_target = backup.get("mount_target", str(RESOLV_CONF))
 
-    try:
-        # Lazy unmount ensures immediate release even if busy
-        subprocess.run(
-            ["umount", "-l", mount_target],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        # Broad catch for restoration safety
-        pass
+    if _is_mount_point(mount_target):
+        try:
+            # Lazy unmount ensures immediate release even if busy
+            subprocess.run(
+                ["umount", "-l", mount_target],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            logger.info("Successfully unmounted DNS overlay on %s", mount_target)
+        except subprocess.CalledProcessError as e:
+            err_msg = e.stderr.strip() if e.stderr else str(e)
+            logger.warning(
+                "Failed to unmount DNS overlay on %s: %s", mount_target, err_msg
+            )
+    else:
+        logger.debug("DNS target %s is not mounted, skipping unmount", mount_target)
 
     # Cleanup the ephemeral file to free tmpfs space
     try:
         if RUNTIME_RESOLV.exists():
             RUNTIME_RESOLV.unlink()
-    except OSError:
-        pass
+    except OSError as e:
+        logger.debug("Failed to remove runtime resolv.conf: %s", e)
