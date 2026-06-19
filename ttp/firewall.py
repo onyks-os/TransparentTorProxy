@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Stateless Firewall Module - Isolation via dedicated nftables tables.
 
 This module implements a "Safe-Release" architecture:

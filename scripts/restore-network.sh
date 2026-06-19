@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP - Emergency Network Restore
 #
 # This script is a safety net. Use it ONLY when `sudo ttp stop`

@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP - QEMU VM Launcher
 #
 # Starts a QEMU virtual machine for testing TTP on real Linux

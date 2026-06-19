@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Fuzz testing harness for TTP using Hypothesis (property-based testing).
 
 This module provides fuzz targets for critical parsing and detection
@@ -15,9 +18,7 @@ from hypothesis import given, settings, HealthCheck
 from hypothesis import strategies as st
 
 
-# ---------------------------------------------------------------------------
 # 1. JSON lock file parsing (state.py)
-# ---------------------------------------------------------------------------
 
 
 @given(data=st.binary())
@@ -50,9 +51,7 @@ def test_fuzz_json_lock_parsing(data: bytes) -> None:
         pass
 
 
-# ---------------------------------------------------------------------------
 # 2. Tor version regex (tor_detect.py)
-# ---------------------------------------------------------------------------
 
 
 @given(data=st.text(min_size=0, max_size=500))
@@ -68,9 +67,7 @@ def test_fuzz_tor_version_regex(data: str) -> None:
         pass
 
 
-# ---------------------------------------------------------------------------
 # 3. Torrc configuration validation regexes (tor_detect.py)
-# ---------------------------------------------------------------------------
 
 
 @given(data=st.text(min_size=0, max_size=1000))
@@ -87,9 +84,7 @@ def test_fuzz_torrc_config_regex(data: str) -> None:
         pass
 
 
-# ---------------------------------------------------------------------------
 # 4. OS family detection (tor_detect.py)
-# ---------------------------------------------------------------------------
 
 
 @given(data=st.text(min_size=0, max_size=500))
@@ -103,9 +98,7 @@ def test_fuzz_os_release_detection(data: str) -> None:
         pass
 
 
-# ---------------------------------------------------------------------------
 # 5. /proc/mounts line parsing (dns.py)
-# ---------------------------------------------------------------------------
 
 
 @given(data=st.text(min_size=0, max_size=2000))
@@ -122,9 +115,7 @@ def test_fuzz_proc_mounts_parsing(data: str) -> None:
         pass
 
 
-# ---------------------------------------------------------------------------
 # 6. SELinux module detection regex (tor_detect.py)
-# ---------------------------------------------------------------------------
 
 
 @given(data=st.text(min_size=0, max_size=500))

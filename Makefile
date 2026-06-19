@@ -47,6 +47,11 @@ verify:
 	@chmod +x scripts/verify.sh
 	@./scripts/verify.sh $(ARGS)
 
+# 3b. Run Watchdog Chaos Monkey stress tests
+chaos-monkey:
+	@echo "==> Running Watchdog Chaos Monkey Stress Tests..."
+	sudo -E venv/bin/python3 tests/chaos_monkey.py --duration 60
+
 # 4. Native packages (.deb / .rpm) and Python release artifacts (Source Tarball & Wheel) via packaging/release.sh
 build:
 	@echo "==> Building Debian, RPM packages, and Python release artifacts..."

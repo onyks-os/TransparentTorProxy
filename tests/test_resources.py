@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tests for internal resource management.
 
 These tests verify that embedded files (like SELinux policies) are

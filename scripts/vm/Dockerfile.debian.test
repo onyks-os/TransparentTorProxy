@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     systemd systemd-sysv \
     python3 python3-pip python3-venv \
     nftables tor procps curl iptables kmod iproute2 \
+    libpcap-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Mask services that often fail in unprivileged or standard containers
@@ -25,8 +26,8 @@ ENV PATH="/venv/bin:$PATH"
 COPY . /app
 WORKDIR /app
 
-# Install TTP with dev dependencies
-RUN pip install -e .[dev]
+# Install TTP with dev dependencies, NSE, and pyroute2 (netlink route setup without /sys mount)
+RUN pip install -e .[dev] && pip install network-sandbox-engine pyroute2
 
 STOPSIGNAL SIGRTMIN+3
 

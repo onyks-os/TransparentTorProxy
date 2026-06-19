@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """DNS Management Module - Handles routing DNS queries through Tor.
 
 This module implements a stateless, Kernel-level DNS redirection strategy

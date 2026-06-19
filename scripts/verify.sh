@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP - Pre-release Verification Suite
 
 # Configuration

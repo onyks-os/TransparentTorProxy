@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Integration tests for TTP.
 
 These tests run the actual CLI commands (start, refresh, stop) and

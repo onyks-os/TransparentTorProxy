@@ -6,7 +6,7 @@ ENV container docker
 # Initialize pacman keys and install dependencies
 RUN pacman-key --init && pacman-key --populate archlinux && \
     pacman -Syu --noconfirm && \
-    pacman -S --noconfirm systemd python python-pip nftables tor procps-ng curl iptables iproute2 base-devel \
+    pacman -S --noconfirm systemd python python-pip nftables tor procps-ng curl iptables iproute2 base-devel libpcap \
     && pacman -Scc --noconfirm
 
 # Arch uses systemd by default, mask troublesome services
@@ -24,8 +24,8 @@ ENV PATH="/venv/bin:$PATH"
 COPY . /app
 WORKDIR /app
 
-# Install TTP with dev dependencies
-RUN pip install -e .[dev]
+# Install TTP with dev dependencies, NSE, and pyroute2 (netlink route setup without /sys mount)
+RUN pip install -e .[dev] && pip install network-sandbox-engine pyroute2
 
 STOPSIGNAL SIGRTMIN+3
 

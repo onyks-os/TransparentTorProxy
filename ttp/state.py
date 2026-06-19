@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """State management - Volatile lock file for crash-safe operations.
 
 This module acts as the "memory" of TTP. It tracks active sessions

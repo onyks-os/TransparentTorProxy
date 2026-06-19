@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tor installation and native service management.
 
 This module handles Tor binary detection, package installation,

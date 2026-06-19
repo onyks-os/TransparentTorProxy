@@ -8,6 +8,7 @@ RUN dnf update -y && dnf install -y \
     systemd \
     python3 python3-pip \
     nftables tor procps-ng curl iptables iproute \
+    libpcap-devel \
     && dnf clean all
 
 # Fedora uses systemd by default, but we should mask the same things
@@ -25,8 +26,8 @@ ENV PATH="/venv/bin:$PATH"
 COPY . /app
 WORKDIR /app
 
-# Install TTP with dev dependencies
-RUN pip install -e .[dev]
+# Install TTP with dev dependencies, NSE, and pyroute2 (netlink route setup without /sys mount)
+RUN pip install -e .[dev] && pip install network-sandbox-engine pyroute2
 
 STOPSIGNAL SIGRTMIN+3
 

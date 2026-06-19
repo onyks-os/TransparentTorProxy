@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP - RPM Package Builder
 #
 # This script builds a native .rpm package for Fedora/RHEL/CentOS

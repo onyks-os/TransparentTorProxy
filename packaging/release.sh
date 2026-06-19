@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP Release Builder
 #
 # This script orchestrates the full release pipeline for TTP:

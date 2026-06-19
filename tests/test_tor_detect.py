@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tests for ttp.tor_detect - Tor detection module.
 
 All tests use mocks to avoid hitting the real system.

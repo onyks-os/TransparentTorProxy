@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tests for ttp.tor_control - Tor interaction logic.
 
 All external network calls and Stem interactions are mocked.

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Watchdog & Killswitch Module - Proactive Session Integrity & Auto-Healing.
 
 This module provides the core logic for the TTP background watchdog process,

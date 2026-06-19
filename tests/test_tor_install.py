@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tests for ttp.tor_install - Tor installation and service management.
 
 All tests mock subprocess.run, shutil.which, and system paths.

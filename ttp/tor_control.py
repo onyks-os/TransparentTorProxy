@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tor daemon control and circuit verification.
 
 This module is the "voice" of TTP. It communicates directly with the

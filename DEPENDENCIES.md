@@ -26,8 +26,10 @@ These are required only for building package distributions (`.deb`, `.rpm`, whee
 | [pytest](https://pypi.org/project/pytest/)                   | `>=7.0.0`           | MIT        | Test suite execution and test assertions.                   |
 | [ruff](https://pypi.org/project/ruff/)                       | `>=0.1.0`           | MIT        | Code style enforcement, linting, and formatting checks.     |
 | [build](https://pypi.org/project/build/)                     | `>=1.0.0`           | MIT        | Python packaging build frontend.                            |
-| [twine](https://pypi.org/project/twine/)                     | `>=4.0.0`           | Apache-2.0 | Tool for securely publishing distribution packages to PyPI. |
-| [bump-my-version](https://pypi.org/project/bump-my-version/) | `>=0.20.0`          | MIT        | Version management tool to automate release numbering.      |
+| [twine](https://pypi.org/project/twine/)                                             | `>=4.0.0`           | Apache-2.0 | Tool for securely publishing distribution packages to PyPI.                                |
+| [bump-my-version](https://pypi.org/project/bump-my-version/)                         | `>=0.20.0`          | MIT        | Version management tool to automate release numbering.                                      |
+| [network-sandbox-engine](https://pypi.org/project/network-sandbox-engine/)           | `>=1.0.0`          | MIT        | Isolated netns/Scapy nftables rules validation engine for `tests/test_nse_rules.py`.       |
+| [pyroute2](https://pypi.org/project/pyroute2/)                                        | `>=0.7.0`          | Apache-2.0 | Netlink-based route management inside network namespaces (avoids `/sys` mount in Docker).   |
 
 ### 1.2 System-Level Dependencies
 

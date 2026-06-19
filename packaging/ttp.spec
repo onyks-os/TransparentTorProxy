@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP - RPM Spec File
 #
 # This is the recipe that rpmbuild uses to create the .rpm package.

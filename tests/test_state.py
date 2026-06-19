@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tests for ttp.state - lock file management.
 
 Uses tmp_path for file I/O and mocks os.kill for orphan detection.

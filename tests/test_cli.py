@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tests for ttp.cli - CLI entry point.
 
 All external calls (firewall, DNS, Tor, network) are fully mocked.

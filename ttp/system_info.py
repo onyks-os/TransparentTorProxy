@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """System diagnostics and information gathering.
 
 This module is the "reporter" of TTP. It performs a comprehensive

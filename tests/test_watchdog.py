@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tests for ttp.watchdog - session integrity daemon and auto-healing.
 
 All system interactions (systemctl, nft, state lock, dns, firewall) are fully mocked.

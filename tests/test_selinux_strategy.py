@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tests for SELinux "Install Once, Run Fast" strategy.
 
 These tests verify OS family detection, SELinux state detection, and

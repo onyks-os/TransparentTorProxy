@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """CLI entry point - Typer application for TTP.
 
 This module provides the command-line interface and coordinates the interaction

@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP - QEMU Snapshot Manager
 #
 # Manages QEMU internal snapshots for safe TTP testing. Snapshots
