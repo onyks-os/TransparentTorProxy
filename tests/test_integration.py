@@ -11,11 +11,27 @@ They are designed to be run inside the Docker-based testing environment.
 import json
 import os
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
 
 import pytest
+
+# Ensure the virtual environment's bin directory is at the front of PATH,
+# so that the development version of "ttp" is executed rather than any system-wide one.
+project_root = Path(__file__).resolve().parent.parent
+dev_bin_dir = project_root / "venv" / "bin"
+path_dirs = []
+if dev_bin_dir.exists():
+    path_dirs.append(str(dev_bin_dir))
+sys_bin = Path(sys.executable).parent
+if sys_bin.exists():
+    path_dirs.append(str(sys_bin))
+
+for d in reversed(path_dirs):
+    if d not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = f"{d}{os.pathsep}{os.environ.get('PATH', '')}"
 
 # Skip the entire module if not running as root
 if os.geteuid() != 0:

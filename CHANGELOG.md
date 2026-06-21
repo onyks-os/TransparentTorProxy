@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2026 onyks-os
+SPDX-License-Identifier: MIT
+-->
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -5,18 +10,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.5] - 2026-06-12
+## [0.4.5] - 2026-06-20
 
 ### Added
 
+- **Zero-Leak Shutdown (Graceful Teardown with Active Socket Slaughter)**: Implemented a multi-stage active socket termination and lockdown sequence during `ttp stop` to eliminate in-flight cleartext traffic leaks. Before final firewall ruleset removal, a temporary lockdown drop rule is applied (exempting the Tor daemon), followed by an **Active Socket Slaughter** phase injecting TCP Reset (`meta l4proto tcp counter reject with tcp reset`) and standard reject rules with a 1.5-second micro-delay. This actively terminates pending local connections before lowering the firewall.
+- **Connection Tracking Flush**: Added automatic Netfilter connection tracking state invalidation via `conntrack -F` (when the `conntrack` utility is available) to terminate active TCP/UDP streams before final firewall ruleset removal.
+- **IPv6 Force Disable Flag**: Added `--no-ipv6` CLI option to `start` and `restart` commands, allowing users to force drop all outbound IPv6 traffic via `nftables` rules (`meta nfproto ipv6 drop`) to prevent leaks even if the host machine supports IPv6.
+- **System Integrity Watchdog Auto-Healing for IPv6**: Integrated `--no-ipv6` state checking into the session watchdog. During auto-healing operations, the watchdog reads the state lock and correctly re-applies firewall, DNS, and Tor configurations with IPv6 disabled if configured.
+- **CLI Reports for IPv6 Status**: Updated `status` and `check` commands to explicitly show the status of IPv6 traffic routing: `Enabled (Redirected)`, `Disabled (Force Dropped)`, or `Disabled (Not supported by host)`.
+- **Bring Your Own Daemon (BYOD) Mode**: Added `--external-daemon` and `--tor-uid` CLI options to both `start` and `restart` commands, allowing TTP to run on systemd-less environments (such as Alpine Linux or Void Linux) and inside lightweight Docker containers.
+- **Passive Health Check & UID Parser**: Implemented socket owner auto-detection reading `/proc/net/tcp` and `/proc/net/tcp6` to find Tor's numeric UID (resolving firewall loops), alongside passive TCP/UDP port checks on the target ports when using `--external-daemon`.
+- **Network Sandbox Engine (NSE) Integration**: Fully integrated the PyPI package `network-sandbox-engine` and `pyroute2` for automated ruleset tests.
+- **Zero-Leak PCAP Ruleset Test**: Added `tests/test_nse_rules.py` to validate `nftables` schemas in isolated namespaces, using an asynchronous Scapy sniffer to assert zero cleartext packets escaping to the WAN.
+- **Chaos Monkey Stress Test**: Introduced `tests/chaos_monkey.py` to verify watchdog/killswitch auto-healing resilience under injected failures.
+- **Architectural Decision Records (ADRs)**: Created a dedicated `docs/decisions/` directory containing records for all major architectural decisions (0001 through 0008) made since project inception.
 - **Split Tunneling by UID/GID**: Added `--bypass-user` and `--bypass-group` options to the `start` and `restart` CLI commands. These options accept usernames or groupnames (supporting individual values, comma-separated lists, or multiple flags), resolve them dynamically to numeric UIDs/GIDs via standard Python `pwd`/`grp` libraries, and store them in the session lock file `ttp.lock`.
 - **Bypass Firewall Exceptions**: Generates `meta skuid <uid> accept` and `meta skgid <gid> accept` nftables rules placed at the top of the output, prerouting, and filter_out chains. This allows bypassed users and groups to access the cleartext internet directly, bypassing both Tor NAT redirection and the emergency killswitch.
 - **Watchdog Bypass Auto-Healing**: Updated the background watchdog daemon to read the bypassed users/groups from the session lock file, dynamically verify that their firewall bypass rules are active in the running nftables ruleset, and trigger auto-healing to restore them if missing or modified.
 - **Strict Lock Permissions**: The volatile lock file `/run/ttp/ttp.lock` is now created/updated with strict `0o644` permissions to protect active session state from unauthorized write access.
 - **`docs/interfaces.md`** (OSPS-SA-02.01): New authoritative reference for all external interfaces — full CLI command table with options, exit codes and root-privilege requirements; Tor integration (managed ports, control protocol, `torrc` directives, pluggable transports); system integration (nftables table/chain/rule-order, DNS bind-mount overlay, volatile systemd units, filesystem path inventory); and external network endpoints used for verification.
+- **`docs/bridges.md`**: New user guide for obtaining, configuring, and verifying Tor Bridges and Pluggable Transports (`obfs4`, `snowflake`) in TTP.
+- **`docs/documentation-policy.md`**: New repository policy specifying required tests, changelog, and component documentation updates for each type of repository modification.
 - **`docs/security-assessment.md`** (OSPS-SA-03.01): New STRIDE threat model and risk assessment covering all TTP components (`firewall.py`, `dns.py`, `tor_install.py`/`tor_control.py`, `state.py`, `watchdog.py`, `cli.py`), trust boundary diagram, known limitations table with severity ratings, supply chain security controls, and a 16-item security controls summary matrix.
 - **`MAINTAINERS.md`**: New governance document listing Project Lead, a `## Project Roles` table mapping each operational role (Code Reviewer, Release Manager, Security Officer, CI/CD Maintainer) to its current holder, access to sensitive resources, merge policy, and maintainer onboarding/offboarding process.
 - **`DEPENDENCIES.md`**: New dependency policy document covering runtime and dev/build Python dependencies with version constraints and licenses, system-level dependencies, optional dynamic dependencies (SELinux tools, pluggable transports), and policies for vetting, version pinning, vulnerability monitoring (`pip-audit --path .`), and upgrading.
+
+### Changed
+
+- **`README.md` Optimization**: Replaced the redundant and detailed `How It Works` section with a high-level summary and direct link to the authoritative `docs/architecture.md` documentation.
+
+### Fixed
+
+- **Garbage Collection Namespace Bug**: Fixed premature namespace teardown in integration tests by maintaining a reference to the `ns_sandbox` generator fixture context.
+- **Multicast Filtering in Leak sniffer**: Added IGMP/multicast/NDP packet exclusions to prevent false-positive leak assertions in ruleset tests.
 
 ## [0.4.0] - 2026-06-09
 

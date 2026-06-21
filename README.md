@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2026 onyks-os
+SPDX-License-Identifier: MIT
+-->
+
 <h1 align="center">
   TTP - Transparent Tor Proxy
 </h1>
@@ -51,10 +56,10 @@ No per-application setup needed - just `sudo ttp start` and **every connection**
 
 ## Requirements
 
-* **Linux with systemd** *(tested on Debian, Ubuntu, Fedora, Arch)*
+* **Linux with systemd** (optional if using `--external-daemon` in BYOD mode)
 * **Python 3.10+**
-* **nftables** *(pre-installed on most modern distros)*
-* **Root privileges** *(required for firewall and DNS modifications)*
+* **nftables** (pre-installed on most modern distros)
+* **Root privileges** (required for firewall and DNS modifications)
 
 ## Installation
 
@@ -64,8 +69,8 @@ Choose the method that best fits your needs. **Native packages are strongly reco
 
 Installing via native packages ensures that all system dependencies (`tor`, `nftables`) and kernel-level optimizations (SELinux) are managed by your OS package manager.
 
-* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.4.0_all.deb`
-* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.4.0-1.fc43.noarch.rpm`
+* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.4.5_all.deb`
+* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.4.5-1.fc43.noarch.rpm`
 * **Arch Linux**: `cd packaging && makepkg -si`
 
 For instructions on how to verify the integrity and authenticity of the release assets, see the [Release Verification Guide](docs/verification.md).
@@ -125,111 +130,35 @@ sudo ln -s ~/.local/share/ttp-venv/bin/ttp /usr/local/bin/ttp
 
 ## Usage
 
-> [!IMPORTANT]
-> All commands require `sudo`. Except `ttp status`, `ttp check`, `ttp check-leak`, `ttp watchdog status`, and `ttp --help`.
+TTP is designed to be simple and lightweight. For the complete list of CLI commands, options, exit codes, and technical specifications, refer to the [External Interfaces Reference](docs/interfaces.md).
 
-### Start the proxy
+### Quick Start
 
-```bash
-sudo ttp start [--interface <iface>] [--bootstrap-timeout <seconds>] [--allow-root] [--no-lan-bypass] [--watchdog] [--bypass-user <users>] [--bypass-group <groups>] [--use-bridges] [--bridge-file <path>] [--bridge <line>]
-```
+Most network-modifying commands require root privileges (`sudo`):
 
-> [!TIP]
-> Use `--bootstrap-timeout` (default: 180s) if you are on a slow network or Tor takes a long time to connect.
+* **Start the proxy**:
+  ```bash
+  sudo ttp start
+  ```
+* **Stop the proxy**:
+  ```bash
+  sudo ttp stop
+  ```
+* **Check current session status**:
+  ```bash
+  ttp status
+  ```
+* **Verify Tor routing and latency**:
+  ```bash
+  ttp check
+  ```
+* **Request a new exit IP (rotate circuits)**:
+  ```bash
+  sudo ttp refresh
+  ```
 
-```text
-[TTP] Detecting Tor... found (v0.4.9.6), managed via system service (user: debian-tor).
-[TTP] Initializing volatile runtime in /run/ttp...
-[TTP] Restarting TTP Tor service...
-[TTP] Stateless nftables rules applied (Table: inet ttp).
-[TTP] DNS set via overlay on interface ens3.
-[TTP] Waiting for Tor to bootstrap...
-[TTP] Tor is 100% bootstrapped.
-[TTP] Verifying Tor routing...
-[TTP] Session active. Exit IP: 109.70.100.11
-[TTP] Use 'ttp stop' to terminate. 'ttp refresh' to change IP.
-```
+For more advanced setups and circumvention profiles, see the **Advanced Security Profiles** below or consult the [External Interfaces Reference](docs/interfaces.md).
 
-### Stop the proxy
-
-```bash
-sudo ttp stop [--restore-only]
-```
-
-> [!IMPORTANT]
-> The `--restore-only` flag is a recovery tool. If TTP crashed or its lock file was lost, this flag forces the restoration of firewall rules and DNS settings without checking for an active session.
-
-```text
-[TTP] Removing nftables rules...
-[TTP] Restoring DNS...
-[TTP] Network restored. Traffic in cleartext.
-```
-
-### Change exit IP
-
-```bash
-sudo ttp refresh
-```
-
-*Sends `NEWNYM` to Tor via the control interface - all active circuits are rotated and you get a new exit IP.*
-
-### Check status
-
-```bash
-sudo ttp status
-```
-
-```text
-[TTP] Status: ACTIVE
-[TTP] Exit IP: 185.181.61.201
-[TTP] Session started: 2026-04-19T01:07:33.384801+00:00
-[TTP] Process PID: 3392
-```
-
-### Restart the session
-
-```bash
-sudo ttp restart [--interface <iface>] [--bootstrap-timeout <seconds>] [--allow-root] [--no-lan-bypass] [--watchdog] [--bypass-user <users>] [--bypass-group <groups>] [--use-bridges] [--bridge-file <path>] [--bridge <line>]
-```
-
-*Shortcut for `ttp stop` followed by `ttp start`. Convenient for applying new settings or clearing network glitches.*
-
-### Network Diagnostics (Fast)
-
-```bash
-ttp check
-```
-
-*A dedicated command to verify the real-world state of the Tor connection. Shows current IP, IsTor status, latency to torproject.org, and local controller stability. Unlike `status` which shows TTP's internal state, `check` verifies the network.*
-
-### Leak Detection
-
-```bash
-ttp check-leak [-v]
-```
-
-*Performs a series of DNS and IP leak tests. Use `-v` or `--verbose` to see the full raw output of the tests.*
-
-### Debugging Logs
-
-```bash
-sudo ttp logs
-```
-
-*Streams real-time logs from the volatile log file at `/run/ttp/ttp.log`.*
-
-### Manage session watchdog
-
-```bash
-# Start background session watchdog manually
-sudo ttp watchdog start
-
-# Stop background session watchdog manually
-sudo ttp watchdog stop
-
-# Show background session watchdog status
-ttp watchdog status
-```
 
 ### Advanced Security Profiles
 
@@ -275,7 +204,17 @@ Depending on your security model and task, we recommend the following setups:
   # OR specify individual bridges directly:
   sudo ttp start --bridge "obfs4 192.0.2.1:1234 ..." --bridge "snowflake 192.0.2.2:4321 ..."
   ```
-* **Why**: Configures Tor to connect via bridges. If pluggable transports like `obfs4proxy` or `snowflake-client` are needed, TTP automatically checks their presence and installs them using the system package manager.
+* **Why**: Configures Tor to connect via bridges. If pluggable transports like `obfs4proxy` or `snowflake-client` are needed, TTP automatically checks their presence and installs them using the system package manager. For detailed instructions on obtaining and configuring bridges, see the [Bridges & Pluggable Transports Guide](docs/bridges.md).
+
+#### 6. Bring Your Own Daemon (BYOD) Profile
+* **Goal**: Run TTP on systemd-less environments (Alpine, Void Linux) or inside Docker containers by separating Tor lifecycle management from network redirection routing.
+* **Command**:
+  ```bash
+  # 1. Start Tor manually on target ports (e.g. TransPort 9041, DNSPort 9054)
+  # 2. Start TTP delegating daemon control to the host
+  sudo ttp start --external-daemon --transport-port 9041 --dns-port 9054
+  ```
+* **Why**: Bypasses systemd commands entirely, performing a passive healthcheck to verify that Tor is running on the target ports and dynamically parsing socket owners from `/proc/net/tcp` to obtain the UID of the Tor daemon process (avoiding loops). If the external Tor daemon crashes, routing continues to fail closed safely.
 
 ## Manual Leak Verification
 
@@ -316,31 +255,16 @@ sudo ./scripts/uninstall.sh
 
 ## How It Works
 
-1. **Detection & System Auditing** - Checks if Tor is installed and identifies the appropriate user to run the process. It automatically checks for active `firewalld` configurations to warn users of possible firewall rule conflicts.
-2. **Package Management & SELinux Optimization** - If Tor is missing, detects the system's package manager (`apt-get`, `pacman`, `dnf`, `zypper`) and installs it automatically. On Fedora/RHEL-family systems in Enforcing mode, it automatically compiles a custom SELinux policy module from the source (`ttp_tor_policy.te`) using `checkpolicy` and `semodule_package` so that Tor can bind to the non-standard ports.
-3. **Pre-flight Safety Check** - Verifies that the host system has sufficient free space (minimum 5MB) on the RAM-backed volatile directory (`tmpfs`) to prevent out-of-memory crashes mid-setup.
-4. **Tor Instance Lifecycle** - Generates a sanitized, dynamic `torrc` config at `/run/tor/ttp/torrc` and registers a volatile `ttp-tor.service` systemd unit in `/run/systemd/system/`. Uses `/var/lib/tor/ttp/` as a persistent `DataDirectory` to preserve entry guards and cache, enabling quick bootstrap (~3 seconds). During teardown, TTP sends a cryptographic `SHUTDOWN` signal to Tor before removing the firewall to avoid leaking cleartext TCP `RST` packets on system shutdown.
-5. **Atomic Firewall Redirection** - Generates and loads `nftables` rules into a dedicated `inet ttp` table atomically using `nft -f` to prevent dangerous intermediate states.
-   * **Multi-Chain Protection**:
-     * `prerouting`: Intercepts traffic if TTP is used as a gateway.
-     * `output` (NAT): Redirects local TCP/DNS to Tor's ports.
-     * `filter_out` (Filter): Serves as a hard **Kill-Switch**.
-   * **Execution Sequence**:
-     1. **Exclude Tor User**: Prevent routing loops for the Tor daemon process.
-     2. **Exclude Split Tunneling**: Exempt user- or group-specific traffic (`meta skuid` / `meta skgid`) to bypass Tor when requested.
-     3. **Exclude System Maintenance**: Exempt root processes (`uid 0`) if `--allow-root` is set.
-     4. **Intercept DNS**: Redirect UDP/TCP port 53 traffic to Tor's `DNSPort`.
-     5. **Bypass LAN**: Accept local subnet traffic (RFC 1918 & Link-Local) unless `--no-lan-bypass` is active.
-     6. **Accept Loopback**: Allow local `lo` traffic.
-     7. **Redirect TCP**: Redirect all TCP traffic to Tor's `TransPort`.
-     8. **DoH/DoT Mitigation**: Block port 853 (DoT) and well-known DoH resolver IPs on port 443.
-     9. **Drop Unrouted IPv6**: Block outbound IPv6 traffic if the host lacks IPv6 loopback routing.
-     10. **Brutal Reject (Kill-Switch)**: Reject all remaining traffic bypassing Tor redirection (e.g. pre-existing connections).
-6. **DNS Bind-Mount Overlay** - Bind-mounts a volatile resolver file from `/run/ttp/resolv.conf` over the target `/etc/resolv.conf` to force local resolution. Stale mounts from unclean runs are automatically detected in `/proc/mounts` and swept before applying new overlays.
-7. **Control socket communication** - Monitors progress via Tor ControlPort Unix socket `/run/tor/ttp/control.sock` using `stem` until it reaches 100% bootstrap.
-8. **Exit IP Verification** - Validates successful Tor routing via three redundant endpoints (`check.torproject.org` API, fallback `api.ipify.org`, and `ifconfig.me`).
-9. **Volatile State Retention** - Writes the session lock at `/run/ttp/ttp.lock` and limits volatile logs in `/run/ttp/ttp.log` to a strict 1MB to prevent system memory exhaustion on RAM disk.
-10. **Session Watchdog Daemon** - Launches a volatile background service (`ttp-watchdog.service`) running checks every 15s. Verifies the DNS bind-mount, firewall table integrity, and Tor socket. Attempts a single-strike auto-healing repair before invoking `apply_emergency_killswitch()` (blocking all interfaces except `lo`) and broadcasting system alerts (`wall` and `notify-send`).
+TTP transparently routes all network traffic by orchestrating standard Linux kernel subsystems, system utilities, and Tor's control interfaces:
+
+1. **Atomic Firewall Redirection**: Generates and loads an isolated `inet ttp` nftables ruleset atomically to intercept TCP and DNS traffic, redirecting them to Tor while preventing IPv6 and DoT/DoH leaks.
+2. **DNS Bind-Mount Overlay**: Overlays `/etc/resolv.conf` with a volatile RAM-backed configuration via a kernel-level bind-mount to ensure DNS calls are resolved by Tor.
+3. **Tor Daemon Integration**: Configures, runs, and monitors an isolated Tor instance via volatile systemd services on non-standard ports to prevent port conflicts.
+4. **Session Watchdog**: Runs an active background monitor that verifies configuration integrity and executes a fail-closed emergency killswitch upon security breach or system modification.
+
+For a detailed walkthrough of the execution flows, system hooks, security boundaries, and modular components, please refer to the:
+
+**[Technical Architecture & Design Guide](docs/architecture.md)**
 
 ## Crash Recovery
 
@@ -348,7 +272,7 @@ TTP is designed to always restore your network, even in edge cases:
 
 | Scenario                 | What happens                                                                                             |
 | :----------------------- | :------------------------------------------------------------------------------------------------------- |
-| `ttp stop`               | **Normal cleanup**: graceful Tor shutdown, firewall restored, DNS restored, lock deleted                 |
+| `ttp stop`               | **Zero-leak cleanup**: applies teardown lockdown, gracefully shuts down Tor, executes active socket slaughter, waits 1.5s, flushes connection tracking, restores firewall and DNS (via table flush and delete), and deletes the lock file |
 | Ctrl+C / `kill`          | Signal handler catches `SIGINT`/`SIGTERM` and runs normal cleanup before exit                            |
 | `kill -9` / Power Outage | Next `ttp start` detects the orphaned lock file, clears any stale mount stacks, and auto-restores        |
 | Manual emergency         | Run `sudo ./scripts/restore-network.sh` to flush all nftables rules, reset DNS, and delete the lock file |
@@ -359,7 +283,7 @@ TTP is designed to always restore your network, even in edge cases:
 >
 > * **Tor Browser**: Applications using an explicit SOCKS5 proxy will create a double Tor hop. Use a regular browser instead while TTP is active.
 > * **DNS-over-HTTPS (DoH)**: Normal browsers (Firefox, Chrome, Brave, Edge) may use DoH, bypassing system DNS. TTP mitigates this by blocking well-known DoH resolver IPs (forcing fallback to Tor DNS) and routing unlisted DoH traffic through Tor (which can, however, partially compromise anonymity). For maximum security, disable **DoH / "Secure DNS"** in your browser settings.
-> * **IPv6**: Fully supported when available. TTP dynamically detects IPv6 loopback and routes IPv6 traffic through Tor. If the host lacks IPv6 loopback support, TTP drops all outgoing IPv6 traffic to prevent leaks.
+> * **IPv6**: Fully supported when available. TTP dynamically detects IPv6 loopback and routes IPv6 traffic through Tor. If the host lacks IPv6 loopback support OR if the `--no-ipv6` option is passed, TTP drops all outgoing IPv6 traffic to prevent leaks.
 > * **Exit IP variation**: Different connections may show different exit IPs due to Tor stream isolation.
 
 For a full breakdown of residual risks, architectural trust boundaries, and the STRIDE threat model, see:
@@ -385,6 +309,14 @@ TTP uses a **Makefile** to automate and standardize the testing pipeline. This e
 | `make verify`             | Runs Unit Tests + All Integration Tests.                                  |
 | `make build`              | Generates native `.deb` and `.rpm` packages.                              |
 | `make clean`              | Removes all build artifacts, caches, and temp files.                      |
+
+### Ruleset Verification via Network Sandbox Engine (NSE)
+TTP integrates the **Network Sandbox Engine (NSE)**, a development dependency, to run programmatic validation of TTP's `nftables` rulesets inside isolated network namespaces:
+* **Zero-Leak PCAP Assertion**: Tests apply the actual firewall rules and inject test packets (TCP connections, DNS lookups, bypassed identities). A Scapy sniffer runs on the boundary virtual interface (`veth`) and asserts that no cleartext packets escape to the WAN.
+* **To run ruleset tests**: Install NSE (`pip install network-sandbox-engine>=1.1.0 pyroute2`) and run:
+  ```bash
+  sudo pytest tests/test_nse_rules.py -v
+  ```
 
 ### Advanced: Real-World VM Testing
 
@@ -449,7 +381,8 @@ sudo ttp diagnose
 └── docs/
     ├── architecture.md     # Technical Architecture & Design
     ├── interfaces.md       # External interfaces reference (CLI, Tor, system)
-    └── security-assessment.md  # STRIDE threat model & risk assessment
+    ├── security-assessment.md  # STRIDE threat model & risk assessment
+    └── decisions/          # Architectural Decision Records (ADRs 0001 - 0008)
 ```
 
 ## Call for Contributors

@@ -203,7 +203,7 @@ def test_attempt_auto_healing_dns(mock_apply_dns, mock_detect, mock_read):
     result = wd.attempt_auto_healing("dns")
     assert result is True
     mock_detect.assert_called_once()
-    mock_apply_dns.assert_called_once_with("wlan0")
+    mock_apply_dns.assert_called_once_with("wlan0", disable_ipv6=False)
 
 
 @patch(
@@ -228,6 +228,7 @@ def test_attempt_auto_healing_firewall(mock_apply_fw, mock_detect_tor, mock_read
         dns_port=9090,
         allow_root=True,
         lan_bypass=False,
+        disable_ipv6=False,
     )
 
 
@@ -251,6 +252,7 @@ def test_attempt_auto_healing_tor(mock_ensure, mock_read):
         dns_port=9054,
         use_bridges=True,
         bridges=["obfs4 192.0.2.1:1234"],
+        disable_ipv6=False,
     )
 
 

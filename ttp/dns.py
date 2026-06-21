@@ -77,7 +77,7 @@ def _clear_stale_mounts(target: str) -> None:
         )
 
 
-def apply_dns(interface: str) -> dict[str, Any]:
+def apply_dns(interface: str, disable_ipv6: bool = False) -> dict[str, Any]:
     """Apply Tor DNS settings using a Kernel-level overlay (mount --bind).
 
     Returns a dictionary containing backup data for restoration.
@@ -86,7 +86,7 @@ def apply_dns(interface: str) -> dict[str, Any]:
         from ttp.tor_detect import is_ipv6_supported
 
         nameservers = "nameserver 127.0.0.1\n"
-        if is_ipv6_supported():
+        if is_ipv6_supported() and not disable_ipv6:
             nameservers += "nameserver ::1\n"
 
         # 1. Write the Tor resolver to /run/ttp/resolv.conf (volatile)

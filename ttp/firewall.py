@@ -29,6 +29,7 @@ def apply_rules(
     lan_bypass: bool = True,
     bypass_uids: list[int] | None = None,
     bypass_gids: list[int] | None = None,
+    disable_ipv6: bool = False,
 ) -> None:
     """Create the 'ttp' table and inject redirection rules.
 
@@ -37,14 +38,17 @@ def apply_rules(
     """
     # Resolve numeric UID for the tor user to avoid nft resolution issues
     try:
-        tor_uid = pwd.getpwnam(tor_user).pw_uid
+        if tor_user.isdigit():
+            tor_uid = int(tor_user)
+        else:
+            tor_uid = pwd.getpwnam(tor_user).pw_uid
     except KeyError as e:
         raise FirewallError(f"Tor user '{tor_user}' not found on system.") from e
 
     # Construct dynamic rules based on options
     from ttp.tor_detect import is_ipv6_supported
 
-    ipv6_avail = is_ipv6_supported()
+    ipv6_avail = is_ipv6_supported() and not disable_ipv6
 
     lan_rule = ""
     lan6_rule = ""
@@ -202,6 +206,58 @@ def apply_rules(
         raise
 
 
+def apply_teardown_lockdown(tor_uid: int | None = None) -> None:
+    """Insert a lockdown drop rule at the top of the filter_out chain in table inet ttp.
+
+    This ensures that all outbound traffic is dropped (exempting loopback and the Tor daemon UID)
+    during the graceful shutdown.
+    """
+    rule = ["insert", "rule", "inet", "ttp", "filter_out"]
+    if tor_uid is not None:
+        rule += ["meta", "skuid", "!=", str(tor_uid)]
+    rule += ["oifname", "!=", "lo", "drop"]
+
+    try:
+        _run_nft(rule)
+        logger.warning("Teardown lockdown applied: outbound traffic locked.")
+    except Exception as e:
+        # Gracefully handle cases where the table or chain does not exist (e.g., already stopped)
+        logger.debug(
+            "Could not apply teardown lockdown (table/chain may not exist): %s", e
+        )
+
+
+def apply_active_socket_slaughter() -> None:
+    """Inject temporary reject rules at the top of the filter_out chain to actively terminate pending local connections."""
+    try:
+        # 1. Uccide le connessioni UDP/ICMP pendenti (invia ICMP Port Unreachable al processo locale)
+        _run_nft(["insert", "rule", "inet", "ttp", "filter_out", "counter", "reject"])
+        # 2. Uccide le connessioni TCP pendenti istantaneamente (invia RST al processo locale)
+        _run_nft(
+            [
+                "insert",
+                "rule",
+                "inet",
+                "ttp",
+                "filter_out",
+                "meta",
+                "l4proto",
+                "tcp",
+                "counter",
+                "reject",
+                "with",
+                "tcp",
+                "reset",
+            ]
+        )
+        logger.warning(
+            "Active socket slaughter rules applied: resetting pending connections."
+        )
+    except Exception as e:
+        # Gracefully handle cases where the table or chain does not exist (e.g., already stopped)
+        logger.debug("Could not apply active socket slaughter: %s", e)
+
+
 def apply_emergency_killswitch() -> None:
     """Apply an emergency lock/killswitch on the network.
 
@@ -248,6 +304,10 @@ def destroy_rules() -> bool:
     Returns:
         bool: True if the table was successfully destroyed or already gone, False otherwise.
     """
+    # Flush the table first for absolute cleanup safety
+    subprocess.run(
+        ["nft", "flush", "table", "inet", "ttp"], capture_output=True, check=False
+    )
     result = subprocess.run(
         ["nft", "destroy", "table", "inet", "ttp"], capture_output=True, check=False
     )

@@ -8,7 +8,7 @@ This document outlines the strategic vision and release plan for **TransparentTo
 
 TTP has successfully consolidated the following major milestones:
 * **v0.4.0**: Native IPv6 support, structured JSON logging, and link carrier detection in the watchdog.
-* **v0.4.6**: UID/GID split tunneling, native Tor bridge configuration, and Pluggable Transports support (obfs4/snowflake), along with a robust refactoring of exception handling.
+* **v0.4.5**: UID/GID split tunneling, Tor bridges & Pluggable Transports (obfs4/snowflake), BYOD Mode, force-disable IPv6, zero-leak graceful teardown with conntrack flush, and advanced testing suites (NSE, Chaos Monkey).
 
 ---
 
@@ -29,6 +29,12 @@ The following sections detail our strategic objectives and feature releases for 
   * **Target Release:** v0.4.6 (Q4 2026)
   * **Technical Objective:** Prevent collisions and overrides on the host system's DNS resolver.
   * **Architectural Notes:** Implement DNS routing interception via D-Bus or apply a hardcoded override configuration under `/etc/systemd/resolved.conf.d/`, replacing or complementing the current strategy based on the `mount --bind` overlay.
+
+* **Application Exclusion via Linux cgroups v2 (Bypass)**
+  * **Priority:** High
+  * **Target Release:** v0.4.6 (Q4 2026)
+  * **Technical Objective:** Allow specific processes and their children to bypass the transparent proxy and connect directly to the cleartext internet.
+  * **Architectural Notes:** Implement a `ttp bypass <command>` CLI runner that creates `/sys/fs/cgroup/ttp-bypass`, assigns the target process PID, drops root privileges to the caller, and uses `nftables` `socket cgroupv2` rules to permit bypass.
 
 * **Kernel-level Auditing (eBPF)**
   * **Priority:** Medium
@@ -58,19 +64,19 @@ The following sections detail our strategic objectives and feature releases for 
 
 * **Native Pluggable Transports**
   * **Priority:** High
-  * **Target Release:** v0.4.6 (Q4 2026)
+  * **Target Release:** v0.4.5 (Completed)
   * **Implementation:** Native integration of `obfs4` and `snowflake` bridges.
   * **Architectural Notes:** Avoids external Python tools or intermediary daemons. Official binaries are installed via the OS package manager, with direct configuration injection into the ephemeral `torrc` file via the `ClientTransportPlugin` directive.
 
 * **Network Sandbox Engine (NSE)**
   * **Priority:** High
-  * **Target Release:** v0.5.0 (Q1 2027)
+  * **Target Release:** v0.4.5 (Completed)
   * **Implementation:** A framework for the isolated validation of `nftables` rulesets.
   * **Architectural Notes:** Features a Svelte frontend and a FastAPI backend. Developed as an independent repository and tool, invoked dynamically during the TTP CI/CD verification phase.
 
 * **Chaos Monkey Script**
   * **Priority:** Medium
-  * **Target Release:** v0.5.0 (Q1 2027)
+  * **Target Release:** v0.4.5 (Completed)
   * **Implementation:** Destructive stress testing of network infrastructure.
   * **Architectural Notes:** An internal script within the test suite that randomly terminates daemons, unmounts overlays, or disconnects virtual/physical interfaces during execution to validate the resilience and reaction time of the Killswitch.
 
@@ -136,6 +142,16 @@ The following sections detail our strategic objectives and feature releases for 
     * **Pros:** Instantaneous L2/L3 execution, elimination of text-based shell output parsing, and native Python-level handling of Netlink exceptions.
     * **Cons:** Steep learning curve for contributors, heavy external dependency (`pyroute2`), and a massive refactoring of `netns_controller.py` (part of the Network Sandbox Engine).
   * **Tactical Conclusion:** Frozen in backlog.
+
+---
+
+### 8. Cloud-Native & Container Orchestration (Docker / Kubernetes)
+
+* **TTP as a Sidecar Container for Microservices**
+  * **Priority:** Low (Long-Term Vision)
+  * **Target Release:** Post-v0.6.0 (v1.0.0+)
+  * **Technical Objective:** Transform TTP from a host-based desktop tool into a privacy-preserving network primitive for cloud infrastructures and IoT devices.
+  * **Architectural Notes:** Package TTP as a minimal, hardened container image (e.g., Alpine Linux). Implement the **Sidecar Pattern** by injecting the TTP container into a Kubernetes Pod or Docker Compose stack alongside a target application. Utilizing TTP's Bring Your Own Daemon (BYOD) architecture, TTP will apply its atomic `nftables` rulesets strictly within the isolated Network Namespace (`netns`) of the Pod. This allows microservices or IoT telemetry stacks to be transparently routed through Tor at Layer 3, without requiring per-application SOCKS5 configuration and without modifying the physical host's global routing.
 
 ---
 

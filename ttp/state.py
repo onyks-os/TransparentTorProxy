@@ -96,6 +96,9 @@ def write_lock(
     use_bridges: bool = False,
     bridge_file: str | None = None,
     bridges: list[str] | None = None,
+    external_daemon: bool = False,
+    no_ipv6: bool = False,
+    tor_uid: int | None = None,
 ) -> None:
     """Write the session lock file with the current state.
 
@@ -129,6 +132,8 @@ def write_lock(
         Path to the bridge file, if provided.
     bridges:
         List of configured bridge lines.
+    tor_uid:
+        The resolved UID of the Tor daemon process.
     """
     try:
         ensure_runtime_dir()
@@ -148,6 +153,9 @@ def write_lock(
             "use_bridges": use_bridges,
             "bridge_file": bridge_file,
             "bridges": bridges if bridges is not None else [],
+            "external_daemon": external_daemon,
+            "no_ipv6": no_ipv6,
+            "tor_uid": tor_uid,
         }
         LOCK_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         os.chmod(LOCK_PATH, 0o644)

@@ -209,6 +209,70 @@ def _is_port_in_use(port: int) -> bool:
     return False
 
 
+def _is_port_listening_tcp(port: int) -> bool:
+    """Return True if a service is actively listening on localhost (IPv4/IPv6) TCP port."""
+    import socket
+
+    # Try IPv4
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            s.connect(("127.0.0.1", port))
+            return True
+    except OSError:
+        pass
+    # Try IPv6
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            s.connect(("::1", port))
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def _is_port_listening_udp(port: int) -> bool:
+    """Return True if a service has bound the localhost (IPv4/IPv6) UDP port."""
+    import socket
+    import errno
+
+    # If we cannot bind to the port because it's already bound/in use, it's listening/bound.
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.bind(("127.0.0.1", port))
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            return True
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
+            s.bind(("::1", port))
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            return True
+    return False
+
+
+def _get_uid_from_port(target_port: int) -> int | None:
+    """Find the socket owner UID for target_port TCP_LISTEN from /proc/net/tcp and /proc/net/tcp6."""
+    hex_port = f"{target_port:04X}"
+    for proc_file in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(proc_file, "r") as f:
+                next(f)  # Skip header
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 8:
+                        local_address = parts[1]  # e.g., "0100007F:2350"
+                        if local_address.endswith(f":{hex_port}"):
+                            state = parts[3]
+                            if state == "0A":  # TCP_LISTEN
+                                return int(parts[7])
+        except (FileNotFoundError, PermissionError):
+            continue
+    return None
+
+
 def _validate_bridge_line(line: str) -> None:
     """Perform basic format validation on a bridge configuration line."""
     parts = line.split()
@@ -288,29 +352,81 @@ def _do_stop() -> None:
     if lock is None:
         return
 
-    # Preventive shutdown of the watchdog to avoid triggering emergency killswitch
-    console.print(f"{_PREFIX} Stopping watchdog daemon...")
-    from ttp import watchdog as wd
+    is_external = lock.get("external_daemon", False)
 
-    try:
-        wd.stop_watchdog()
-    except Exception:
-        pass
+    # 1. Preventive shutdown of the watchdog to avoid triggering emergency killswitch
+    if not is_external:
+        console.print(f"{_PREFIX} Stopping watchdog daemon...")
+        from ttp import watchdog as wd
 
-    # Graceful circuit teardown BEFORE touching the firewall.
-    # This ensures Tor closes all circuits cryptographically so no
-    # cleartext RST packets leak when nftables rules are removed.
-    console.print(f"{_PREFIX} Gracefully shutting down Tor circuits...")
-    from ttp import tor_control
+        try:
+            wd.stop_watchdog()
+        except Exception:
+            pass
 
-    tor_control.graceful_shutdown(timeout=10)
+    # 2. Resolve Tor daemon UID
+    import pwd
 
-    console.print(f"{_PREFIX} Stopping Tor service...")
-    tor_install.stop_tor_service()
+    tor_uid = lock.get("tor_uid")
+    if tor_uid is None:
+        # Fallback dynamic resolution
+        transport_port = lock.get("transport_port", 9041)
+        tor_uid = _get_uid_from_port(transport_port)
+        if tor_uid is None:
+            for fallback_user in ("tor", "debian-tor"):
+                try:
+                    tor_uid = pwd.getpwnam(fallback_user).pw_uid
+                    break
+                except KeyError:
+                    continue
 
+    # 3. Apply teardown lockdown
+    console.print(f"{_PREFIX} Applying teardown lockdown...")
+    firewall.apply_teardown_lockdown(tor_uid)
+
+    # 4. Graceful circuit teardown/stop service
+    if not is_external:
+        # Graceful circuit teardown BEFORE touching the firewall.
+        # This ensures Tor closes all circuits cryptographically so no
+        # cleartext RST packets leak when nftables rules are removed.
+        console.print(f"{_PREFIX} Gracefully shutting down Tor circuits...")
+        from ttp import tor_control
+
+        tor_control.graceful_shutdown(timeout=10)
+
+        console.print(f"{_PREFIX} Stopping Tor service...")
+        tor_install.stop_tor_service()
+
+    # 4b. Execute active socket slaughter and micro-delay
+    console.print(f"{_PREFIX} Executing active socket slaughter...")
+    firewall.apply_active_socket_slaughter()
+    console.print(f"{_PREFIX} Waiting 1.5s for pending connections to crash...")
+    time.sleep(1.5)
+
+    # 5. Flush connection tracking table via conntrack -F
+    import shutil
+    import subprocess
+
+    conntrack_path = shutil.which("conntrack")
+    if conntrack_path:
+        console.print(f"{_PREFIX} Flushing connection tracking table...")
+        try:
+            subprocess.run(
+                [conntrack_path, "-F"], capture_output=True, text=True, check=True
+            )
+        except subprocess.CalledProcessError as e:
+            logger.warning(
+                "Failed to flush conntrack table: %s",
+                e.stderr.strip() if e.stderr else str(e),
+            )
+    else:
+        logger.debug("conntrack binary not found, skipping flush.")
+
+    # 6. Remove nftables rules
     console.print(f"{_PREFIX} Removing nftables rules...")
     firewall.destroy_rules()
 
+    # 7. Restore DNS
     console.print(f"{_PREFIX} Restoring DNS...")
     dns.restore_dns(lock.get("dns_backup"))
 
@@ -394,9 +510,31 @@ def start(
         "--bridge",
         help="Individual Tor bridge line. Can be specified multiple times.",
     ),
+    external_daemon: bool = typer.Option(
+        False,
+        "--external-daemon",
+        help="Run TTP in systemd-less BYOD mode, delegating Tor lifecycle to the host.",
+    ),
+    tor_uid: Optional[str] = typer.Option(
+        None,
+        "--tor-uid",
+        help="Specify the numeric UID or username of the Tor process manually in BYOD mode.",
+    ),
+    no_ipv6: bool = typer.Option(
+        False,
+        "--no-ipv6",
+        help="Force disable all IPv6 traffic (drops outgoing IPv6 to prevent leaks).",
+    ),
 ) -> None:
     """Start the transparent Tor proxy session."""
     _require_root()
+
+    if external_daemon and watchdog:
+        _print_error(
+            "Configuration Conflict",
+            "Watchdog daemon cannot be used in external-daemon mode as it relies on systemd.",
+        )
+        raise typer.Exit(code=1)
 
     # Resolve and validate bypass users and groups
     import pwd
@@ -507,17 +645,44 @@ def start(
         raise typer.Exit(code=1)
 
     # Pre-flight check if ports are already in use
-    for port, name in [(transport_port, "TransPort"), (dns_port, "DNSPort")]:
-        if _is_port_in_use(port):
+    if not external_daemon:
+        for port, name in [(transport_port, "TransPort"), (dns_port, "DNSPort")]:
+            if _is_port_in_use(port):
+                _print_error(
+                    "Port In Use",
+                    f"The {name} port {port} is already in use by another process.",
+                )
+                raise typer.Exit(code=1)
+    else:
+        # BYOD Mode: Passive healthcheck that Tor is listening on these ports
+        if not _is_port_listening_tcp(transport_port) or not _is_port_listening_udp(
+            dns_port
+        ):
             _print_error(
-                "Port In Use",
-                f"The {name} port {port} is already in use by another process.",
+                "Tor Not Running",
+                f"Tor is not running on the requested TransPort ({transport_port}) or DNSPort ({dns_port}).\n"
+                "Please start your Tor daemon before running TTP.",
             )
             raise typer.Exit(code=1)
 
     # Register signal handlers for safe cleanup.
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
+
+    from ttp.tor_detect import is_ipv6_supported
+
+    ipv6_supported = is_ipv6_supported()
+    if no_ipv6:
+        if not ipv6_supported:
+            console.print(
+                f"{_PREFIX} [bold yellow]Warning: IPv6 is not supported by the system. "
+                "The --no-ipv6 flag is superfluous.[/bold yellow]"
+            )
+        else:
+            console.print(
+                f"{_PREFIX} IPv6 traffic will be dropped to prevent leaks (disabled via --no-ipv6), "
+                "even though the system supports IPv6."
+            )
 
     lock = state.read_lock()
     if lock:
@@ -548,27 +713,80 @@ def start(
     tor_install.setup_selinux_if_needed()
 
     # Step 1 - Detect / install Tor.
-    console.print(f"{_PREFIX} Detecting Tor...", end=" ")
-    try:
-        info = tor_install.ensure_tor_ready(
-            transport_port=transport_port,
-            dns_port=dns_port,
-            use_bridges=use_bridges,
-            bridges=bridge_lines,
-        )
-    except TorError as exc:
-        logger.error("Tor detection/install failed: %s", exc)
-        console.print("[bold red]failed.[/]")
-        _print_error("Tor Startup Failed", str(exc))
-        raise typer.Exit(code=1)
+    info = {}
+    if external_daemon:
+        resolved_uid = None
+        # 1. Manual Override
+        if tor_uid:
+            if tor_uid.isdigit():
+                resolved_uid = int(tor_uid)
+            else:
+                try:
+                    resolved_uid = pwd.getpwnam(tor_uid).pw_uid
+                except KeyError:
+                    _print_error(
+                        "Invalid Tor User",
+                        f"The specified Tor user '{tor_uid}' does not exist on this system.",
+                    )
+                    raise typer.Exit(code=1)
 
-    version = info.get("version", "")
-    tor_user = info.get("tor_user", "debian-tor")
-    console.print(
-        f"found (v{version}), managed via system service (user: {tor_user})."
-        if version
-        else f"found, managed via system service (user: {tor_user})."
-    )
+        # 2. Sockets Auto-Detection
+        if resolved_uid is None:
+            resolved_uid = _get_uid_from_port(transport_port)
+            if resolved_uid is not None:
+                logger.info(
+                    "Auto-detected Tor process owner UID via ports: %s", resolved_uid
+                )
+
+        # 3. Standard Users Fallback
+        if resolved_uid is None:
+            for fallback_user in ("tor", "debian-tor"):
+                try:
+                    resolved_uid = pwd.getpwnam(fallback_user).pw_uid
+                    logger.info(
+                        "Fallback resolved Tor UID to user '%s' (UID: %d)",
+                        fallback_user,
+                        resolved_uid,
+                    )
+                    break
+                except KeyError:
+                    continue
+
+        # 4. Fatal Error
+        if resolved_uid is None:
+            _print_error(
+                "Tor UID Resolution Failed",
+                "Unable to determine Tor's UID. Specify the UID manually via --tor-uid.",
+            )
+            raise typer.Exit(code=1)
+
+        tor_user = str(resolved_uid)
+        console.print(
+            f"{_PREFIX} Tor daemon detected operating under UID: {tor_user} (BYOD Mode)."
+        )
+    else:
+        console.print(f"{_PREFIX} Detecting Tor...", end=" ")
+        try:
+            info = tor_install.ensure_tor_ready(
+                transport_port=transport_port,
+                dns_port=dns_port,
+                use_bridges=use_bridges,
+                bridges=bridge_lines,
+                disable_ipv6=no_ipv6,
+            )
+        except TorError as exc:
+            logger.error("Tor detection/install failed: %s", exc)
+            console.print("[bold red]failed.[/]")
+            _print_error("Tor Startup Failed", str(exc))
+            raise typer.Exit(code=1)
+
+        version = info.get("version", "")
+        tor_user = info.get("tor_user", "debian-tor")
+        console.print(
+            f"found (v{version}), managed via system service (user: {tor_user})."
+            if version
+            else f"found, managed via system service (user: {tor_user})."
+        )
 
     if info.get("firewalld"):
         console.print(
@@ -597,11 +815,13 @@ def start(
             dns_port=dns_port,
             allow_root=allow_root,
             lan_bypass=lan_bypass,
+            disable_ipv6=no_ipv6,
             **kwargs_fw,
         )
     except FirewallError as exc:
         _print_error("Firewall Setup Failed", str(exc))
-        tor_install.stop_tor_service()
+        if not external_daemon:
+            tor_install.stop_tor_service()
         firewall.destroy_rules()
         raise typer.Exit(code=1)
     console.print(f"{_PREFIX} Stateless nftables rules applied (Table: inet ttp).")
@@ -610,11 +830,12 @@ def start(
     if interface is None:
         interface = dns.detect_active_interface()
     try:
-        dns_backup = dns.apply_dns(interface)
+        dns_backup = dns.apply_dns(interface, disable_ipv6=no_ipv6)
     except DNSError as exc:
         logger.error("DNS setup failed: %s", exc)
         _print_error("DNS Setup Failed", str(exc))
-        tor_install.stop_tor_service()
+        if not external_daemon:
+            tor_install.stop_tor_service()
         firewall.destroy_rules()
         raise typer.Exit(code=1)
     except Exception as exc:
@@ -622,7 +843,8 @@ def start(
         _print_error(
             "DNS Setup Failed", "An unexpected error occurred during DNS configuration."
         )
-        tor_install.stop_tor_service()
+        if not external_daemon:
+            tor_install.stop_tor_service()
         firewall.destroy_rules()
         raise typer.Exit(code=1)
     logger.info("Session started: interface=%s", interface)
@@ -630,6 +852,17 @@ def start(
 
     # Step 4 - Write lock file.
     try:
+        import pwd
+
+        tor_uid_val = None
+        try:
+            if tor_user.isdigit():
+                tor_uid_val = int(tor_user)
+            else:
+                tor_uid_val = pwd.getpwnam(tor_user).pw_uid
+        except Exception:
+            pass
+
         kwargs_lock = {}
         if users:
             kwargs_lock["bypass_users"] = users
@@ -649,13 +882,17 @@ def start(
             allow_root=allow_root,
             lan_bypass=lan_bypass,
             interface=interface,
+            external_daemon=external_daemon,
+            no_ipv6=no_ipv6,
+            tor_uid=tor_uid_val,
             **kwargs_lock,
         )
     except StateError as exc:
         logger.error("Failed to write lock: %s", exc)
         _print_error("Session Tracking Failed", str(exc))
         # Emergency cleanup since we can't track this session
-        tor_install.stop_tor_service()
+        if not external_daemon:
+            tor_install.stop_tor_service()
         firewall.destroy_rules()
         dns.restore_dns(dns_backup)
         raise typer.Exit(code=1)
@@ -806,6 +1043,21 @@ def restart(
         "--bridge",
         help="Individual Tor bridge line. Can be specified multiple times.",
     ),
+    external_daemon: bool = typer.Option(
+        False,
+        "--external-daemon",
+        help="Run TTP in systemd-less BYOD mode, delegating Tor lifecycle to the host.",
+    ),
+    tor_uid: Optional[str] = typer.Option(
+        None,
+        "--tor-uid",
+        help="Specify the numeric UID or username of the Tor process manually in BYOD mode.",
+    ),
+    no_ipv6: bool = typer.Option(
+        False,
+        "--no-ipv6",
+        help="Force disable all IPv6 traffic (drops outgoing IPv6 to prevent leaks).",
+    ),
 ) -> None:
     """Restart the transparent Tor proxy session."""
     _require_root()
@@ -837,6 +1089,9 @@ def restart(
         allow_root=allow_root,
         no_lan_bypass=no_lan_bypass,
         watchdog=watchdog,
+        external_daemon=external_daemon,
+        tor_uid=tor_uid,
+        no_ipv6=no_ipv6,
         **kwargs_start,
     )
 
@@ -909,6 +1164,16 @@ def status() -> None:
     console.print(
         f"{_PREFIX} Allow Root: {'[red]Yes[/]' if lock.get('allow_root', False) else '[green]No[/]'}"
     )
+    from ttp.tor_detect import is_ipv6_supported
+
+    ipv6_supported = is_ipv6_supported()
+    if lock.get("no_ipv6", False):
+        ipv6_status = "[red]Disabled (Force Dropped)[/]"
+    elif ipv6_supported:
+        ipv6_status = "[green]Enabled (Redirected)[/]"
+    else:
+        ipv6_status = "[yellow]Disabled (Not supported by host)[/]"
+    console.print(f"{_PREFIX} IPv6 Traffic: {ipv6_status}")
 
     wd_active = lock.get("watchdog_active", False)
     wd_pid = lock.get("watchdog_pid")
@@ -958,6 +1223,16 @@ def check() -> None:
     console.print(
         f"  [cyan]-[/cyan] Allow Root:      {'[bold red]Yes[/]' if lock and lock.get('allow_root', False) else '[bold green]No[/]'}"
     )
+    from ttp.tor_detect import is_ipv6_supported
+
+    ipv6_supported = is_ipv6_supported()
+    if lock and lock.get("no_ipv6", False):
+        ipv6_status = "[bold red]Disabled (Force Dropped)[/]"
+    elif ipv6_supported:
+        ipv6_status = "[bold green]Enabled (Redirected)[/]"
+    else:
+        ipv6_status = "[bold yellow]Disabled (Not supported)[/]"
+    console.print(f"  [cyan]-[/cyan] IPv6 Traffic:    {ipv6_status}")
     console.print(
         f"  [cyan]-[/cyan] Tor Network:     {'[bold green]Yes (IsTor=True)[/]' if is_tor else '[bold red]No[/]'}"
     )

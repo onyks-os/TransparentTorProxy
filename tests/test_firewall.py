@@ -53,7 +53,8 @@ def test_apply_rules_failure_triggers_destroy(
         MagicMock(returncode=0),  # add
         MagicMock(returncode=0),  # flush
         subprocess.CalledProcessError(1, "nft", stderr="syntax error"),  # inject
-        MagicMock(returncode=0),  # destroy (rollback)
+        MagicMock(returncode=0),  # destroy: flush (rollback)
+        MagicMock(returncode=0),  # destroy: destroy (rollback)
     ]
 
     try:
@@ -222,13 +223,15 @@ def test_ruleset_custom_ports(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd
 @patch("ttp.firewall.RULES_TEMP_PATH")
 @patch("ttp.firewall.subprocess.run")
 def test_destroy_rules(mock_run, mock_rules_path):
-    """destroy_rules calls 'nft destroy table inet ttp'."""
+    """destroy_rules calls 'nft flush' and then 'nft destroy table inet ttp'."""
     mock_run.return_value = MagicMock(returncode=0)
 
     destroy_rules()
 
-    # Called once for nft destroy (unlink is on a mock Path object)
-    assert any("destroy" in str(c) for c in mock_run.call_args_list)
+    # Verify both flush and destroy are called
+    calls = [c.args[0] for c in mock_run.call_args_list]
+    assert ["nft", "flush", "table", "inet", "ttp"] in calls
+    assert ["nft", "destroy", "table", "inet", "ttp"] in calls
     mock_rules_path.unlink.assert_called_once_with(missing_ok=True)
 
 
@@ -268,3 +271,103 @@ def test_ruleset_bypass_rules(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd
     assert "meta skuid 1001 accept" in filter_block
     assert "meta skuid 1002 accept" in filter_block
     assert "meta skgid 2001 accept" in filter_block
+
+
+@patch("ttp.firewall.pwd.getpwnam")
+@patch("ttp.firewall._run_nft_string")
+@patch("ttp.firewall._run_nft")
+@patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
+def test_ruleset_logic_disable_ipv6(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd):
+    """Verify that disable_ipv6=True drops all IPv6 and avoids IPv6 redirects even if system supports it."""
+    mock_pwd.return_value = MagicMock(pw_uid=110)
+    apply_rules(tor_user="debian-tor", disable_ipv6=True)
+
+    # Capture the ruleset string passed to _run_nft_string
+    ruleset = mock_run_string.call_args[0][0]
+
+    # Ensure IPv6 is dropped in filter_out
+    assert "meta nfproto ipv6 drop" in ruleset
+    # Ensure no IPv6 redirect
+    assert "udp dport 53 dnat ip6 to" not in ruleset
+    assert "meta l4proto tcp dnat ip6 to" not in ruleset
+    # Ensure no IPv6 LAN bypass
+    assert "ip6 daddr { fc00::/7, fe80::/10 } accept" not in ruleset
+
+
+@patch("ttp.firewall._run_nft")
+def test_apply_teardown_lockdown(mock_run_nft):
+    """Verify that apply_teardown_lockdown constructs and executes the correct nft command."""
+    from ttp.firewall import apply_teardown_lockdown
+
+    # Test with a specific UID
+    apply_teardown_lockdown(123)
+    mock_run_nft.assert_called_once_with(
+        [
+            "insert",
+            "rule",
+            "inet",
+            "ttp",
+            "filter_out",
+            "meta",
+            "skuid",
+            "!=",
+            "123",
+            "oifname",
+            "!=",
+            "lo",
+            "drop",
+        ]
+    )
+
+    mock_run_nft.reset_mock()
+
+    # Test with None (no UID)
+    apply_teardown_lockdown(None)
+    mock_run_nft.assert_called_once_with(
+        [
+            "insert",
+            "rule",
+            "inet",
+            "ttp",
+            "filter_out",
+            "oifname",
+            "!=",
+            "lo",
+            "drop",
+        ]
+    )
+
+
+@patch("ttp.firewall._run_nft")
+def test_apply_active_socket_slaughter(mock_run_nft):
+    """Verify that apply_active_socket_slaughter constructs and executes the correct nft reject rules."""
+    from ttp.firewall import apply_active_socket_slaughter
+
+    apply_active_socket_slaughter()
+
+    assert mock_run_nft.call_count == 2
+    calls = mock_run_nft.call_args_list
+    assert calls[0].args[0] == [
+        "insert",
+        "rule",
+        "inet",
+        "ttp",
+        "filter_out",
+        "counter",
+        "reject",
+    ]
+    assert calls[1].args[0] == [
+        "insert",
+        "rule",
+        "inet",
+        "ttp",
+        "filter_out",
+        "meta",
+        "l4proto",
+        "tcp",
+        "counter",
+        "reject",
+        "with",
+        "tcp",
+        "reset",
+    ]

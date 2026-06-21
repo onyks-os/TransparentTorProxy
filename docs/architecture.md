@@ -1,8 +1,13 @@
+<!--
+Copyright (c) 2026 onyks-os
+SPDX-License-Identifier: MIT
+-->
+
 # TTP - Technical Architecture & Design
 
 **MVP Language:** Python 3  
 
-* **Target OS:** Any systemd-based Linux distribution *(Debian, Ubuntu, Fedora, Arch, etc.)*
+* **Target OS:** Any systemd-based Linux distribution *(Debian, Ubuntu, Fedora, Arch, etc.)* (Optional: systemd-less environments supported via BYOD mode)
 
 ---
 
@@ -68,10 +73,24 @@ The project is divided into independent Python modules. Each module has a single
 9. **watchdog**: Starts the volatile systemd watchdog service (`ttp-watchdog.service`) if watchdog monitoring is enabled.
 10. **cli**: Returns to the prompt.
 
+### 2.1.1 BYOD Execution Flow - `start --external-daemon`
+
+When started in Bring Your Own Daemon (BYOD) mode, TTP delegates Tor lifecycle management to the host OS and focuses strictly on routing/firewall interception:
+1. **cli**: Checks for conflicting `--watchdog` option (raises fatal error if active).
+2. **cli**: Performs **Passive Health Checks** to verify the external Tor daemon is listening on target TCP/UDP ports.
+3. **cli**: Resolves the Tor process owner's numeric UID using a hierarchical resolution strategy:
+   * Override via `--tor-uid`.
+   * Parsing `/proc/net/tcp` and `/proc/net/tcp6` for socket owner of `transport_port` with state `0A` (TCP_LISTEN).
+   * Checking for system users `tor` or `debian-tor` in `/etc/passwd`.
+4. **firewall**: Generates and atomically applies rules using the resolved Tor UID.
+5. **dns**: Clears any stale overlays, then modifies active interface DNS using `mount --bind` overlay on `/etc/resolv.conf`.
+6. **state**: Writes lock file storing `external_daemon=True`.
+7. **cli**: Verifies Tor routing using local endpoints.
+
 ### 2.2 Execution Flow - `stop` / crash
 
 > [!NOTE]  
-> **Normal:** `ttp stop` -> stops the watchdog service -> graceful Tor `SHUTDOWN` -> restores firewall/DNS -> deletes lock.
+> **Normal:** `ttp stop` -> stops the watchdog service (if active) -> resolves Tor UID -> applies **Teardown Lockdown** (injects temporary drop rule at the top of the firewall output filter chain) -> graceful Tor `SHUTDOWN` (skipped in BYOD mode) -> stops the Tor service (skipped in BYOD mode) -> applies **Active Socket Slaughter** (injects counter reject and TCP Reset rules at the top of the output chain) -> waits for a 1.5-second micro-delay (allowing pending local connections to abort) -> flushes Netfilter connection tracking table via `conntrack -F` -> restores firewall/DNS (flushing and deleting `inet ttp` table) -> deletes lock. This zero-leak sequence prevents any cleartext traffic from escaping while the proxy is shutting down.
 
 > [!TIP]
 > **Emergency Restore:** `ttp stop --restore-only` bypasses session checks and forces network cleanup. Useful if TTP crashed and the lock file was lost.
@@ -124,6 +143,8 @@ Generates rules applied atomically via `nft -f` into the dedicated `inet ttp` ta
 3. **Multi-Chain Architecture**: A NAT hook (`output`/`prerouting`) handles redirection to Tor ports; a filter hook (`filter_out`) implements the Kill-Switch, rejecting everything that is not explicitly allowed.
 4. **Split Tunneling**: UIDs/GIDs are resolved via Python's `pwd`/`grp` libraries and injected as `meta skuid`/`meta skgid` rules — no shell interpolation.
 5. **Emergency Killswitch**: `apply_emergency_killswitch()` replaces the table with a minimal drop-all configuration (loopback exempt), used by the watchdog on persistent integrity failure.
+6. **Teardown Lockdown**: `apply_teardown_lockdown(tor_uid)` inserts a drop rule at the top of the `filter_out` chain to block all outbound traffic except loopback and the Tor UID. This prevents leaks during graceful circuit closing and Tor daemon termination.
+7. **Active Socket Slaughter**: `apply_active_socket_slaughter()` injects temporary TCP Reset and standard reject rules in `filter_out` to actively terminate pending local sockets (causing ECONNREFUSED/RST) before lowering the firewall.
 
 > For the complete chain structure, rule execution order, and external interface specification see [`interfaces.md § 3.1`](interfaces.md#31-nftables-firewall).
 
@@ -372,10 +393,12 @@ TTP employs a `Makefile` in the root directory to provide a unified entry point 
 *(Tests run without root, using `unittest.mock`)*
 
 * **`test_tor_detect.py`**: Verifies dictionary output across varying torrc and process states.
-* **`test_firewall.py`**: Asserts DNS redirect appears BEFORE LAN bypass (critical - gateway DNS leak prevention), BEFORE loopback accept, BEFORE TCP redirect. Verifies IPv6 drop (when unsupported) or redirection (when supported), DoT rejection, DoH IP-level blocking, bypass user/group (split tunneling) rule injection, and emergency killswitch table application.
+* **`test_firewall.py`**: Asserts DNS redirect appears BEFORE LAN bypass (critical - gateway DNS leak prevention), BEFORE loopback accept, BEFORE TCP redirect. Verifies IPv6 drop (when unsupported) or redirection (when supported), DoT rejection, DoH IP-level blocking, bypass user/group (split tunneling) rule injection, emergency killswitch table application, and teardown lockdown rule construction/execution.
 * **`test_dns.py`**: Asserts correct mount --bind overlay, stale mount cleanup, and lazy umount.
 * **`test_state.py`**: Asserts lock creation, reading, and orphan detection.
-* **`test_cli.py`**: Verifies command orchestration, option injection, UI flow, and non-root OSError safety.
+* **`test_cli.py`**: Verifies command orchestration, option injection, UI flow, non-root OSError safety, stop command execution order (lockdown -> shutdown -> conntrack flush -> destroy), and conntrack handling when utility is missing.
 * **`test_tor_control.py`**: Verifies Tor daemon interaction, IP checking logic, and circuit bootstrap/rotation.
 * **`test_tor_install.py`**: Asserts correct PM selection, torrc generation (including DoH blocking mapping), and service management.
 * **`test_watchdog.py`**: Verifies volatile systemd unit generation, watchdog start/stop flow (mocking systemctl commands), integrity check behavior under healthy/failing states, auto-healing routing for DNS/Firewall/Tor, emergency killswitch execution, and watchdog main loop iteration logic.
+* **`test_nse_rules.py`**: Integration ruleset validation using `network-sandbox-engine`. Resolves dynamic topologies, constructs isolated namespaces, and executes Scapy packet sniffing on host virtual interfaces to assert absolute zero network leaks. (Requires root).
+* **`chaos_monkey.py`**: Destructive stress testing utility. Injects random failures (Tor socket closure, resolver umounts, nftables flushes) and asserts watchdog recovery and fail-closed security. (Requires root).

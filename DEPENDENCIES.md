@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2026 onyks-os
+SPDX-License-Identifier: MIT
+-->
+
 # Dependency Policy and Reference
 
 This document outlines the system and library dependencies for Transparent Tor Proxy (TTP), detailing the vetting, tracking, vulnerability management, and upgrading policies.
@@ -28,7 +33,7 @@ These are required only for building package distributions (`.deb`, `.rpm`, whee
 | [build](https://pypi.org/project/build/)                     | `>=1.0.0`           | MIT        | Python packaging build frontend.                            |
 | [twine](https://pypi.org/project/twine/)                                             | `>=4.0.0`           | Apache-2.0 | Tool for securely publishing distribution packages to PyPI.                                |
 | [bump-my-version](https://pypi.org/project/bump-my-version/)                         | `>=0.20.0`          | MIT        | Version management tool to automate release numbering.                                      |
-| [network-sandbox-engine](https://pypi.org/project/network-sandbox-engine/)           | `>=1.0.0`          | MIT        | Isolated netns/Scapy nftables rules validation engine for `tests/test_nse_rules.py`.       |
+| [network-sandbox-engine](https://pypi.org/project/network-sandbox-engine/)           | `>=1.1.0`          | MIT        | Isolated netns/Scapy nftables rules validation engine for `tests/test_nse_rules.py`.       |
 | [pyroute2](https://pypi.org/project/pyroute2/)                                        | `>=0.7.0`          | Apache-2.0 | Netlink-based route management inside network namespaces (avoids `/sys` mount in Docker).   |
 
 ### 1.2 System-Level Dependencies
@@ -38,7 +43,7 @@ Because TTP performs low-level routing and networking modifications, it relies o
 | Package/Binary                     | Requirement | Purpose                                                                                                    |
 | :--------------------------------- | :---------- | :--------------------------------------------------------------------------------------------------------- |
 | **Python**                         | `>=3.10`    | The primary runtime interpreter.                                                                           |
-| **systemd**                        | Required    | Managing the lifecycle of the dedicated `ttp-tor.service` and `ttp-watchdog.service` units.                |
+| **systemd**                        | Required    | Managing the lifecycle of the dedicated `ttp-tor.service` and `ttp-watchdog.service` units (not required in BYOD/external-daemon mode). |
 | **nftables** (`nft`)               | Required    | Atomic firewall rule application, redirecting TCP and DNS traffic, and enforcing the emergency killswitch. |
 | **tor**                            | Required    | The Tor network routing daemon. (Auto-installed if missing on supported package managers).                 |
 | **util-linux** (`mount`, `umount`) | Required    | Performing stateless bind-mounting overlays on `/etc/resolv.conf` to prevent DNS leaks.                    |

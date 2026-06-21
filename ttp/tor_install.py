@@ -144,6 +144,7 @@ def generate_torrc(
     block_doh: bool = True,
     use_bridges: bool = False,
     bridges: Optional[list[str]] = None,
+    disable_ipv6: bool = False,
 ) -> Path:
     """Generate a volatile ``torrc`` in ``/run/tor/ttp/torrc``.
 
@@ -193,7 +194,7 @@ def generate_torrc(
 
     from ttp.tor_detect import is_ipv6_supported
 
-    ipv6_avail = is_ipv6_supported()
+    ipv6_avail = is_ipv6_supported() and not disable_ipv6
 
     torrc_path = TOR_RUNTIME_DIR / "torrc"
     lines = [
@@ -319,6 +320,7 @@ def start_tor_service(
     block_doh: bool = True,
     use_bridges: bool = False,
     bridges: Optional[list[str]] = None,
+    disable_ipv6: bool = False,
 ) -> None:
     """Generate the runtime torrc and start a dedicated TTP Tor service.
 
@@ -352,6 +354,7 @@ def start_tor_service(
         block_doh=block_doh,
         use_bridges=use_bridges,
         bridges=bridges,
+        disable_ipv6=disable_ipv6,
     )
     _write_service_unit(tor_user)
 
@@ -541,6 +544,7 @@ def ensure_tor_ready(
     block_doh: bool = True,
     use_bridges: bool = False,
     bridges: Optional[list[str]] = None,
+    disable_ipv6: bool = False,
 ) -> dict[str, Any]:
     """Ensure Tor is installed and start it via the OS native service.
 
@@ -582,6 +586,7 @@ def ensure_tor_ready(
         block_doh=block_doh,
         use_bridges=use_bridges,
         bridges=bridges,
+        disable_ipv6=disable_ipv6,
     )
 
     return info

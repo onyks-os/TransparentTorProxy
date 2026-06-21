@@ -67,7 +67,7 @@ By participating in this project, you agree to maintain a professional and respe
    > [!NOTE]
    > To run the firewall ruleset validation tests (`tests/test_nse_rules.py`), you must also install:
    > ```bash
-   > pip install network-sandbox-engine>=1.0.0 pyroute2
+   > pip install network-sandbox-engine>=1.1.0 pyroute2
    > ```
    > `network-sandbox-engine` provides the namespace/nftables orchestration API. `pyroute2` enables netlink-based route setup inside namespaces without requiring `/sys` mount permissions (needed for Docker compatibility).
 
