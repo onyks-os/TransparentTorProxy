@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **`README.md` Optimization**: Replaced the redundant and detailed `How It Works` section with a high-level summary and direct link to the authoritative `docs/architecture.md` documentation.
-- **RPM Packaging Builder**: Added `--nodeps` to `rpmbuild` in `packaging/build_rpm.sh` to prevent build-time dependency checking failures in Debian/Ubuntu-based CI environments (e.g. GitHub Actions runners) that lack a populated RPM database.
+- **RPM Packaging Builder & CI**: Added `--nodeps` to `rpmbuild` in `packaging/build_rpm.sh` to prevent build-time dependency checking failures in Debian/Ubuntu-based environments lacking an RPM database. Also updated the GitHub Actions release workflow to install `checkpolicy` and `policycoreutils` for compiling the SELinux policy during the RPM `%build` phase.
 
 ### Fixed
 
