@@ -92,7 +92,7 @@ sed -i "s/@@VERSION@@/$VERSION/g" "$RPM_DIR/SPECS/ttp.spec"
 # rpmbuild -bb = "build binary only" (we don't need source RPMs).
 # --define "_topdir ..." overrides the default ~/rpmbuild location.
 echo "--> Running rpmbuild..."
-rpmbuild --define "_topdir $RPM_DIR" -bb "$RPM_DIR/SPECS/ttp.spec"
+rpmbuild --define "_topdir $RPM_DIR" --nodeps -bb "$RPM_DIR/SPECS/ttp.spec"
 
 # Collect the output .rpm
 # rpmbuild places the finished .rpm inside RPMS/<arch>/.
