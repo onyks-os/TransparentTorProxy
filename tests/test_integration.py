@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Integration tests for TTP.
 
 These tests run the actual CLI commands (start, refresh, stop) and
@@ -8,11 +11,27 @@ They are designed to be run inside the Docker-based testing environment.
 import json
 import os
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
 
 import pytest
+
+# Ensure the virtual environment's bin directory is at the front of PATH,
+# so that the development version of "ttp" is executed rather than any system-wide one.
+project_root = Path(__file__).resolve().parent.parent
+dev_bin_dir = project_root / "venv" / "bin"
+path_dirs = []
+if dev_bin_dir.exists():
+    path_dirs.append(str(dev_bin_dir))
+sys_bin = Path(sys.executable).parent
+if sys_bin.exists():
+    path_dirs.append(str(sys_bin))
+
+for d in reversed(path_dirs):
+    if d not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = f"{d}{os.pathsep}{os.environ.get('PATH', '')}"
 
 # Skip the entire module if not running as root
 if os.geteuid() != 0:
@@ -252,14 +271,13 @@ def test_split_tunneling_flow():
 
         # 4. Verify bypassed user's traffic is NOT routed through Tor (goes to real IP)
         cmd = [
-            "su",
-            "-s",
-            "/bin/sh",
-            bypass_user,
+            "python3",
             "-c",
-            "python3 -c \"import urllib.request, json; print(urllib.request.urlopen('https://check.torproject.org/api/ip', timeout=10).read().decode())\"",
+            "import urllib.request, json; print(urllib.request.urlopen('https://check.torproject.org/api/ip', timeout=10).read().decode())",
         ]
-        bypass_res = subprocess.run(cmd, capture_output=True, text=True)
+        bypass_res = subprocess.run(
+            cmd, capture_output=True, text=True, user=bypass_user
+        )
         assert bypass_res.returncode == 0, (
             f"Bypass user check failed: {bypass_res.stderr}"
         )

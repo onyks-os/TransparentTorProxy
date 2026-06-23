@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tests for ttp.dns - DNS management logic.
 
 All tests mock subprocess.run and file I/O.
@@ -92,7 +95,10 @@ def test_restore_dns_overlay(_mock_resolv_conf):
     fake_resolv, fake_runtime = _mock_resolv_conf
     fake_runtime.touch()
 
-    with patch("ttp.dns.subprocess.run") as mock_run:
+    with (
+        patch("ttp.dns._is_mount_point", return_value=True),
+        patch("ttp.dns.subprocess.run") as mock_run,
+    ):
         mock_run.return_value = MagicMock(returncode=0)
 
         dns.restore_dns({"mount_target": str(fake_resolv)})

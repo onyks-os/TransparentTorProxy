@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """System inspection - Read-only detection of Tor and OS state.
 
 This module provides non-destructive system inspection functions to

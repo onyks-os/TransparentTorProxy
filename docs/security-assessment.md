@@ -92,6 +92,7 @@ TTP is designed to achieve the following security properties, in order of priori
 | Rule injection via concurrent `nft` command       | Tampering              | An attacker with root access runs `nft` to add bypass rules to `inet ttp` table                | Atomic rule load via `nft -f` ensures consistent state at load time. Watchdog re-applies rules if the table is modified.                | **Low.** Requires root compromise; watchdog detects within 15s. |
 | Pre-existing connections survive rule application | Information Disclosure | TCP connections established before `ttp start` continue in cleartext                           | Kill-switch chain (`REJECT`) terminates pre-existing connections that aren't Tor-routed                                                 | **Low.** RST is sent immediately.                               |
 | LAN bypass creates cleartext side-channel         | Information Disclosure | Local LAN traffic (RFC 1918) bypasses Tor, revealing internal network topology                 | Default behavior; explicitly documented. Disabled with `--no-lan-bypass`.                                                               | **Medium.** Accepted design tradeoff; user-controlled.          |
+| Outbound traffic leak during session teardown     | Information Disclosure | During graceful teardown, closing active Tor circuits could leak in-flight packets in cleartext | A temporary teardown lockdown rule drops all non-loopback outbound traffic (excluding Tor UID). conntrack state is also flushed.        | **Low.** Outgoing paths are locked before rules are destroyed.  |
 | nftables rule persistence after crash             | Elevation of Privilege | If TTP crashes, `inet ttp` rules might remain without DNS overlay, creating inconsistent state | Watchdog detects inconsistency; `ttp stop --restore-only` performs forced cleanup; `ttp start` detects orphaned lock and auto-restores. | **Low.** Multiple recovery paths exist.                         |
 
 ### 3.2 `dns.py` — DNS Overlay
@@ -194,6 +195,8 @@ Dependency CVE scanning, Dependabot configuration, and the remediation SLA are d
 | IPv6 routing or fallback blocking                 | Preventive             | ✅ Implemented               |
 | DoT (port 853) blocking                           | Preventive             | ✅ Implemented               |
 | DoH canary domain mitigation                      | Preventive             | ✅ Implemented (best-effort) |
+| Teardown outbound traffic lockdown                | Preventive             | ✅ Implemented               |
+| Conntrack table flush during teardown             | Preventive             | ✅ Implemented               |
 | DNS bind-mount overlay (no disk writes)           | Preventive             | ✅ Implemented               |
 | Volatile runtime (tmpfs, no disk forensic traces) | Preventive             | ✅ Implemented               |
 | Cookie-authenticated Tor control socket           | Preventive             | ✅ Implemented               |

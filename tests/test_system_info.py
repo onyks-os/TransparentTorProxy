@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tests for ttp.system_info - diagnostic data gathering."""
 
 from unittest.mock import MagicMock, patch

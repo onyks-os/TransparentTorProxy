@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tests for ttp.tor_control - Tor interaction logic.
 
 All external network calls and Stem interactions are mocked.
@@ -84,8 +87,12 @@ def test_get_controller_socket_auth_fails_returns_none(
     mock_controller_cls, mock_exists
 ):
     """If TTP socket auth fails, get_controller returns None (no system Tor fallback)."""
+    import stem.connection
+
     mock_socket_ctrl = MagicMock()
-    mock_socket_ctrl.authenticate.side_effect = Exception("Auth failed")
+    mock_socket_ctrl.authenticate.side_effect = stem.connection.AuthenticationFailure(
+        "Auth failed"
+    )
     mock_controller_cls.from_socket_file.return_value = mock_socket_ctrl
 
     ctrl = tor_control.get_controller()
@@ -250,8 +257,10 @@ def test_graceful_shutdown_no_controller(mock_get_ctrl):
 @patch("ttp.tor_control.get_controller")
 def test_graceful_shutdown_signal_exception(mock_get_ctrl, mock_sleep):
     """graceful_shutdown returns False if signal raises an exception."""
+    import stem
+
     mock_ctrl = MagicMock()
-    mock_ctrl.signal.side_effect = Exception("Connection lost")
+    mock_ctrl.signal.side_effect = stem.ControllerError("Connection lost")
     mock_ctrl.__enter__ = MagicMock(return_value=mock_ctrl)
     mock_ctrl.__exit__ = MagicMock(return_value=False)
     mock_get_ctrl.return_value = mock_ctrl

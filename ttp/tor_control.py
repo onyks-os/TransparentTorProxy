@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tor daemon control and circuit verification.
 
 This module is the "voice" of TTP. It communicates directly with the
@@ -20,9 +23,12 @@ import os
 import re
 import socket
 import time
-import urllib.request
+import logging
+import urllib.request  # noqa: F401
 from typing import Callable, Optional
 from ttp.exceptions import TorError
+
+logger = logging.getLogger("ttp")
 
 # Verification endpoints ordered by priority.
 # The Tor Project's API is authoritative (returns IsTor), the others are
@@ -50,6 +56,8 @@ def get_exit_ip() -> str:
     Uses ``urllib.request`` from the stdlib so we don't need to add
     ``requests`` as a dependency.
     """
+    import urllib.error
+
     for endpoint in VERIFY_ENDPOINTS:
         try:
             req = urllib.request.Request(
@@ -62,7 +70,13 @@ def get_exit_ip() -> str:
                 ip = data.get("IP") or data.get("ip") or data.get("ip_addr")
                 if ip:
                     return ip
-        except Exception:
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            OSError,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+        ):
             continue
     return "unknown"
 
@@ -81,11 +95,21 @@ def get_controller():
     if not os.path.exists(_TTP_CONTROL_SOCKET):
         return None
 
+    import stem
+    import stem.connection
+
     try:
         ctrl = Controller.from_socket_file(_TTP_CONTROL_SOCKET)
         ctrl.authenticate()
         return ctrl
-    except (socket.error, Exception):
+    except (socket.error, stem.SocketError) as e:
+        logger.debug("Tor control socket not reachable: %s", e)
+        return None
+    except stem.connection.AuthenticationFailure as e:
+        logger.error("Tor control socket authentication failed: %s", e)
+        return None
+    except stem.ControllerError as e:
+        logger.warning("Tor controller error: %s", e)
         return None
 
 
@@ -115,6 +139,8 @@ def wait_for_bootstrap(
         )
 
     # 2. Monitor bootstrap progress.
+    import stem
+
     try:
         with controller:
             for _ in range(timeout):  # Use the provided timeout (default 90)
@@ -131,9 +157,7 @@ def wait_for_bootstrap(
                 time.sleep(1)
 
             raise TorError("Tor bootstrap timed out.")
-    except Exception as e:
-        if isinstance(e, TorError):
-            raise
+    except (stem.ControllerError, socket.error) as e:
         raise TorError(
             f"Tor control socket communication failed during bootstrap: {e}"
         ) from e
@@ -152,6 +176,8 @@ def verify_tor() -> tuple[bool, str]:
         ``(is_tor, exit_ip)`` - whether we confirmed Tor routing,
         and the exit IP address.
     """
+    import urllib.error
+
     for attempt in range(1, 6):  # 5 attempts
         for endpoint in VERIFY_ENDPOINTS:
             try:
@@ -170,7 +196,13 @@ def verify_tor() -> tuple[bool, str]:
                     # through *something*. We can't confirm it's Tor, but we have an IP.
                     ip = data.get("ip") or data.get("ip_addr") or "unknown"
                     return True, ip
-            except Exception:
+            except (
+                urllib.error.URLError,
+                TimeoutError,
+                OSError,
+                json.JSONDecodeError,
+                UnicodeDecodeError,
+            ):
                 continue
         time.sleep(3)
 
@@ -193,10 +225,12 @@ def request_new_circuit() -> tuple[bool, str]:
             "Cannot connect to Tor control interface. Check that Tor is running."
         )
 
+    import stem
+
     try:
         with ctrl:
             ctrl.signal(Signal.NEWNYM)
-    except Exception as e:
+    except (stem.ControllerError, socket.error) as e:
         raise TorError(f"Failed to request new circuit from Tor controller: {e}") from e
 
     new_ip = old_ip
@@ -235,6 +269,8 @@ def graceful_shutdown(timeout: int = 10) -> bool:
     if ctrl is None:
         return False
 
+    import stem
+
     try:
         with ctrl:
             ctrl.signal(Signal.SHUTDOWN)
@@ -246,9 +282,9 @@ def graceful_shutdown(timeout: int = 10) -> bool:
                 return True
             try:
                 ctrl_check.close()
-            except Exception:
+            except (stem.ControllerError, socket.error):
                 pass
             time.sleep(1)
         return True
-    except Exception:
+    except (stem.ControllerError, socket.error):
         return False

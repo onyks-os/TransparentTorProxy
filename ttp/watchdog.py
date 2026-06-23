@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Watchdog & Killswitch Module - Proactive Session Integrity & Auto-Healing.
 
 This module provides the core logic for the TTP background watchdog process,
@@ -245,6 +248,8 @@ def attempt_auto_healing(failed_component: str) -> bool:
     if not lock:
         return False
 
+    no_ipv6 = lock.get("no_ipv6", False)
+
     logger.warning(
         "Watchdog: Initiating auto-healing for failed component '%s'...",
         failed_component,
@@ -252,7 +257,7 @@ def attempt_auto_healing(failed_component: str) -> bool:
     try:
         if failed_component == "dns":
             interface = dns.detect_active_interface()
-            dns.apply_dns(interface)
+            dns.apply_dns(interface, disable_ipv6=no_ipv6)
             logger.info(
                 "Watchdog: Auto-healed DNS overlay on interface '%s'.", interface
             )
@@ -302,6 +307,7 @@ def attempt_auto_healing(failed_component: str) -> bool:
                 dns_port=lock.get("dns_port", 9054),
                 allow_root=lock.get("allow_root", False),
                 lan_bypass=lock.get("lan_bypass", True),
+                disable_ipv6=no_ipv6,
                 **kwargs_fw,
             )
             logger.info("Watchdog: Auto-healed firewall rules successfully.")
@@ -315,6 +321,7 @@ def attempt_auto_healing(failed_component: str) -> bool:
                 dns_port=lock.get("dns_port", 9054),
                 use_bridges=lock.get("use_bridges", False),
                 bridges=lock.get("bridges", []),
+                disable_ipv6=no_ipv6,
             )
             logger.info(
                 "Watchdog: Auto-healed Tor service by regenerating configuration and restarting ttp-tor."

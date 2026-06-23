@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Offensive WebRTC/STUN Leak Verification Test.
 
 Simulates WebRTC STUN network discovery by sending a raw UDP binding request

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Tests for ttp.tor_install - Tor installation and service management.
 
 All tests mock subprocess.run, shutil.which, and system paths.
@@ -70,6 +73,7 @@ def test_start_tor_service(mock_generate, mock_write_unit, mock_run):
         block_doh=True,
         use_bridges=False,
         bridges=None,
+        disable_ipv6=False,
     )
     mock_write_unit.assert_called_once_with("tor")
     assert mock_run.call_count == 2

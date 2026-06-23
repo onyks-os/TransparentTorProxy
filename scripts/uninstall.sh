@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP - Universal Uninstaller
 #
 # This script completely removes TTP from the system, reversing

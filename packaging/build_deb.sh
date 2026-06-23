@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP - Debian Package Builder
 #
 # This script builds a native .deb package for Debian/Ubuntu systems.

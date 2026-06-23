@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP - Universal Installer
 #
 # This script deploys TTP system-wide on any Linux distribution.

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP - Docker Integration Test Runner
 #
 # Runs the full integration test suite (tests/test_integration.py)
@@ -24,7 +27,6 @@ set -euo pipefail
 # Get the absolute path to the project root
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
-
 DISTRO="${1:-debian}"
 
 if [ "$DISTRO" == "debian" ]; then
@@ -71,7 +73,7 @@ docker exec "$CID" sh -c "curl -s -6 --connect-timeout 5 https://ipv6.icanhazip.
 
 echo "==> Running integration tests inside container..."
 set +e
-docker exec -it "$CID" /venv/bin/pytest /app/tests/test_integration.py -v -s
+docker exec -it "$CID" /venv/bin/pytest /app/tests/test_integration.py /app/tests/test_nse_rules.py -v -s
 TEST_EXIT=$?
 set -e
 

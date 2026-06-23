@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Offensive DNS Leak Verification Test.
 
 Verifies that direct UDP queries on port 53 to external resolvers (e.g., 1.1.1.1)

@@ -148,8 +148,11 @@ packaging/SHA256SUMS.txt
 .vscode
 .build_tmp
 tmp
+scratch
 **/*.iso
 **/*.qcow2
+**/*.whl
+**/*.asc
 
 # Environments
 .env

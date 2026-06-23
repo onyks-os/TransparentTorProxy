@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """DNS Management Module - Handles routing DNS queries through Tor.
 
 This module implements a stateless, Kernel-level DNS redirection strategy
@@ -74,7 +77,7 @@ def _clear_stale_mounts(target: str) -> None:
         )
 
 
-def apply_dns(interface: str) -> dict[str, Any]:
+def apply_dns(interface: str, disable_ipv6: bool = False) -> dict[str, Any]:
     """Apply Tor DNS settings using a Kernel-level overlay (mount --bind).
 
     Returns a dictionary containing backup data for restoration.
@@ -83,7 +86,7 @@ def apply_dns(interface: str) -> dict[str, Any]:
         from ttp.tor_detect import is_ipv6_supported
 
         nameservers = "nameserver 127.0.0.1\n"
-        if is_ipv6_supported():
+        if is_ipv6_supported() and not disable_ipv6:
             nameservers += "nameserver ::1\n"
 
         # 1. Write the Tor resolver to /run/ttp/resolv.conf (volatile)
@@ -121,21 +124,27 @@ def restore_dns(backup: dict[str, Any] | None) -> None:
 
     mount_target = backup.get("mount_target", str(RESOLV_CONF))
 
-    try:
-        # Lazy unmount ensures immediate release even if busy
-        subprocess.run(
-            ["umount", "-l", mount_target],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        # Broad catch for restoration safety
-        pass
+    if _is_mount_point(mount_target):
+        try:
+            # Lazy unmount ensures immediate release even if busy
+            subprocess.run(
+                ["umount", "-l", mount_target],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            logger.info("Successfully unmounted DNS overlay on %s", mount_target)
+        except subprocess.CalledProcessError as e:
+            err_msg = e.stderr.strip() if e.stderr else str(e)
+            logger.warning(
+                "Failed to unmount DNS overlay on %s: %s", mount_target, err_msg
+            )
+    else:
+        logger.debug("DNS target %s is not mounted, skipping unmount", mount_target)
 
     # Cleanup the ephemeral file to free tmpfs space
     try:
         if RUNTIME_RESOLV.exists():
             RUNTIME_RESOLV.unlink()
-    except OSError:
-        pass
+    except OSError as e:
+        logger.debug("Failed to remove runtime resolv.conf: %s", e)

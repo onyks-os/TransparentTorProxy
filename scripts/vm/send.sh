@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP - Code Sync to VM
 #
 # Syncs the TTP source code from the host machine into the active

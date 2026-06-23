@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 # TTP - Pre-release Verification Suite
 
 # Configuration
@@ -94,7 +97,7 @@ run_step "Formatting Check (Ruff Format)" "ruff format --check ttp/ tests/"
 run_step "Linting (Ruff)" "ruff check ttp/ tests/"
 run_step "Unit Tests (Pytest)" "pytest tests/ -q"
 run_step "Fuzzing (Hypothesis)" "pytest fuzzing/fuzz_target.py -q"
-run_step "Dependency Audit (pip-audit)" "pip-audit"
+run_step "Dependency Audit (pip-audit)" "pip-audit ."
 run_step "Integration (Debian)" "make integration-debian"
 run_step "Integration (Fedora)" "make integration-fedora"
 run_step "Integration (Arch)" "make integration-arch"

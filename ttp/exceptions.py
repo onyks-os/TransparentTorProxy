@@ -1,3 +1,6 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+
 """Custom exception hierarchy for TTP.
 
 This allows the CLI and other modules to distinguish between different

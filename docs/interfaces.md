@@ -32,7 +32,7 @@ Most commands require root privileges (`sudo`). Exceptions are noted in the tabl
 | Command               | Requires Root | Description                                                                                                                                                  |
 | :-------------------- | :-----------: | :----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ttp start`           |       ✅       | Activates the transparent Tor proxy: installs Tor if missing, applies nftables rules, mounts DNS overlay, waits for Tor bootstrap, and verifies the exit IP. |
-| `ttp stop`            |       ✅       | Graceful teardown: sends `SHUTDOWN` to Tor, removes nftables rules, unmounts DNS overlay, and deletes the session lock file.                                 |
+| `ttp stop`            |       ✅       | Zero-leak teardown: stops watchdog, resolves Tor UID, applies teardown lockdown, sends `SHUTDOWN` to Tor, stops Tor service, applies active socket slaughter (TCP RST & reject), waits 1.5s, flushes connection tracking via `conntrack -F`, removes nftables rules, unmounts DNS overlay, and deletes the session lock. |
 | `ttp restart`         |       ✅       | Shortcut for `ttp stop` followed by `ttp start`. Accepts all `start` options.                                                                                |
 | `ttp refresh`         |       ✅       | Requests a new Tor circuit via `NEWNYM` signal. All active streams are rotated for a new exit IP.                                                            |
 | `ttp status`          |       ❌       | Displays current session state from the lock file: status, exit IP, session start time, and PID.                                                             |
@@ -54,9 +54,13 @@ Most commands require root privileges (`sudo`). Exceptions are noted in the tabl
 | `--bootstrap-timeout` | `int` | `180`       | Seconds to wait for Tor to reach 100% bootstrap before aborting.                              |
 | `--allow-root`        | flag  | off         | Exempt root (`uid 0`) processes from Tor routing (allows direct internet for system updates). |
 | `--no-lan-bypass`     | flag  | off         | Disable LAN bypass: all RFC 1918 and link-local traffic is also routed through Tor.           |
+| `--no-ipv6`           | flag  | off         | Force disable all IPv6 traffic (drops outgoing IPv6 to prevent leaks).                        |
 | `--watchdog`, `-w`    | flag  | off         | Start the background session integrity watchdog daemon after activation.                      |
 | `--bypass-user`       | `str` | —           | Comma-separated list of system users whose traffic bypasses Tor (split tunneling).            |
 | `--bypass-group`      | `str` | —           | Comma-separated list of system groups whose traffic bypasses Tor (split tunneling).           |
+| `--use-bridges`       | flag  | off         | Enable Tor bridges support.                                                                   |
+| `--bridge-file`       | `str` | —           | Path to a file containing Tor bridge lines.                                                   |
+| `--bridge`            | `str` | —           | Individual Tor bridge line (can be specified multiple times).                                 |
 
 ### 1.4 Exit Codes
 
@@ -115,7 +119,7 @@ When bridges are configured, TTP supports pluggable transports via external help
 | `obfs4` / `meek_lite` | `obfs4proxy`       | `obfs4proxy`       | `obfs4`            |
 | `snowflake`           | `snowflake-client` | `snowflake-client` | `snowflake-client` |
 
-Missing binaries are auto-installed via the detected system package manager.
+Missing binaries are auto-installed via the detected system package manager. For a detailed guide on obtaining and configuring bridges, see the [Bridges & Pluggable Transports Guide](bridges.md).
 
 ---
 
@@ -131,7 +135,10 @@ TTP creates a dedicated, isolated nftables table that does not interfere with an
 | :--------------------- | :-------------------------------------------------------------- |
 | **Table name**         | `inet ttp`                                                      |
 | **Application method** | Atomic load via `nft -f <rules_file>` (all-or-nothing)          |
-| **Cleanup method**     | `nft destroy table inet ttp` (atomic, no rule-by-rule deletion) |
+| **Teardown Lockdown**  | `nft insert rule inet ttp filter_out [meta skuid != <tor_uid>] oifname != "lo" drop` (applied at stop start) |
+| **Socket Slaughter**   | `nft insert rule inet ttp filter_out meta l4proto tcp counter reject with tcp reset` and `nft insert rule inet ttp filter_out counter reject` (applied before final cleanup) |
+| **Conntrack Flush**    | `conntrack -F` (atomic flush of Netfilter tracked streams)      |
+| **Cleanup method**     | `nft flush table inet ttp` followed by `nft destroy table inet ttp` |
 
 **Chains within `inet ttp`:**
 
@@ -143,6 +150,8 @@ TTP creates a dedicated, isolated nftables table that does not interfere with an
 
 **Rule execution order within `filter_out`:**
 
+0. **Teardown Lockdown**: drop all outbound traffic except loopback and the Tor UID (inserted dynamically during the teardown sequence)
+0b. **Active Socket Slaughter**: TCP Reset (`meta l4proto tcp counter reject with tcp reset`) and generic reject (`counter reject`) rules (inserted dynamically at the start of final ruleset removal)
 1. Exempt Tor process user (prevent routing loops)
 2. Exempt bypass users/groups (split tunneling — `meta skuid`/`meta skgid`)
 3. Exempt root processes (if `--allow-root` is set)
@@ -150,7 +159,7 @@ TTP creates a dedicated, isolated nftables table that does not interfere with an
 5. Accept loopback interface (`lo` - IPv4 and IPv6)
 6. Block DNS-over-TLS (reject `tcp dport 853`)
 7. Block well-known DNS-over-HTTPS (DoH) IPs on port 443 (IPv4 and IPv6)
-8. Drop unrouted IPv6 traffic (only if IPv6 loopback is not supported by the system)
+8. Drop IPv6 traffic (if IPv6 loopback is not supported by the system OR if `--no-ipv6` is passed)
 9. **Kill-Switch**: reject all remaining traffic (forces fallback of redirected TCP/DNS or blocks unauthorized bypasses)
 
 ### 3.2 DNS Subsystem

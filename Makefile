@@ -8,7 +8,7 @@
 #   make verify           - lint + unit + fuzz + audit + integration + package build
 
 # .PHONY tells Make that these are command names, not actual files or directories.
-.PHONY: test fuzz audit integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi test-leak-ip test-leak-dns test-leak-webrtc check-leak tarball
+.PHONY: test fuzz audit lint pre-commit install-hooks integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi test-leak-ip test-leak-dns test-leak-webrtc check-leak tarball
 
 # 1. Local unit tests (pytest, no root).
 test:
@@ -23,7 +23,30 @@ fuzz:
 # 1c. Dependency vulnerability scan (pip-audit).
 audit:
 	@echo "==> Running Dependency Audit (pip-audit)..."
-	pip-audit
+	pip-audit .
+
+# 1d. Code formatting, Python linting, and shell script linting checks.
+lint:
+	@echo "==> Running Lint and Formatting Checks..."
+	ruff format --check ttp/ tests/
+	ruff check ttp/ tests/
+	@if command -v shellcheck >/dev/null 2>&1; then \
+		echo "==> Running ShellCheck..."; \
+		find scripts -name "*.sh" -exec shellcheck {} +; \
+	else \
+		echo "==> ShellCheck not found, skipping shell script linting."; \
+	fi
+
+# 1e. Fast local pre-commit checks (linting & unit tests).
+pre-commit: lint test
+
+# 1f. Install Git pre-commit hook.
+install-hooks:
+	@echo "Installing Git pre-commit hook..."
+	@echo '#!/bin/sh' > .git/hooks/pre-commit
+	@echo 'make pre-commit' >> .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "Git pre-commit hook installed successfully."
 
 # 2. Integration tests (privileged Docker; retries once on failure for flaky Tor bootstrap).
 
@@ -46,6 +69,11 @@ integration-all: integration-debian integration-fedora integration-arch
 verify:
 	@chmod +x scripts/verify.sh
 	@./scripts/verify.sh $(ARGS)
+
+# 3b. Run Watchdog Chaos Monkey stress tests
+chaos-monkey:
+	@echo "==> Running Watchdog Chaos Monkey Stress Tests..."
+	sudo -E venv/bin/python3 tests/chaos_monkey.py --duration 60
 
 # 4. Native packages (.deb / .rpm) and Python release artifacts (Source Tarball & Wheel) via packaging/release.sh
 build:
