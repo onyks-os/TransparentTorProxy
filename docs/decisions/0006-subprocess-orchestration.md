@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## Status
 
-Accepted (v0.4.5)
+Accepted (v0.4.6)
 
 ## Context
 

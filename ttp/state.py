@@ -39,17 +39,28 @@ STAR_NOTIFIED_PATH = PERSISTENT_DIR / ".starred_notified"
 
 
 def ensure_runtime_dir() -> None:
-    """Create ``/run/ttp`` with mode 0755 owned by root.
+    """Create ``/run/ttp`` with mode 0755.
 
     Must be called early in the CLI startup before any I/O that targets
     the runtime directory (lock file, log file, torrc, etc.).
 
-    The directory is world-readable so the Tor user can traverse it
-    to reach ``/run/tor/ttp/``.
+    Owned by ttp-watchdog if the user exists, otherwise owned by root.
     """
+    import pwd
+
     LOCK_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(LOCK_DIR, 0o755)
-    os.chown(LOCK_DIR, 0, 0)
+
+    uid = 0
+    gid = 0
+    try:
+        pw = pwd.getpwnam("ttp-watchdog")
+        uid = pw.pw_uid
+        gid = pw.pw_gid
+    except KeyError:
+        pass
+
+    os.chown(LOCK_DIR, uid, gid)
 
 
 def check_tmpfs_space(min_bytes: int = MIN_TMPFS_BYTES) -> None:

@@ -62,8 +62,8 @@ def apply_rules(
         root_rule = "meta skuid 0 accept"
 
     # Construct bypass rules
-    bypass_rules_nat = []
-    bypass_rules_filter = []
+    bypass_rules_nat = ['socket cgroupv2 level 1 "ttp-bypass.slice" accept']
+    bypass_rules_filter = ['socket cgroupv2 level 1 "ttp-bypass.slice" accept']
     if bypass_uids:
         for uid in bypass_uids:
             bypass_rules_nat.append(f"meta skuid {uid} ip daddr != 127.0.0.1 accept")
@@ -82,6 +82,22 @@ def apply_rules(
     bypass_rules_filter_str = (
         "\n                ".join(bypass_rules_filter) if bypass_rules_filter else ""
     )
+
+    # Resolve systemd-resolved user UID dynamically if present
+    resolved_rules = []
+    resolved_uid = None
+    for user in ("systemd-resolve", "systemd-resolved"):
+        try:
+            resolved_uid = pwd.getpwnam(user).pw_uid
+            break
+        except KeyError:
+            continue
+
+    if resolved_uid is not None:
+        resolved_rules.append(f"meta skuid {resolved_uid} ip daddr != 127.0.0.1 drop")
+        if ipv6_avail:
+            resolved_rules.append(f"meta skuid {resolved_uid} ip6 daddr != ::1 drop")
+    resolved_rules_str = "\n            ".join(resolved_rules) if resolved_rules else ""
 
     # Local loopback checks
     loopback_ipv4 = "ip daddr 127.0.0.0/8 accept"
@@ -162,6 +178,9 @@ def apply_rules(
 
             # 1b. Bypass users and groups
             {bypass_rules_filter_str}
+
+            # 1c. systemd-resolved fail-closed policy
+            {resolved_rules_str}
 
             # 2. Allow root processes (system maintenance, Tor bootstrapping) if explicitly allowed
             {root_rule}

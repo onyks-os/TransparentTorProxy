@@ -86,10 +86,13 @@ def test_ruleset_logic_content(mock_ipv6, mock_run_nft, mock_run_string, mock_pw
     # Tor exemption must be first
     assert "meta skuid 110 accept" in output_block
     assert output_block.find("meta skuid 110 accept") < output_block.find("dnat")
+    # Verify cgroups level 1 bypass rule
+    assert 'socket cgroupv2 level 1 "ttp-bypass.slice" accept' in output_block
 
     # 3. Check for exemptions in the filter_out chain
     filter_block = ruleset.split("chain filter_out")[1]
     assert "meta skuid 110 accept" in filter_block
+    assert 'socket cgroupv2 level 1 "ttp-bypass.slice" accept' in filter_block
     # By default, root is NOT exempted (allow_root=False)
     assert "meta skuid 0 accept" not in filter_block
     assert "ip daddr 127.0.0.0/8 accept" in filter_block
@@ -371,3 +374,63 @@ def test_apply_active_socket_slaughter(mock_run_nft):
         "tcp",
         "reset",
     ]
+
+
+@patch("ttp.firewall.pwd.getpwnam")
+@patch("ttp.firewall._run_nft_string")
+@patch("ttp.firewall._run_nft")
+@patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
+def test_ruleset_systemd_resolved_rules(
+    mock_ipv6, mock_run_nft, mock_run_string, mock_pwd
+):
+    """Verify that systemd-resolved drop rules are injected when the system user exists."""
+
+    def mock_getpwnam(name):
+        mock_user = MagicMock()
+        if name == "debian-tor":
+            mock_user.pw_uid = 110
+        elif name == "systemd-resolve":
+            mock_user.pw_uid = 105
+        else:
+            raise KeyError("User not found")
+        return mock_user
+
+    mock_pwd.side_effect = mock_getpwnam
+
+    # 1. Test with IPv6 active
+    apply_rules(tor_user="debian-tor", disable_ipv6=False)
+    ruleset = mock_run_string.call_args[0][0]
+
+    assert "meta skuid 105 ip daddr != 127.0.0.1 drop" in ruleset
+    assert "meta skuid 105 ip6 daddr != ::1 drop" in ruleset
+
+    # 2. Test with IPv6 disabled
+    apply_rules(tor_user="debian-tor", disable_ipv6=True)
+    ruleset_no_ipv6 = mock_run_string.call_args[0][0]
+
+    assert "meta skuid 105 ip daddr != 127.0.0.1 drop" in ruleset_no_ipv6
+    assert "meta skuid 105 ip6 daddr != ::1 drop" not in ruleset_no_ipv6
+
+
+@patch("ttp.firewall.pwd.getpwnam")
+@patch("ttp.firewall._run_nft_string")
+@patch("ttp.firewall._run_nft")
+@patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
+def test_ruleset_systemd_resolved_rules_missing_user(
+    mock_ipv6, mock_run_nft, mock_run_string, mock_pwd
+):
+    """Verify that systemd-resolved drop rules are NOT injected if the user does not exist on the system."""
+
+    def mock_getpwnam(name):
+        if name == "debian-tor":
+            mock_user = MagicMock()
+            mock_user.pw_uid = 110
+            return mock_user
+        raise KeyError("User not found")
+
+    mock_pwd.side_effect = mock_getpwnam
+
+    apply_rules(tor_user="debian-tor")
+    ruleset = mock_run_string.call_args[0][0]
+
+    assert "meta skuid 105" not in ruleset

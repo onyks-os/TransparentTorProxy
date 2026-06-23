@@ -47,5 +47,6 @@ echo "[TTP] Removing application files..."
 rm -f /usr/local/bin/ttp
 rm -rf /opt/ttp
 rm -rf /var/lib/ttp  # This directory contains the persistent cache and sentinel.
+rm -f /usr/share/polkit-1/rules.d/50-ttp-watchdog.rules
 
 echo "[TTP] Uninstallation complete. The system has been restored."

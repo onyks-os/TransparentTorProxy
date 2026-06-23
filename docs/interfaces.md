@@ -201,6 +201,7 @@ All TTP runtime state is stored in tmpfs paths that **disappear on reboot**, lea
 | `/run/tor/ttp/auth_cookie`                 | Cookie for Tor control authentication                        | Tor shutdown         |
 | `/run/systemd/system/ttp-tor.service`      | Volatile Tor service unit                                    | Reboot               |
 | `/run/systemd/system/ttp-watchdog.service` | Volatile watchdog service unit                               | Reboot               |
+| `/run/systemd/resolved.conf.d/ttp.conf`    | systemd-resolved volatile configuration override             | Reboot or `ttp stop` |
 
 **Persistent path (survives reboots):**
 

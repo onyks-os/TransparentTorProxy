@@ -47,7 +47,7 @@ No per-application setup needed - just `sudo ttp start` and **every connection**
 ## Features
 
 * **Volatile Core Architecture**: Entire session state, lockfiles, and logs are stored exclusively in `tmpfs` (`/run/ttp/` and `/run/tor/ttp/`), ensuring no forensic traces are written to physical disk and automatically vanishing on reboot.
-* **Stateless DNS Overlay**: Transparently redirects DNS requests using a kernel-level `mount --bind` overlay on `/etc/resolv.conf` without modifying the original configuration file on disk, with automatic stale mount cleanup for absolute idempotency.
+* **Stateless DNS Overlay & systemd-resolved Intercept**: Transparently redirects DNS requests using a kernel-level `mount --bind` overlay on `/etc/resolv.conf` without modifying the original configuration file on disk, with automatic stale mount cleanup. If `systemd-resolved` is active, TTP automatically hijacks its configuration using a volatile drop-in to prevent leaks via D-Bus or NSS, backed by a strict kernel-level firewall fail-closed policy (guillotine) dropping non-localhost outbound resolved queries.
 * **Proactive Watchdog & Killswitch**: Active background session integrity daemon monitoring Tor status, nftables table/chain presence, and DNS overlay mount. Triggers a single-strike auto-healing repair or a hard network lockout (emergency drop-all killswitch) under persistent failure.
 * **LAN Bypass & Split Tunneling**: Excludes local subnets (RFC 1918 & Link-Local) dynamically from Tor routing to maintain access to local resources (printers, NAS). Supports user- or group-specific exceptions (`--bypass-user` / `--bypass-group`) via `nftables` uid/gid checks.
 * **Native Dual-Stack IPv6 Redirection**: Dynamically detects IPv6 loopback availability, building dual-stack nftables redirect chains or dropping all outgoing IPv6 traffic (IPv6 leak prevention) if unsupported.
@@ -56,7 +56,7 @@ No per-application setup needed - just `sudo ttp start` and **every connection**
 
 ## Requirements
 
-* **Linux with systemd** (optional if using `--external-daemon` in BYOD mode)
+* **Linux with systemd** (strictly required for process control and network slice isolation)
 * **Python 3.10+**
 * **nftables** (pre-installed on most modern distros)
 * **Root privileges** (required for firewall and DNS modifications)
@@ -69,8 +69,8 @@ Choose the method that best fits your needs. **Native packages are strongly reco
 
 Installing via native packages ensures that all system dependencies (`tor`, `nftables`) and kernel-level optimizations (SELinux) are managed by your OS package manager.
 
-* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.4.5_all.deb`
-* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.4.5-1.fc43.noarch.rpm`
+* **Debian / Ubuntu**: `sudo apt install ./packaging/transparent-tor-proxy_0.4.6_all.deb`
+* **Fedora / RHEL**: `sudo dnf install ./packaging/transparent-tor-proxy-0.4.6-1.fc43.noarch.rpm`
 * **Arch Linux**: `cd packaging && makepkg -si`
 
 For instructions on how to verify the integrity and authenticity of the release assets, see the [Release Verification Guide](docs/verification.md).
@@ -91,42 +91,9 @@ sudo ./scripts/install.sh
 > **Why use `./install.sh`?**  
 > Unlike standard Python installers, this script is **"intelligent"**. On Red Hat-based systems, it detects if SELinux is in *Enforcing* mode and dynamically compiles a custom policy module (from `ttp_tor_policy.te`) to allow Tor to bind to the non-standard ports required by TTP (9041, 9054). This kernel-level optimization cannot be performed by `pip`.
 
----
+### 3. Alternative Installation Methods (Fallback)
 
-### 3. Fallback: pipx / pip (PEP 668)
-
-> [!WARNING]
-> **Note on Linux Distributions (PEP 668)**  
-> Recent versions of Ubuntu/Debian prevent global `pip install` to protect system stability. Using these methods will bypass TTP's kernel-level optimizations (SELinux) and won't handle system dependencies automatically.
-
-#### **Option A: pipx (Recommended Fallback)**
-
-`pipx` installs TTP in an isolated environment but makes the command available globally.
-
-```bash
-pipx install transparent-tor-proxy
-```
-
-#### **Option B: Standard pip with venv**
-
-If you prefer standard `pip`, use a virtual environment to avoid the `externally-managed-environment` error.
-
-```bash
-# 1. Create the environment
-python3 -m venv ~/.local/share/ttp-venv
-
-# 2. Install the package
-~/.local/share/ttp-venv/bin/pip install transparent-tor-proxy
-
-# 3. Create a symbolic link to use 'ttp' everywhere
-sudo ln -s ~/.local/share/ttp-venv/bin/ttp /usr/local/bin/ttp
-```
-
-> [!CAUTION]
-> **Uninstallation Warning**: Running `pipx uninstall` or deleting the venv only removes the Python code. If TTP is active, your firewall and DNS will remain hijacked. Always use `ttp stop` before uninstalling via pip, or use `./scripts/uninstall.sh` if you installed via the source script.
-
-> [!NOTE]  
-> After installation, the `ttp` command is available system-wide.
+For installing TTP via Python-specific package managers (`pipx` or `pip` with virtual environments), see the [Alternative Installation Methods Reference](docs/install-alternatives.md).
 
 ## Usage
 
@@ -157,64 +124,7 @@ Most network-modifying commands require root privileges (`sudo`):
   sudo ttp refresh
   ```
 
-For more advanced setups and circumvention profiles, see the **Advanced Security Profiles** below or consult the [External Interfaces Reference](docs/interfaces.md).
-
-
-### Advanced Security Profiles
-
-Depending on your security model and task, we recommend the following setups:
-
-#### 1. Daily Privacy Profile (Standard)
-* **Goal**: Anonymize general browsing, bypass geographic restrictions, or hide ISP snooping with minimal overhead.
-* **Command**:
-  ```bash
-  sudo ttp start
-  ```
-* **Why**: Runs without background active processes (no watchdog overhead), utilizing extremely efficient `nftables` redirect rules and local bypass for smooth home/work LAN printer/NAS sharing.
-
-#### 2. Maximum Security Profile (High-Risk)
-* **Goal**: Whistleblowing, high-risk activity, total protection against accidental cleartext leaks or network state changes.
-* **Command**:
-  ```bash
-  sudo ttp start --watchdog --no-lan-bypass
-  ```
-* **Why**: Starts the continuous background **Watchdog** daemon to monitor state integrity every 15s. Disables LAN bypass to prevent side-channel leaks to local LAN devices. If any component (DNS overlay, nftables, or Tor daemon) is tampered with or fails, the system instantly isolates the network completely (Emergency Killswitch) and notifies you.
-
-#### 3. Administrative / Maintenance Profile
-* **Goal**: Perform local updates (e.g., `apt update`, `dnf upgrade`) or maintenance that requires high bandwidth or direct native route while Tor is active, or speed up initial bootstrapping.
-* **Command**:
-  ```bash
-  sudo ttp start --allow-root
-  ```
-* **Why**: Routes all default user/system processes through Tor, but exempts system root processes (`uid 0`) allowing them to communicate directly in cleartext for updates or troubleshooting. (Use with caution: increases risk of tool/script leaks if run under sudo).
-
-#### 4. Split Tunneling Profile
-* **Goal**: Route all network traffic through Tor except for specific system users or groups (e.g. running a local media server, backups, or gaming in cleartext).
-* **Command**:
-  ```bash
-  sudo ttp start --bypass-user debian-tor,mediauser --bypass-group sysadmin
-  ```
-* **Why**: Uses `nftables` exceptions to allow the matching local user IDs or group IDs to communicate directly to the cleartext internet, bypassing redirection and the watchdog killswitch.
-
-#### 5. Censorship Circumvention Profile (Tor Bridges)
-* **Goal**: Connect to the Tor network in censored environments where standard Tor entry nodes are blocked.
-* **Command**:
-  ```bash
-  sudo ttp start --use-bridges --bridge-file /path/to/my_bridges.txt
-  # OR specify individual bridges directly:
-  sudo ttp start --bridge "obfs4 192.0.2.1:1234 ..." --bridge "snowflake 192.0.2.2:4321 ..."
-  ```
-* **Why**: Configures Tor to connect via bridges. If pluggable transports like `obfs4proxy` or `snowflake-client` are needed, TTP automatically checks their presence and installs them using the system package manager. For detailed instructions on obtaining and configuring bridges, see the [Bridges & Pluggable Transports Guide](docs/bridges.md).
-
-#### 6. Bring Your Own Daemon (BYOD) Profile
-* **Goal**: Run TTP on systemd-less environments (Alpine, Void Linux) or inside Docker containers by separating Tor lifecycle management from network redirection routing.
-* **Command**:
-  ```bash
-  # 1. Start Tor manually on target ports (e.g. TransPort 9041, DNSPort 9054)
-  # 2. Start TTP delegating daemon control to the host
-  sudo ttp start --external-daemon --transport-port 9041 --dns-port 9054
-  ```
-* **Why**: Bypasses systemd commands entirely, performing a passive healthcheck to verify that Tor is running on the target ports and dynamically parsing socket owners from `/proc/net/tcp` to obtain the UID of the Tor daemon process (avoiding loops). If the external Tor daemon crashes, routing continues to fail closed safely.
+For more advanced setups and circumvention profiles, see the [Advanced Security & Usage Profiles Reference](docs/profiles.md) or consult the [External Interfaces Reference](docs/interfaces.md).
 
 ## Manual Leak Verification
 
@@ -348,41 +258,13 @@ sudo ttp diagnose
 ├── README.md
 ├── CONTRIBUTING.md         # Contribution guidelines
 ├── SECURITY.md             # Security policy
-├── scripts/                # Installation and VM management scripts
-├──   ├── install.sh          # System-wide installer
-├──   ├── uninstall.sh        # System-wide uninstaller
-├──   ├── restore-network.sh  # Emergency network recovery script
-├──   ├── verify.sh           # CI/CD verification script
-├──   └── vm/                 # QEMU VM management scripts
-├──   └── vms/                # .iso and .qcow2 files
+├── scripts/                # Installation, verification, and VM management scripts
 ├── assets/                 # Branding and demo assets
-├──   ├── favicon/            # Project favicons and webmanifest
-├──   └── gif/                # Demo animations
-├── packaging/              # Build scripts for .deb, .rpm, and Arch packages
-├──   ├── build_deb.sh
-├──   ├── build_rpm.sh
-├──   ├── release.sh          # Package release/publish script
-├──   ├── ttp.spec
-├──   ├── PKGBUILD
-├──   └── ttp.service
-├── ttp/                    # Source code
-├──   ├── resources/          # Internal package resources (SELinux policies, etc.)
-├──   ├── cli.py              # Typer entry point
-├──   ├── exceptions.py       # Custom exception hierarchy
-├──   ├── tor_detect.py       # Tor detection logic
-├──   ├── tor_install.py      # Auto-install & configuration
-├──   ├── firewall.py         # Atomic nftables management
-├──   ├── dns.py              # DNS leak prevention
-├──   ├── state.py            # Lock file and crash recovery
-├──   ├── tor_control.py      # Tor daemon interaction and API
-├──   ├── watchdog.py         # Session integrity watchdog and auto-healing
-├──   └── system_info.py      # System diagnostic gathering
-├── tests/                  # Unit tests (mocked) and test_watchdog.py
-└── docs/
-    ├── architecture.md     # Technical Architecture & Design
-    ├── interfaces.md       # External interfaces reference (CLI, Tor, system)
-    ├── security-assessment.md  # STRIDE threat model & risk assessment
-    └── decisions/          # Architectural Decision Records (ADRs 0001 - 0008)
+├── packaging/              # Packaging configurations (.deb, .rpm, Arch PKGBUILD)
+├── ttp/                    # Main Python source package
+│   └── resources/          # Internal package resources (SELinux policies, etc.)
+├── tests/                  # Unit, integration, and leak testing suites
+└── docs/                   # Technical documentation, threat models, and ADRs
 ```
 
 ## Call for Contributors

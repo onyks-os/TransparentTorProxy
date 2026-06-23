@@ -284,7 +284,7 @@ def test_start_with_interface_flag(
     """start --interface wlan0 -> uses wlan0 instead of auto-detect."""
     result = runner.invoke(app, ["start", "--interface", "wlan0"])
     assert result.exit_code == 0
-    mock_apply_dns.assert_called_once_with("wlan0", disable_ipv6=False)
+    mock_apply_dns.assert_called_once_with("wlan0", disable_ipv6=False, dns_port=9054)
 
 
 # health check warning
@@ -1584,7 +1584,7 @@ def test_start_no_ipv6_unsupported(
         lan_bypass=True,
         disable_ipv6=True,
     )
-    mock_apply_dns.assert_called_once_with("eth0", disable_ipv6=True)
+    mock_apply_dns.assert_called_once_with("eth0", disable_ipv6=True, dns_port=9054)
     mock_write.assert_called_once_with(
         dns_backup={"interface": "eth0"},
         transport_port=9041,
@@ -1645,7 +1645,7 @@ def test_start_no_ipv6_supported(
         lan_bypass=True,
         disable_ipv6=True,
     )
-    mock_apply_dns.assert_called_once_with("eth0", disable_ipv6=True)
+    mock_apply_dns.assert_called_once_with("eth0", disable_ipv6=True, dns_port=9054)
     mock_write.assert_called_once_with(
         dns_backup={"interface": "eth0"},
         transport_port=9041,
@@ -1771,3 +1771,84 @@ def test_stop_graceful_teardown_no_conntrack(
     assert result.exit_code == 0
     mock_which.assert_called_once_with("conntrack")
     mock_run.assert_not_called()
+
+
+# bypass
+
+
+@patch("ttp.cli.os.geteuid", return_value=1000)
+def test_bypass_requires_root(mock_euid):
+    """bypass without root -> exit code 1."""
+    result = runner.invoke(app, ["bypass", "curl", "http://example.com"])
+    assert result.exit_code == 1
+    assert "must be run with sudo" in result.output
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.path.exists", return_value=False)
+@patch.dict("os.environ", {"SUDO_UID": "1000", "SUDO_GID": "1000"})
+def test_bypass_requires_systemd(mock_exists, mock_euid):
+    """bypass fails if systemd is missing."""
+    result = runner.invoke(app, ["bypass", "curl"])
+    assert result.exit_code == 1
+    assert "requires systemd" in result.output
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.path.exists", return_value=True)
+@patch("ttp.cli.state.read_lock", return_value=None)
+@patch.dict("os.environ", {"SUDO_UID": "1000", "SUDO_GID": "1000"})
+def test_bypass_requires_active_session(mock_read, mock_exists, mock_euid):
+    """bypass fails if no TTP session is active."""
+    result = runner.invoke(app, ["bypass", "curl"])
+    assert result.exit_code == 1
+    assert "no active session" in result.output.lower()
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.path.exists", return_value=True)
+@patch("ttp.cli.state.read_lock", return_value={"pid": 123})
+@patch.dict("os.environ", {}, clear=True)
+def test_bypass_requires_sudo_env(mock_read, mock_exists, mock_euid):
+    """bypass fails if SUDO_UID or SUDO_GID is missing."""
+    result = runner.invoke(app, ["bypass", "curl"])
+    assert result.exit_code == 1
+    assert "must be run with sudo" in result.output
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.path.exists", return_value=True)
+@patch("ttp.cli.state.read_lock", return_value={"pid": 123})
+@patch.dict("os.environ", {"SUDO_UID": "1000", "SUDO_GID": "1000"})
+@patch("shutil.which", return_value=None)
+def test_bypass_requires_systemd_run(mock_which, mock_read, mock_exists, mock_euid):
+    """bypass fails if systemd-run is missing."""
+    result = runner.invoke(app, ["bypass", "curl"])
+    assert result.exit_code == 1
+    assert "systemd-run' command is required" in result.output
+
+
+@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.path.exists", return_value=True)
+@patch("ttp.cli.state.read_lock", return_value={"pid": 123})
+@patch.dict("os.environ", {"SUDO_UID": "1000", "SUDO_GID": "1000"})
+@patch("shutil.which", return_value="/usr/bin/systemd-run")
+@patch("subprocess.run")
+def test_bypass_happy_path(mock_run, mock_which, mock_read, mock_exists, mock_euid):
+    """bypass runs systemd-run and returns its exit code."""
+    mock_run.return_value = MagicMock(returncode=42)
+    result = runner.invoke(app, ["bypass", "curl", "http://example.com"])
+    assert result.exit_code == 42
+    mock_run.assert_called_once_with(
+        [
+            "/usr/bin/systemd-run",
+            "--uid=1000",
+            "--gid=1000",
+            "--slice=ttp-bypass",
+            "--scope",
+            "--",
+            "curl",
+            "http://example.com",
+        ],
+        check=False,
+    )

@@ -25,7 +25,7 @@
 pkgname=transparent-tor-proxy
 
 # The version of the software. This should match the version in pyproject.toml.
-pkgver=0.4.5
+pkgver=0.4.6
 
 # The release number. If you update the PKGBUILD but the software version (x.y.z) 
 # hasn't changed, you increment this to tell users to update the package.
@@ -78,12 +78,17 @@ package() {
     # and place its contents (the Python code and the 'ttp' executable command) into $pkgdir.
     python -m installer --destdir="$pkgdir" dist/*.whl
     
-    # Install the systemd service file.
+    # Install systemd service
     # install -D creates necessary parent directories. -m644 sets permissions (read/write for owner, read for others).
     # It copies the local ttp.service to the correct systemd directory inside the package.
     install -Dm644 packaging/ttp.service "$pkgdir/usr/lib/systemd/system/ttp.service"
+
+    # Install sysusers config
+    install -Dm644 packaging/transparent-tor-proxy.sysusers "$pkgdir/usr/lib/sysusers.d/transparent-tor-proxy.conf"
+
+    # Install Polkit rules
+    install -Dm644 ttp/resources/polkit/50-ttp-watchdog.rules "$pkgdir/usr/share/polkit-1/rules.d/50-ttp-watchdog.rules"
     
     # Install the license file (required by Arch Linux standards for MIT).
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
-

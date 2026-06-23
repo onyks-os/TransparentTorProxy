@@ -54,7 +54,7 @@ def test_apply_dns_overlay(_mock_resolv_conf):
         assert "nameserver 127.0.0.1" in fake_runtime.read_text()
 
         # Check mount command
-        mock_run.assert_called_once_with(
+        mock_run.assert_any_call(
             ["mount", "--bind", str(fake_runtime), str(fake_resolv)],
             capture_output=True,
             text=True,
@@ -79,7 +79,7 @@ def test_apply_dns_symlink_overlay(_mock_resolv_conf):
         assert backup["mode"] == "overlay"
         assert backup["mount_target"] == str(fake_target)
 
-        mock_run.assert_called_once_with(
+        mock_run.assert_any_call(
             ["mount", "--bind", str(fake_runtime), str(fake_target)],
             capture_output=True,
             text=True,
@@ -120,9 +120,14 @@ def test_restore_dns_overlay(_mock_resolv_conf):
 
 def test_apply_dns_failure():
     """apply_dns raises DNSError if mount fails."""
-    with patch("ttp.dns.subprocess.run") as mock_run:
-        mock_run.side_effect = subprocess.CalledProcessError(1, "mount", stderr="error")
-        with pytest.raises(DNSError, match="mount --bind failed"):
+
+    def mock_run(args, **kwargs):
+        if "mount" in args:
+            raise subprocess.CalledProcessError(1, "mount", stderr="error")
+        return MagicMock(returncode=0)
+
+    with patch("ttp.dns.subprocess.run", side_effect=mock_run):
+        with pytest.raises(DNSError, match="Command failed: mount -> error"):
             dns.apply_dns("eth0")
 
 
@@ -191,16 +196,121 @@ def test_apply_dns_clears_stale_before_mount(_mock_resolv_conf):
 
     original_run = MagicMock(returncode=0)
 
-    def track_mount(*args, **kwargs):
-        call_order.append("mount")
+    def track_run(args, *extra_args, **kwargs):
+        if "mount" in args:
+            call_order.append("mount")
         return original_run
 
     with (
         patch("ttp.dns._clear_stale_mounts", side_effect=track_clear) as mock_clear,
-        patch("ttp.dns.subprocess.run", side_effect=track_mount),
+        patch("ttp.dns.subprocess.run", side_effect=track_run),
         patch("ttp.dns.os.path.islink", return_value=False),
     ):
         dns.apply_dns("eth0")
 
         mock_clear.assert_called_once_with(str(fake_resolv))
         assert call_order == ["clear", "mount"]
+
+
+def test_apply_dns_systemd_resolved_active(tmp_path):
+    """apply_dns handles systemd-resolved configuration when active."""
+    fake_resolved_conf = tmp_path / "ttp.conf"
+
+    # Mock run tracking
+    run_cmds = []
+
+    def mock_run(args, **kwargs):
+        run_cmds.append(args)
+        if args == ["systemctl", "is-active", "systemd-resolved"]:
+            return MagicMock(stdout="active\n", returncode=0)
+        return MagicMock(returncode=0)
+
+    real_path = Path
+    with (
+        patch("ttp.dns.subprocess.run", side_effect=mock_run),
+        patch(
+            "ttp.dns.Path",
+            side_effect=lambda p: (
+                fake_resolved_conf if "resolved.conf.d" in str(p) else real_path(p)
+            ),
+        ),
+        patch("ttp.dns.os.path.islink", return_value=False),
+        patch("ttp.tor_detect.is_ipv6_supported", return_value=True),
+        patch("ttp.dns._is_mount_point", return_value=False),
+    ):
+        backup = dns.apply_dns("eth0", disable_ipv6=False, dns_port=9054)
+
+        assert backup["systemd_resolved"] is True
+        assert fake_resolved_conf.exists()
+        content = fake_resolved_conf.read_text()
+        assert "DNS=127.0.0.1:9054 [::1]:9054" in content
+        assert "Cache=no-negative" in content
+
+        # Verify commands executed
+        assert ["systemctl", "is-active", "systemd-resolved"] in run_cmds
+        assert ["systemctl", "reload-or-restart", "systemd-resolved"] in run_cmds
+        assert ["resolvectl", "flush-caches"] in run_cmds
+
+
+def test_apply_dns_systemd_resolved_inactive(tmp_path):
+    """apply_dns skips systemd-resolved setup when it is inactive."""
+    fake_resolved_conf = tmp_path / "ttp.conf"
+
+    run_cmds = []
+
+    def mock_run(args, **kwargs):
+        run_cmds.append(args)
+        if args == ["systemctl", "is-active", "systemd-resolved"]:
+            return MagicMock(stdout="inactive\n", returncode=0)
+        return MagicMock(returncode=0)
+
+    real_path = Path
+    with (
+        patch("ttp.dns.subprocess.run", side_effect=mock_run),
+        patch(
+            "ttp.dns.Path",
+            side_effect=lambda p: (
+                fake_resolved_conf if "resolved.conf.d" in str(p) else real_path(p)
+            ),
+        ),
+        patch("ttp.dns.os.path.islink", return_value=False),
+        patch("ttp.tor_detect.is_ipv6_supported", return_value=True),
+        patch("ttp.dns._is_mount_point", return_value=False),
+    ):
+        backup = dns.apply_dns("eth0", disable_ipv6=False, dns_port=9054)
+
+        assert backup["systemd_resolved"] is False
+        assert not fake_resolved_conf.exists()
+
+        # Reload and flush should NOT be called
+        assert ["systemctl", "reload-or-restart", "systemd-resolved"] not in run_cmds
+        assert ["resolvectl", "flush-caches"] not in run_cmds
+
+
+def test_restore_dns_systemd_resolved(tmp_path):
+    """restore_dns cleans up systemd-resolved configuration and reloads."""
+    fake_resolved_conf = tmp_path / "ttp.conf"
+    fake_resolved_conf.touch()
+
+    run_cmds = []
+
+    def mock_run(args, **kwargs):
+        run_cmds.append(args)
+        return MagicMock(returncode=0)
+
+    real_path = Path
+    with (
+        patch("ttp.dns.subprocess.run", side_effect=mock_run),
+        patch(
+            "ttp.dns.Path",
+            side_effect=lambda p: (
+                fake_resolved_conf if "resolved.conf.d" in str(p) else real_path(p)
+            ),
+        ),
+        patch("ttp.dns._is_mount_point", return_value=True),
+    ):
+        dns.restore_dns({"mount_target": "/etc/resolv.conf", "systemd_resolved": True})
+
+        assert not fake_resolved_conf.exists()
+        assert ["systemctl", "reload-or-restart", "systemd-resolved"] in run_cmds
+        assert ["resolvectl", "flush-caches"] in run_cmds

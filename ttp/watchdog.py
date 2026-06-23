@@ -31,6 +31,37 @@ WATCHDOG_SERVICE_PATH = Path(f"/run/systemd/system/{WATCHDOG_SERVICE_NAME}.servi
 def _write_watchdog_service_unit() -> None:
     """Write the volatile systemd unit file for the TTP watchdog service."""
     python_bin = sys.executable
+    import pwd
+
+    has_watchdog_user = False
+    try:
+        pwd.getpwnam("ttp-watchdog")
+        has_watchdog_user = True
+    except KeyError:
+        pass
+
+    service_lines = [
+        "Type=simple",
+        f"ExecStart={python_bin} -m ttp.cli watchdog run",
+        "Restart=on-failure",
+        "RestartSec=3",
+        "LimitNOFILE=32768",
+    ]
+
+    if has_watchdog_user:
+        service_lines.extend(
+            [
+                "User=ttp-watchdog",
+                "Group=ttp-watchdog",
+                "CapabilityBoundingSet=CAP_NET_ADMIN",
+                "AmbientCapabilities=CAP_NET_ADMIN",
+                "StandardOutput=journal",
+                "StandardError=journal",
+            ]
+        )
+
+    service_str = "\n".join(service_lines)
+
     unit = f"""\
 [Unit]
 Description=TTP Session Watchdog & Killswitch
@@ -38,10 +69,7 @@ After=network.target ttp-tor.service
 Requires=ttp-tor.service
 
 [Service]
-Type=simple
-ExecStart={python_bin} -m ttp.cli watchdog run
-Restart=no
-LimitNOFILE=32768
+{service_str}
 """
     WATCHDOG_SERVICE_PATH.parent.mkdir(parents=True, exist_ok=True)
     WATCHDOG_SERVICE_PATH.write_text(unit, encoding="utf-8")
@@ -158,6 +186,8 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
         (failed_component, error_message)
         e.g., ("dns", "overlay unmounted") or (None, None) if all is healthy.
     """
+    lock = state.read_lock()
+
     # 1. DNS Overlay mount check
     from ttp.dns import RESOLV_CONF, _is_mount_point
 
@@ -166,6 +196,25 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
         target = Path(os.path.realpath(str(RESOLV_CONF)))
     if not _is_mount_point(str(target)):
         return "dns", "resolv.conf overlay mount has been unmounted"
+
+    # 1b. Check systemd-resolved if it was active on startup
+    if lock:
+        dns_backup = lock.get("dns_backup")
+        if dns_backup and dns_backup.get("systemd_resolved"):
+            resolved_config = Path("/run/systemd/resolved.conf.d/ttp.conf")
+            if not resolved_config.exists():
+                return (
+                    "dns",
+                    "systemd-resolved drop-in configuration file has been deleted",
+                )
+            res_resolved = subprocess.run(
+                ["systemctl", "is-active", "systemd-resolved"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if res_resolved.stdout.strip() != "active":
+                return "dns", "systemd-resolved systemd service is inactive/stopped"
 
     # 2. Firewall Ruleset check
     res = subprocess.run(
@@ -183,7 +232,6 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
         )
 
     # Verify bypass rules if configured in state lock
-    lock = state.read_lock()
     if lock:
         import pwd
         import grp
@@ -248,91 +296,39 @@ def attempt_auto_healing(failed_component: str) -> bool:
     if not lock:
         return False
 
-    no_ipv6 = lock.get("no_ipv6", False)
-
     logger.warning(
         "Watchdog: Initiating auto-healing for failed component '%s'...",
         failed_component,
     )
     try:
-        if failed_component == "dns":
-            interface = dns.detect_active_interface()
-            dns.apply_dns(interface, disable_ipv6=no_ipv6)
-            logger.info(
-                "Watchdog: Auto-healed DNS overlay on interface '%s'.", interface
+        if failed_component == "tor":
+            logger.info("Watchdog: Restarting Tor service via systemctl...")
+            res = subprocess.run(
+                ["systemctl", "restart", "ttp-tor.service"],
+                capture_output=True,
+                text=True,
+                check=False,
             )
-            return True
-
-        elif failed_component == "firewall":
-            from ttp.tor_detect import detect_tor
-            import pwd
-            import grp
-
-            tor_info = detect_tor()
-            tor_user = tor_info.get("tor_user", "debian-tor")
-
-            # Resolve UIDs and GIDs for bypass rules
-            users = lock.get("bypass_users", [])
-            groups = lock.get("bypass_groups", [])
-
-            bypass_uids = []
-            for u in users:
-                try:
-                    if u.isdigit():
-                        bypass_uids.append(int(u))
-                    else:
-                        bypass_uids.append(pwd.getpwnam(u).pw_uid)
-                except KeyError:
-                    pass
-
-            bypass_gids = []
-            for g in groups:
-                try:
-                    if g.isdigit():
-                        bypass_gids.append(int(g))
-                    else:
-                        bypass_gids.append(grp.getgrnam(g).gr_gid)
-                except KeyError:
-                    pass
-
-            kwargs_fw = {}
-            if bypass_uids:
-                kwargs_fw["bypass_uids"] = bypass_uids
-            if bypass_gids:
-                kwargs_fw["bypass_gids"] = bypass_gids
-
-            firewall.apply_rules(
-                tor_user=tor_user,
-                transport_port=lock.get("transport_port", 9041),
-                dns_port=lock.get("dns_port", 9054),
-                allow_root=lock.get("allow_root", False),
-                lan_bypass=lock.get("lan_bypass", True),
-                disable_ipv6=no_ipv6,
-                **kwargs_fw,
+            if res.returncode == 0:
+                logger.info("Watchdog: Restarted Tor service successfully.")
+                return True
+            else:
+                logger.error(
+                    "Watchdog: Failed to restart Tor service: %s",
+                    res.stderr.strip() if res.stderr else f"Exit code {res.returncode}",
+                )
+                return False
+        else:
+            # dns and firewall tampering: fail closed immediately.
+            logger.error(
+                "Watchdog: Tampering or failure detected on critical component '%s'. "
+                "Fail-closed policy active: auto-healing skipped.",
+                failed_component,
             )
-            logger.info("Watchdog: Auto-healed firewall rules successfully.")
-            return True
-
-        elif failed_component == "tor":
-            from ttp import tor_install
-
-            tor_install.ensure_tor_ready(
-                transport_port=lock.get("transport_port", 9041),
-                dns_port=lock.get("dns_port", 9054),
-                use_bridges=lock.get("use_bridges", False),
-                bridges=lock.get("bridges", []),
-                disable_ipv6=no_ipv6,
-            )
-            logger.info(
-                "Watchdog: Auto-healed Tor service by regenerating configuration and restarting ttp-tor."
-            )
-            return True
-
+            return False
     except Exception as e:
         logger.error("Watchdog: Auto-healing failed for '%s': %s", failed_component, e)
         return False
-
-    return False
 
 
 def trigger_emergency_killswitch(failed_component: str, err_msg: str) -> None:

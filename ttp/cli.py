@@ -513,7 +513,7 @@ def start(
     external_daemon: bool = typer.Option(
         False,
         "--external-daemon",
-        help="Run TTP in systemd-less BYOD mode, delegating Tor lifecycle to the host.",
+        help="Run TTP in BYOD mode, delegating Tor lifecycle management to the host.",
     ),
     tor_uid: Optional[str] = typer.Option(
         None,
@@ -528,6 +528,9 @@ def start(
 ) -> None:
     """Start the transparent Tor proxy session."""
     _require_root()
+
+    if not os.path.exists("/run/systemd/system"):
+        sys.exit("TTP explicitly requires systemd.")
 
     if external_daemon and watchdog:
         _print_error(
@@ -830,7 +833,7 @@ def start(
     if interface is None:
         interface = dns.detect_active_interface()
     try:
-        dns_backup = dns.apply_dns(interface, disable_ipv6=no_ipv6)
+        dns_backup = dns.apply_dns(interface, disable_ipv6=no_ipv6, dns_port=dns_port)
     except DNSError as exc:
         logger.error("DNS setup failed: %s", exc)
         _print_error("DNS Setup Failed", str(exc))
@@ -1046,7 +1049,7 @@ def restart(
     external_daemon: bool = typer.Option(
         False,
         "--external-daemon",
-        help="Run TTP in systemd-less BYOD mode, delegating Tor lifecycle to the host.",
+        help="Run TTP in BYOD mode, delegating Tor lifecycle management to the host.",
     ),
     tor_uid: Optional[str] = typer.Option(
         None,
@@ -1061,6 +1064,9 @@ def restart(
 ) -> None:
     """Restart the transparent Tor proxy session."""
     _require_root()
+
+    if not os.path.exists("/run/systemd/system"):
+        sys.exit("TTP explicitly requires systemd.")
 
     if state.read_lock() is not None:
         console.print(f"{_PREFIX} Stopping current session...")
@@ -1525,6 +1531,72 @@ def watchdog_run(
     except Exception as e:
         logger.critical("Watchdog loop crashed: %s", e)
         sys.exit(1)
+
+
+@app.command()
+def bypass(
+    command: list[str] = typer.Argument(
+        ...,
+        help="The command and arguments to execute with Tor bypass.",
+    ),
+) -> None:
+    """Execute a command bypassing the Tor transparent proxy.
+
+    This command runs the target process and its children inside a systemd transient scope
+    configured under 'ttp-bypass.slice', de-escalating privileges to the invoking user.
+    """
+    import shutil
+    import subprocess
+
+    sudo_uid = os.environ.get("SUDO_UID")
+    sudo_gid = os.environ.get("SUDO_GID")
+
+    if os.geteuid() != 0 or not sudo_uid or not sudo_gid:
+        _print_error(
+            "Invalid Execution Context",
+            "This command must be run with sudo to safely delegate privileges via systemd-run.",
+        )
+        raise typer.Exit(code=1)
+
+    if not os.path.exists("/run/systemd/system"):
+        sys.exit("TTP explicitly requires systemd.")
+
+    lock = state.read_lock()
+    if lock is None:
+        _print_error(
+            "No Active Session",
+            "TTP transparent proxy is not active. Bypass is not required.",
+        )
+        raise typer.Exit(code=1)
+
+    # Resolve systemd-run path
+    systemd_run_bin = shutil.which("systemd-run")
+    if not systemd_run_bin:
+        _print_error(
+            "systemd-run Missing",
+            "The 'systemd-run' command is required for transient scope execution but was not found.",
+        )
+        raise typer.Exit(code=1)
+
+    # Construct the systemd-run command
+    run_cmd = [
+        systemd_run_bin,
+        f"--uid={sudo_uid}",
+        f"--gid={sudo_gid}",
+        "--slice=ttp-bypass",
+        "--scope",
+        "--",
+    ] + command
+
+    try:
+        # Run systemd-run, passing through stdin, stdout, and stderr
+        res = subprocess.run(run_cmd, check=False)
+        return_code = res.returncode
+    except Exception as e:
+        _print_error("Execution Failure", f"Failed to execute bypass command: {e}")
+        raise typer.Exit(code=1)
+
+    raise typer.Exit(code=return_code)
 
 
 if __name__ == "__main__":

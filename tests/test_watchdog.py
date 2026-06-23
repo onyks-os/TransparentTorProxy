@@ -196,14 +196,10 @@ def test_check_system_integrity_tor_unresponsive(
     "ttp.watchdog.state.read_lock",
     return_value={"transport_port": 9041, "dns_port": 9054},
 )
-@patch("ttp.dns.detect_active_interface", return_value="wlan0")
-@patch("ttp.dns.apply_dns")
-def test_attempt_auto_healing_dns(mock_apply_dns, mock_detect, mock_read):
-    """attempt_auto_healing('dns') runs dns auto-healing functions."""
+def test_attempt_auto_healing_dns(mock_read):
+    """attempt_auto_healing('dns') returns False (fail-closed, auto-healing skipped)."""
     result = wd.attempt_auto_healing("dns")
-    assert result is True
-    mock_detect.assert_called_once()
-    mock_apply_dns.assert_called_once_with("wlan0", disable_ipv6=False)
+    assert result is False
 
 
 @patch(
@@ -215,21 +211,10 @@ def test_attempt_auto_healing_dns(mock_apply_dns, mock_detect, mock_read):
         "lan_bypass": False,
     },
 )
-@patch("ttp.tor_detect.detect_tor", return_value={"tor_user": "custom-tor"})
-@patch("ttp.firewall.apply_rules")
-def test_attempt_auto_healing_firewall(mock_apply_fw, mock_detect_tor, mock_read):
-    """attempt_auto_healing('firewall') reapplies nftables rules from state configuration."""
+def test_attempt_auto_healing_firewall(mock_read):
+    """attempt_auto_healing('firewall') returns False (fail-closed, auto-healing skipped)."""
     result = wd.attempt_auto_healing("firewall")
-    assert result is True
-    mock_detect_tor.assert_called_once()
-    mock_apply_fw.assert_called_once_with(
-        tor_user="custom-tor",
-        transport_port=9080,
-        dns_port=9090,
-        allow_root=True,
-        lan_bypass=False,
-        disable_ipv6=False,
-    )
+    assert result is False
 
 
 @patch(
@@ -242,17 +227,17 @@ def test_attempt_auto_healing_firewall(mock_apply_fw, mock_detect_tor, mock_read
         "bridges": ["obfs4 192.0.2.1:1234"],
     },
 )
-@patch("ttp.tor_install.ensure_tor_ready")
-def test_attempt_auto_healing_tor(mock_ensure, mock_read):
-    """attempt_auto_healing('tor') restarts the systemd 'ttp-tor' service."""
+@patch("ttp.watchdog.subprocess.run")
+def test_attempt_auto_healing_tor(mock_run, mock_read):
+    """attempt_auto_healing('tor') restarts the systemd 'ttp-tor.service' service."""
+    mock_run.return_value = MagicMock(returncode=0)
     result = wd.attempt_auto_healing("tor")
     assert result is True
-    mock_ensure.assert_called_once_with(
-        transport_port=9041,
-        dns_port=9054,
-        use_bridges=True,
-        bridges=["obfs4 192.0.2.1:1234"],
-        disable_ipv6=False,
+    mock_run.assert_called_once_with(
+        ["systemctl", "restart", "ttp-tor.service"],
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 
@@ -444,3 +429,81 @@ def test_run_watchdog_loop_suspends_and_resumes(
     mock_check.assert_not_called()
     sleep_calls = [call[0][0] for call in mock_sleep.call_args_list]
     assert 10 in sleep_calls
+
+
+@patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
+@patch("ttp.dns._is_mount_point", return_value=True)
+@patch("ttp.tor_control.get_controller")
+@patch("ttp.watchdog.state.read_lock")
+@patch("ttp.watchdog.subprocess.run")
+@patch("ttp.watchdog.Path.exists")
+def test_check_system_integrity_systemd_resolved_healthy(
+    mock_exists, mock_run, mock_read_lock, mock_get_ctrl, mock_is_mount
+):
+    """check_system_integrity returns (None, None) when systemd-resolved is active, config exists, and service is active."""
+    mock_read_lock.return_value = {"dns_backup": {"systemd_resolved": True}}
+
+    # Path.exists needs to return True for /run/systemd/resolved.conf.d/ttp.conf
+    mock_exists.return_value = True
+
+    # subprocess.run needs to handle:
+    # 1. nft list table inet ttp
+    # 2. systemctl is-active systemd-resolved
+    def mock_run_cmd(args, **kwargs):
+        if "nft" in args:
+            return MagicMock(
+                stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0
+            )
+        if "systemd-resolved" in args:
+            return MagicMock(stdout="active\n", returncode=0)
+        return MagicMock(returncode=0)
+
+    mock_run.side_effect = mock_run_cmd
+
+    mock_ctrl = MagicMock()
+    mock_ctrl.__enter__ = lambda s: s
+    mock_ctrl.__exit__ = MagicMock(return_value=False)
+    mock_get_ctrl.return_value = mock_ctrl
+
+    comp, err = wd.check_system_integrity()
+    assert comp is None
+    assert err is None
+
+
+@patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
+@patch("ttp.dns._is_mount_point", return_value=True)
+@patch("ttp.watchdog.state.read_lock")
+@patch("ttp.watchdog.Path.exists", return_value=False)
+def test_check_system_integrity_systemd_resolved_missing_config(
+    mock_exists, mock_read_lock, mock_is_mount
+):
+    """check_system_integrity returns error if systemd-resolved was active on startup but config file is missing."""
+    mock_read_lock.return_value = {"dns_backup": {"systemd_resolved": True}}
+
+    comp, err = wd.check_system_integrity()
+    assert comp == "dns"
+    assert "systemd-resolved drop-in configuration file has been deleted" in err
+
+
+@patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
+@patch("ttp.dns._is_mount_point", return_value=True)
+@patch("ttp.watchdog.state.read_lock")
+@patch("ttp.watchdog.subprocess.run")
+@patch("ttp.watchdog.Path.exists")
+def test_check_system_integrity_systemd_resolved_inactive_service(
+    mock_exists, mock_run, mock_read_lock, mock_is_mount
+):
+    """check_system_integrity returns error if systemd-resolved service is inactive/stopped."""
+    mock_read_lock.return_value = {"dns_backup": {"systemd_resolved": True}}
+    mock_exists.return_value = True
+
+    def mock_run_cmd(args, **kwargs):
+        if "systemd-resolved" in args:
+            return MagicMock(stdout="inactive\n", returncode=0)
+        return MagicMock(returncode=0)
+
+    mock_run.side_effect = mock_run_cmd
+
+    comp, err = wd.check_system_integrity()
+    assert comp == "dns"
+    assert "systemd-resolved systemd service is inactive/stopped" in err

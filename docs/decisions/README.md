@@ -24,4 +24,5 @@ Each ADR is formatted using the Markdown standard and named using a sequential I
 5. [0005-tor-bridge-support.md](file:///home/onyks/Documents/GitHub/TransparentTorProxy/docs/decisions/0005-tor-bridge-support.md) — Native bridge and pluggable transports support in generated `torrc`.
 6. [0006-subprocess-orchestration.md](file:///home/onyks/Documents/GitHub/TransparentTorProxy/docs/decisions/0006-subprocess-orchestration.md) — Retaining `subprocess`-based network orchestration instead of a native Netlink implementation.
 7. [0007-ruleset-testing-with-nse.md](file:///home/onyks/Documents/GitHub/TransparentTorProxy/docs/decisions/0007-ruleset-testing-with-nse.md) — Programmatic testing using Network Sandbox Engine (NSE) and Scapy sniffer.
-8. [0008-byod-architecture.md](file:///home/onyks/Documents/GitHub/TransparentTorProxy/docs/decisions/0008-byod-architecture.md) — Support for systemd-less environments via Bring Your Own Daemon (BYOD).
+8. [0008-byod-architecture.md](docs/decisions/0008-byod-architecture.md) — Support for custom external Tor instances via Bring Your Own Daemon (BYOD) on systemd hosts.
+9. [0009-systemd-resolved-bypass.md](docs/decisions/0009-systemd-resolved-bypass.md) — systemd-resolved DNS bypass and fail-closed firewall kernel drop.

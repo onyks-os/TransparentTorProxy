@@ -83,6 +83,14 @@ mkdir -p %{buildroot}/opt/ttp/resources/selinux
 cp ttp/resources/selinux/ttp_tor_policy.pp %{buildroot}/opt/ttp/resources/selinux/
 cp ttp/resources/selinux/ttp_tor_policy.te %{buildroot}/opt/ttp/resources/selinux/
 
+# Install Polkit rules
+mkdir -p %{buildroot}%{_datadir}/polkit-1/rules.d
+cp ttp/resources/polkit/50-ttp-watchdog.rules %{buildroot}%{_datadir}/polkit-1/rules.d/
+
+%pre
+getent group ttp-watchdog >/dev/null || groupadd -r ttp-watchdog
+getent passwd ttp-watchdog >/dev/null || useradd -r -g ttp-watchdog -d /run/ttp -s /sbin/nologin -c "TTP Watchdog Daemon" ttp-watchdog
+
 %post
 %systemd_post ttp.service
 # $1 == 1 means initial installation, not an upgrade
@@ -108,6 +116,7 @@ fi
 %{python3_sitelib}/ttp/
 %{python3_sitelib}/transparent_tor_proxy-*.dist-info/
 %{_unitdir}/ttp.service
+%{_datadir}/polkit-1/rules.d/50-ttp-watchdog.rules
 %dir /opt/ttp
 %dir /opt/ttp/resources
 %dir /opt/ttp/resources/selinux

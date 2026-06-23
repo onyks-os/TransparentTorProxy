@@ -91,6 +91,10 @@ chmod +x "$BUILD_DIR/usr/bin/ttp"
 # Copy the systemd service file from our repo into the package structure.
 cp packaging/ttp.service "$BUILD_DIR/lib/systemd/system/"
 
+# Install Polkit rules
+mkdir -p "$BUILD_DIR/usr/share/polkit-1/rules.d"
+cp ttp/resources/polkit/50-ttp-watchdog.rules "$BUILD_DIR/usr/share/polkit-1/rules.d/"
+
 # Create the documentation folder to store the copyright (required by Debian standards)
 mkdir -p "$BUILD_DIR/usr/share/doc/transparent-tor-proxy"
 cp LICENSE "$BUILD_DIR/usr/share/doc/transparent-tor-proxy/copyright"
@@ -120,6 +124,10 @@ cat << 'EOF' > "$BUILD_DIR/DEBIAN/postinst"
 set -e
 # If the package is being configured (installed/upgraded)...
 if [ "$1" = "configure" ]; then
+    # Create the ttp-watchdog system user/group if they do not exist
+    getent group ttp-watchdog >/dev/null || groupadd -r ttp-watchdog
+    getent passwd ttp-watchdog >/dev/null || useradd -r -g ttp-watchdog -d /run/ttp -s /sbin/nologin -c "TTP Watchdog Daemon" ttp-watchdog
+
     # Tell systemd to reload its configuration so it recognizes the new ttp.service file.
     systemctl daemon-reload || true
     echo "TTP installed. To enable on boot: sudo systemctl enable ttp"

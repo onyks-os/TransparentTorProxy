@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 **MVP Language:** Python 3  
 
-* **Target OS:** Any systemd-based Linux distribution *(Debian, Ubuntu, Fedora, Arch, etc.)* (Optional: systemd-less environments supported via BYOD mode)
+* **Target OS:** Any systemd-based Linux distribution *(Debian, Ubuntu, Fedora, Arch, etc.)*
 
 ---
 
@@ -198,7 +198,7 @@ Implements continuous, proactive session monitoring and auto-healing features to
 
 * **Volatile Service Daemon**: Configures and writes a dynamic systemd service unit (`/run/systemd/system/ttp-watchdog.service`) that runs the command `ttp watchdog run`. Because it resides in `/run/`, it evaporates on system reboot.
 * **Continuous Monitoring Loop**: Inspects the core subsystems every 15 seconds:
-  1. **DNS Integrity**: Confirms `/etc/resolv.conf` (or its realpath) is still a valid active `mount --bind` mountpoint.
+  1. **DNS Integrity**: Confirms `/etc/resolv.conf` (or its realpath) is still a valid active `mount --bind` mountpoint. If `systemd-resolved` was active on startup, it also confirms that the volatile configuration drop-in file is present in `/run/systemd/resolved.conf.d/` and the `systemd-resolved` service is still running.
   2. **Firewall Integrity**: Confirms that the `inet ttp` nftables table exists and contains the `filter_out` chain, as well as verifying any active bypass exceptions (users/groups) registered in the session lock.
   3. **Tor daemon health**: Confirms the ControlSocket is open and active, falling back to checking if the systemd `ttp-tor.service` is in an active state.
 * **Auto-Healing ("First Strike")**: If an integrity check fails, the watchdog triggers a single-strike recovery attempt based on the failing component (e.g. re-running DNS overlay, regenerating firewall rules including bypass configurations, or restarting the `ttp-tor` service). It then sleeps for 3 seconds to let changes stabilize.

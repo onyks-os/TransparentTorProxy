@@ -9,6 +9,7 @@ This document outlines the strategic vision and release plan for **TransparentTo
 TTP has successfully consolidated the following major milestones:
 * **v0.4.0**: Native IPv6 support, structured JSON logging, and link carrier detection in the watchdog.
 * **v0.4.5**: UID/GID split tunneling, Tor bridges & Pluggable Transports (obfs4/snowflake), BYOD Mode, force-disable IPv6, zero-leak graceful teardown with conntrack flush, and advanced testing suites (NSE, Chaos Monkey).
+* **v0.4.6**: Application exclusion (cgroups v2 bypass) via systemd transient scopes, privilege dropping (watchdog user `ttp-watchdog` with `CAP_NET_ADMIN`), and strict systemd requirements.
 
 ---
 
@@ -20,21 +21,21 @@ The following sections detail our strategic objectives and feature releases for 
 
 * **Linux Capabilities (Privilege Dropping)**
   * **Priority:** Maximum
-  * **Target Release:** v0.4.6 (Q4 2026)
+  * **Target Release:** v0.4.6 (Completed)
   * **Technical Objective:** Eliminate the need for full-root execution of the Python daemon.
-  * **Architectural Notes:** Utilize `capng` or `os.setuid`/`os.setgid` in Python. The TTP daemon will acquire `CAP_NET_ADMIN` to configure `nftables`, and then de-escalate privileges to a non-root user during the background execution of the watchdog.
+  * **Architectural Notes:** Run the background watchdog daemon under the dedicated `ttp-watchdog` system user, dropping all root privileges and retaining only CAP_NET_ADMIN capabilities.
 
 * **systemd-resolved Bypass**
   * **Priority:** Maximum
-  * **Target Release:** v0.4.6 (Q4 2026)
+  * **Target Release:** v0.4.7 (Q4 2026)
   * **Technical Objective:** Prevent collisions and overrides on the host system's DNS resolver.
   * **Architectural Notes:** Implement DNS routing interception via D-Bus or apply a hardcoded override configuration under `/etc/systemd/resolved.conf.d/`, replacing or complementing the current strategy based on the `mount --bind` overlay.
 
 * **Application Exclusion via Linux cgroups v2 (Bypass)**
   * **Priority:** High
-  * **Target Release:** v0.4.6 (Q4 2026)
+  * **Target Release:** v0.4.6 (Completed)
   * **Technical Objective:** Allow specific processes and their children to bypass the transparent proxy and connect directly to the cleartext internet.
-  * **Architectural Notes:** Implement a `ttp bypass <command>` CLI runner that creates `/sys/fs/cgroup/ttp-bypass`, assigns the target process PID, drops root privileges to the caller, and uses `nftables` `socket cgroupv2` rules to permit bypass.
+  * **Architectural Notes:** Implement a `ttp bypass <command>` CLI runner that runs commands inside a systemd transient scope under `ttp-bypass.slice` (using `systemd-run`), dropping root privileges to the caller, and uses `nftables` wildcard `socket cgroupv2` rules to permit bypass.
 
 * **Kernel-level Auditing (eBPF)**
   * **Priority:** Medium
@@ -48,7 +49,7 @@ The following sections detail our strategic objectives and feature releases for 
 
 * **`transitions`**
   * **Priority:** Maximum
-  * **Target Release:** v0.4.6 (Q4 2026)
+  * **Target Release:** v0.4.7 (Q4 2026)
   * **Purpose:** Implement a formal Finite State Machine (FSM) for the Watchdog.
   * **Architectural Notes:** Replaces the current procedural logic based on `if/else` checks. This makes state transitions (and emergency killswitch activation) formally testable and 100% predictable.
 
@@ -86,7 +87,7 @@ The following sections detail our strategic objectives and feature releases for 
 
 * **VPN Compatibility (Chained Tunneling)**
   * **Priority:** High
-  * **Target Release:** v0.4.6 (Q4 2026) — *Shifted from Q3 2026*
+  * **Target Release:** v0.4.7 (Q4 2026) — *Shifted from Q3 2026*
   * **Technical Objective:** Ensure interoperability with concurrent VPN tunnels.
   * **Architectural Notes:** Automatically detect routes and virtual interfaces (e.g. `tun+`, `wg+`) and generate dedicated `nftables` rules to properly support both *Tor-over-VPN* and *VPN-over-Tor* configurations.
 

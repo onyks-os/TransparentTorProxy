@@ -1,4 +1,4 @@
-# Threat Modeling and Attack Surface Analysis for TTP v0.4.5
+# Threat Modeling and Attack Surface Analysis for TTP v0.4.6
 
 ## Assets to Protect
 - User's real IP address

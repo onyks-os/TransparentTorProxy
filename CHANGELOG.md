@@ -10,6 +10,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6] - 2026-06-23
+
+### Added
+
+- **Application Exclusion via cgroups v2 Bypass (`ttp bypass`)**: Added the new `ttp bypass <command>` CLI command. This command de-escalates privileges securely to the invoking user and runs the target application inside a systemd transient scope under `ttp-bypass.slice` using `systemd-run`.
+- **cgroups v2 Firewall Rules**: Configured `apply_rules()` to inject `socket cgroupv2 level 1 "ttp-bypass.slice" accept` into the `output` NAT and `filter_out` filter chains, allowing any processes running inside the slice to bypass Tor transparent proxying atomically.
+- **Privilege-Separated Watchdog User**: Added system user and group `ttp-watchdog` configuration to run the background watchdog daemon with only `CAP_NET_ADMIN` capabilities instead of root (`CAP_SYS_ADMIN`).
+- **Polkit Authorization Rules**: Added `ttp/resources/polkit/50-ttp-watchdog.rules` to authorize the `ttp-watchdog` user to restart the Tor daemon and watchdog services via systemd without elevated privileges.
+- **Fail-Closed Watchdog Policy**: Modified the watchdog to implement a strict fail-closed policy. Under DNS overlay mount or firewall tampering/failure, the watchdog immediately applies the emergency killswitch and halts (rather than attempting unsafe file-modifying operations without root privileges).
+- **Arch, Debian, RPM, and Installer Integration**: Updated installers and packages to dynamically create the `ttp-watchdog` system user and group, deploy the Polkit policy rule, and clean them up during uninstallation.
+
+### Changed
+
+- **Systemd Hard Requirement**: Declared systemd as strictly required for TTP. Start, restart, and bypass CLI commands check for systemd on startup and fail immediately with a descriptive error message if missing. Removed references to systemd-less environments, Alpine Linux, or Void Linux in documents, ADRs, and help strings.
+- **Bypass Command Sudo Check**: Improved the `ttp bypass` CLI command to fail early with a clean, descriptive error message ("This command must be run with sudo to safely delegate privileges via systemd-run.") if executed without `sudo` or outside a `sudo` environment.
+
 ## [0.4.5] - 2026-06-21
 
 ### Added

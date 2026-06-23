@@ -61,6 +61,19 @@ fi
 echo "[TTP] Creating global 'ttp' command..."
 ln -sf /opt/ttp/venv/bin/ttp /usr/local/bin/ttp
 
+# 3b. Watchdog System User and Group Creation
+echo "[TTP] Creating system user/group 'ttp-watchdog'..."
+getent group ttp-watchdog >/dev/null || groupadd -r ttp-watchdog
+getent passwd ttp-watchdog >/dev/null || useradd -r -g ttp-watchdog -d /run/ttp -s /sbin/nologin -c "TTP Watchdog Daemon" ttp-watchdog
+
+# 3c. Polkit Rule Installation
+if [ -d /usr/share/polkit-1/rules.d ]; then
+    echo "[TTP] Installing Polkit rule..."
+    cp ttp/resources/polkit/50-ttp-watchdog.rules /usr/share/polkit-1/rules.d/
+    chmod 644 /usr/share/polkit-1/rules.d/50-ttp-watchdog.rules
+    chown root:root /usr/share/polkit-1/rules.d/50-ttp-watchdog.rules
+fi
+
 
 # 4. SELinux Optimization (Fedora/RHEL/CentOS Family)
 # On Red Hat-based systems, SELinux often blocks Tor from binding to non-standard ports.
