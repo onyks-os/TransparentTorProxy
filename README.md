@@ -44,19 +44,29 @@ No per-application setup needed - just `sudo ttp start` and **every connection**
 > [!WARNING]
 > **If you are a whistleblower or are engaging in high-risk activities, DO NOT use TTP.** Instead, use officially audited and reliable tools like [TailsOS](https://tails.net/) or the [Tor Browser](https://www.torproject.org/) directly. The authors and contributors of TTP assume no responsibility for your safety or the consequences of using this software.
 
+## Why TTP?
+
+Unlike legacy transparent proxy scripts (e.g., TorGhost, Anonsurf) that rely on destructive configuration file overrides and outdated iptables rulesets, TTP is engineered as a systemd-native, fail-closed solution for modern Linux distributions.
+
+Key architectural advantages:
+* **No Per-Application Configuration**: Intercepts all TCP and DNS traffic globally at the network layer, eliminating the need to configure SOCKS5 settings in individual applications.
+* **Zero DNS Leaks**: Reroutes DNS queries via a kernel-level bind-mount overlay on `/etc/resolv.conf` (with automated cleanup on teardown), resolving leaks natively without altering persistent files.
+* **Systemd-Native Fail-Closed Design**: Leverages isolated `inet ttp` nftables tables and dedicated systemd units. In the event of a crash, watchdog trigger, or unclean termination, the network is either securely routed via Tor or blocked entirely (fail-closed), preventing cleartext leaks.
+* **Volatile Core**: The entire session state, temporary configurations, lockfiles, and logs reside exclusively in volatile memory (`tmpfs`), leaving no forensic footprint on physical storage.
+
 ## Features
 
-* **Volatile Core Architecture**: Entire session state, lockfiles, and logs are stored exclusively in `tmpfs` (`/run/ttp/` and `/run/tor/ttp/`), ensuring no forensic traces are written to physical disk and automatically vanishing on reboot.
-* **Stateless DNS Overlay & systemd-resolved Intercept**: Transparently redirects DNS requests using a kernel-level `mount --bind` overlay on `/etc/resolv.conf` without modifying the original configuration file on disk, with automatic stale mount cleanup. If `systemd-resolved` is active, TTP automatically hijacks its configuration using a volatile drop-in to prevent leaks via D-Bus or NSS, backed by a strict kernel-level firewall fail-closed policy (guillotine) dropping non-localhost outbound resolved queries.
-* **Proactive Watchdog & Killswitch**: Active background session integrity daemon monitoring Tor status, nftables table/chain presence, and DNS overlay mount. Triggers a single-strike auto-healing repair or a hard network lockout (emergency drop-all killswitch) under persistent failure.
-* **LAN Bypass & Split Tunneling**: Excludes local subnets (RFC 1918 & Link-Local) dynamically from Tor routing to maintain access to local resources (printers, NAS). Supports user- or group-specific exceptions (`--bypass-user` / `--bypass-group`) via `nftables` uid/gid checks.
-* **Native Dual-Stack IPv6 Redirection**: Dynamically detects IPv6 loopback availability, building dual-stack nftables redirect chains or dropping all outgoing IPv6 traffic (IPv6 leak prevention) if unsupported.
-* **DoH/DoT Leak Mitigation**: Actively blocks outbound DoT (port 853) and well-known DoH resolver IPs (port 443) to force system fallback to Tor DNS, utilizing canary domains in `torrc` to disable browser-level DoH where supported.
-* **Native Tor Service Management**: Tor is managed via a dedicated volatile `ttp-tor.service` systemd unit running on non-standard ports, coexisting seamlessly with any standard system `tor.service` without address conflicts.
+* **Volatile Core**: Stores the entire session state, lockfiles, and logs exclusively in volatile `tmpfs` (`/run/ttp/` and `/run/tor/ttp/`), ensuring no traces are written to physical storage and all state disappears automatically on reboot.
+* **Stateless Overlay & systemd-resolved Intercept**: Transparently routes DNS requests using a kernel-level `mount --bind` overlay on `/etc/resolv.conf` without modifying the original file on disk. Hijacks active `systemd-resolved` configurations using a volatile drop-in to prevent leaks via D-Bus or NSS, backed by a strict kernel-level firewall drop policy on non-localhost outbound resolved queries.
+* **Continuous Integrity Protection (Watchdog & Killswitch)**: Runs an active background monitor checking Tor status, nftables chain presence, and the DNS overlay mount, automatically triggering single-strike repairs or a hard network lockout (emergency drop-all killswitch) on persistent integrity failure.
+* **Preserved LAN Access & Segmented Traffic (LAN Bypass & Split Tunneling)**: Dynamically excludes local subnets (RFC 1918 and Link-Local) from Tor routing to preserve access to local devices. Supports user- or group-specific exemptions (`--bypass-user` / `--bypass-group`) using native `nftables` UID/GID checks.
+* **Zero IPv6 Leaks (Dual-Stack Redirection)**: Dynamically detects IPv6 routing availability, building dual-stack redirect chains or applying drop rules to outgoing IPv6 traffic when loopback routing is not available.
+* **Block Secure DNS Bypasses (DoT/DoH Mitigation)**: Rejects outbound DoT (port 853) and well-known public DoH resolver IPs (port 443) to force fallback to Tor DNS, mapping canary domains in `torrc` to disable browser-level DoH.
+* **Coexistence with System Tor (Native Tor Service Management)**: Manages Tor via a dedicated, volatile `ttp-tor.service` systemd unit running on non-standard ports, coexisting with standard system Tor instances.
 
 ## Requirements
 
-* **Linux with systemd** (strictly required for process control and network slice isolation)
+* **Linux with systemd**
 * **Python 3.10+**
 * **nftables** (pre-installed on most modern distros)
 * **Root privileges** (required for firewall and DNS modifications)
@@ -128,6 +138,9 @@ For more advanced setups and circumvention profiles, see the [Advanced Security 
 
 ## Manual Leak Verification
 
+<details>
+<summary>Click to expand manual verification steps</summary>
+
 To confirm that the tunnel is working correctly and no leaks are present:
 
 1. **Verify Tor Exit IP:**
@@ -155,6 +168,8 @@ To confirm that the tunnel is working correctly and no leaks are present:
 4. **Web-based Verification:**
    Always perform additional tests on [dnsleaktest.com](https://www.dnsleaktest.com) and [ipleak.net](https://ipleak.net).
 
+</details>
+
 ### Full Uninstallation
 
 To remove TTP completely from the system:
@@ -166,6 +181,15 @@ sudo ./scripts/uninstall.sh
 ## How It Works
 
 TTP transparently routes all network traffic by orchestrating standard Linux kernel subsystems, system utilities, and Tor's control interfaces:
+
+```mermaid
+flowchart LR
+    App["Application"] --> Local["Local Network"]
+    Local --> DNS["systemd-resolved (Intercepted)"]
+    DNS --> NFT["nftables (inet ttp table)"]
+    NFT --> Tor["Tor Daemon"]
+    Tor --> Internet["Internet"]
+```
 
 1. **Atomic Firewall Redirection**: Generates and loads an isolated `inet ttp` nftables ruleset atomically to intercept TCP and DNS traffic, redirecting them to Tor while preventing IPv6 and DoT/DoH leaks.
 2. **DNS Bind-Mount Overlay**: Overlays `/etc/resolv.conf` with a volatile RAM-backed configuration via a kernel-level bind-mount to ensure DNS calls are resolved by Tor.
@@ -180,12 +204,12 @@ For a detailed walkthrough of the execution flows, system hooks, security bounda
 
 TTP is designed to always restore your network, even in edge cases:
 
-| Scenario                 | What happens                                                                                             |
-| :----------------------- | :------------------------------------------------------------------------------------------------------- |
+| Scenario                 | What happens                                                                                                                                                                                                                              |
+| :----------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ttp stop`               | **Zero-leak cleanup**: applies teardown lockdown, gracefully shuts down Tor, executes active socket slaughter, waits 1.5s, flushes connection tracking, restores firewall and DNS (via table flush and delete), and deletes the lock file |
-| Ctrl+C / `kill`          | Signal handler catches `SIGINT`/`SIGTERM` and runs normal cleanup before exit                            |
-| `kill -9` / Power Outage | Next `ttp start` detects the orphaned lock file, clears any stale mount stacks, and auto-restores        |
-| Manual emergency         | Run `sudo ./scripts/restore-network.sh` to flush all nftables rules, reset DNS, and delete the lock file |
+| Ctrl+C / `kill`          | Signal handler catches `SIGINT`/`SIGTERM` and runs normal cleanup before exit                                                                                                                                                             |
+| `kill -9` / Power Outage | Next `ttp start` detects the orphaned lock file, clears any stale mount stacks, and auto-restores                                                                                                                                         |
+| Manual emergency         | Run `sudo ./scripts/restore-network.sh` to flush all nftables rules, reset DNS, and delete the lock file                                                                                                                                  |
 
 ## Known Behavior & Limitations
 
