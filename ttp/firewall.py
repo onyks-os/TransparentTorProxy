@@ -36,6 +36,14 @@ def apply_rules(
     Orchestrates the process: Create -> Flush -> Inject.
     If any step fails, it triggers an automatic rollback (destruction).
     """
+    # Pre-create the systemd slice cgroup directory so that nftables can resolve its path at load time
+    from pathlib import Path
+
+    try:
+        Path("/sys/fs/cgroup/ttp-bypass.slice").mkdir(exist_ok=True)
+    except Exception as e:
+        logger.debug("Could not pre-create cgroupv2 slice directory: %s", e)
+
     # Resolve numeric UID for the tor user to avoid nft resolution issues
     try:
         if tor_user.isdigit():
@@ -249,8 +257,21 @@ def apply_teardown_lockdown(tor_uid: int | None = None) -> None:
 def apply_active_socket_slaughter() -> None:
     """Inject temporary reject rules at the top of the filter_out chain to actively terminate pending local connections."""
     try:
-        # 1. Uccide le connessioni UDP/ICMP pendenti (invia ICMP Port Unreachable al processo locale)
-        _run_nft(["insert", "rule", "inet", "ttp", "filter_out", "counter", "reject"])
+        # 1. Uccide le connessioni UDP pendenti (invia ICMP Port Unreachable al processo locale)
+        _run_nft(
+            [
+                "insert",
+                "rule",
+                "inet",
+                "ttp",
+                "filter_out",
+                "meta",
+                "l4proto",
+                "udp",
+                "counter",
+                "reject",
+            ]
+        )
         # 2. Uccide le connessioni TCP pendenti istantaneamente (invia RST al processo locale)
         _run_nft(
             [

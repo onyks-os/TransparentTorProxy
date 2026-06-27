@@ -43,6 +43,8 @@ if not IS_ROOT or not HAS_NSE:
         allow_module_level=True,
     )
 
+pytestmark = pytest.mark.nse
+
 # Monkey-patch subprocess.run and subprocess.Popen to transparently convert
 #   ["ip", "netns", "exec", <name>, ...]
 # into

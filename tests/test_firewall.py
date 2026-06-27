@@ -356,6 +356,9 @@ def test_apply_active_socket_slaughter(mock_run_nft):
         "inet",
         "ttp",
         "filter_out",
+        "meta",
+        "l4proto",
+        "udp",
         "counter",
         "reject",
     ]

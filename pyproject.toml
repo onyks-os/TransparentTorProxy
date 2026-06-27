@@ -32,8 +32,9 @@ ttp = "ttp.cli:app"
 markers = [
     "integration: marks tests as integration tests that require root and a real Tor instance",
     "leak: marks tests as offensive leak verification tests",
+    "nse: marks tests that require root, NSE, and network namespace privileges",
 ]
-addopts = "--ignore=tests/leak"
+addopts = "--ignore=tests/leak -m \"not integration and not nse\""
 filterwarnings = [
     "ignore:setDaemon\\(\\) is deprecated:DeprecationWarning:stem.*"
 ]

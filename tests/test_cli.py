@@ -14,7 +14,8 @@ from unittest.mock import patch, MagicMock, mock_open
 import pytest
 from typer.testing import CliRunner
 
-from ttp.cli import app, _setup_logging as original_setup_logging
+from ttp.cli import app
+from ttp.commands._common import setup_logging as original_setup_logging
 
 runner = CliRunner()
 
@@ -37,19 +38,19 @@ def _mock_logging():
 @pytest.fixture(autouse=True)
 def _mock_tmpfs_preflight():
     """start() calls check_tmpfs_space(); mock so CLI tests stay hermetic."""
-    with patch("ttp.cli.state.check_tmpfs_space"):
+    with patch("ttp.state.check_tmpfs_space"):
         yield
 
 
 # start
 
 
-@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
+@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
 @patch(
-    "ttp.cli.tor_install.ensure_tor_ready",
+    "ttp.tor_install.ensure_tor_ready",
     return_value={
         "is_installed": True,
         "is_running": True,
@@ -58,11 +59,11 @@ def _mock_tmpfs_preflight():
         "version": "0.4.8.10",
     },
 )
-@patch("ttp.cli.tor_install.setup_selinux_if_needed")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.state.is_orphan", return_value=False)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.state.write_lock")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("os.geteuid", return_value=0)
 def test_start_happy_path(
     mock_euid,
     mock_orphan,
@@ -83,7 +84,7 @@ def test_start_happy_path(
     mock_apply_fw.assert_called_once()
 
 
-@patch("ttp.cli.os.geteuid", return_value=1000)
+@patch("os.geteuid", return_value=1000)
 def test_start_requires_root(mock_euid):
     """start without root -> exit code 1."""
     result = runner.invoke(app, ["start"])
@@ -91,12 +92,12 @@ def test_start_requires_root(mock_euid):
     assert "root" in result.output
 
 
-@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
+@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
 @patch(
-    "ttp.cli.tor_install.ensure_tor_ready",
+    "ttp.tor_install.ensure_tor_ready",
     return_value={
         "is_installed": True,
         "is_running": True,
@@ -105,12 +106,12 @@ def test_start_requires_root(mock_euid):
         "version": "0.4.8.10",
     },
 )
-@patch("ttp.cli.tor_install.setup_selinux_if_needed")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.state.attempt_recovery")
-@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
-@patch("ttp.cli.state.is_orphan", return_value=True)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.state.write_lock")
+@patch("ttp.state.attempt_recovery")
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
+@patch("ttp.state.is_orphan", return_value=True)
+@patch("os.geteuid", return_value=0)
 def test_start_orphan_recovery(
     mock_euid,
     mock_orphan,
@@ -131,9 +132,9 @@ def test_start_orphan_recovery(
     assert "recovering" in result.output.lower()
 
 
-@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
-@patch("ttp.cli.state.is_orphan", return_value=False)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("os.geteuid", return_value=0)
 def test_start_concurrency_error(mock_euid, mock_orphan, mock_read):
     """start with another TTP instance running (PID alive) -> error."""
     result = runner.invoke(app, ["start"])
@@ -145,18 +146,18 @@ def test_start_concurrency_error(mock_euid, mock_orphan, mock_read):
 
 
 @patch("ttp.watchdog.stop_watchdog")
-@patch("ttp.cli.state.delete_lock")
-@patch("ttp.cli.dns.restore_dns")
-@patch("ttp.cli.firewall.destroy_rules")
-@patch("ttp.cli.tor_install.stop_tor_service")
+@patch("ttp.state.delete_lock")
+@patch("ttp.dns.restore_dns")
+@patch("ttp.firewall.destroy_rules")
+@patch("ttp.tor_install.stop_tor_service")
 @patch("ttp.tor_control.graceful_shutdown", return_value=True)
 @patch(
-    "ttp.cli.state.read_lock",
+    "ttp.state.read_lock",
     return_value={
         "dns_backup": {"mount_target": "/etc/resolv.conf"},
     },
 )
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 def test_stop_active_session(
     mock_euid,
     mock_read,
@@ -180,18 +181,18 @@ def test_stop_active_session(
 
 
 @patch("ttp.watchdog.stop_watchdog")
-@patch("ttp.cli.state.delete_lock")
-@patch("ttp.cli.dns.restore_dns")
-@patch("ttp.cli.firewall.destroy_rules")
-@patch("ttp.cli.tor_install.stop_tor_service")
+@patch("ttp.state.delete_lock")
+@patch("ttp.dns.restore_dns")
+@patch("ttp.firewall.destroy_rules")
+@patch("ttp.tor_install.stop_tor_service")
 @patch("ttp.tor_control.graceful_shutdown", return_value=False)
 @patch(
-    "ttp.cli.state.read_lock",
+    "ttp.state.read_lock",
     return_value={
         "dns_backup": {"mount_target": "/etc/resolv.conf"},
     },
 )
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 def test_stop_graceful_shutdown_failure_continues(
     mock_euid,
     mock_read,
@@ -212,8 +213,8 @@ def test_stop_graceful_shutdown_failure_continues(
     mock_stop_wd.assert_called_once()
 
 
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.state.read_lock", return_value=None)
+@patch("os.geteuid", return_value=0)
 def test_stop_no_session(mock_euid, mock_read):
     """stop with no session -> clean exit."""
     result = runner.invoke(app, ["stop"])
@@ -225,9 +226,9 @@ def test_stop_no_session(mock_euid, mock_read):
 
 
 @patch("ttp.tor_control.get_exit_ip", return_value="5.6.7.8")
-@patch("ttp.cli.state.is_orphan", return_value=False)
+@patch("ttp.state.is_orphan", return_value=False)
 @patch(
-    "ttp.cli.state.read_lock",
+    "ttp.state.read_lock",
     return_value={
         "timestamp": "2025-04-10T14:32:01",
         "pid": 12345,
@@ -241,7 +242,7 @@ def test_status_active(mock_read, mock_orphan, mock_ip):
     assert "5.6.7.8" in result.output
 
 
-@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("ttp.state.read_lock", return_value=None)
 def test_status_inactive(mock_read):
     """status with no session -> shows INACTIVE."""
     result = runner.invoke(app, ["status"])
@@ -252,11 +253,11 @@ def test_status_inactive(mock_read):
 # start with --interface
 
 
-@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "wlan0"})
-@patch("ttp.cli.firewall.apply_rules")
+@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.dns.apply_dns", return_value={"interface": "wlan0"})
+@patch("ttp.firewall.apply_rules")
 @patch(
-    "ttp.cli.tor_install.ensure_tor_ready",
+    "ttp.tor_install.ensure_tor_ready",
     return_value={
         "is_installed": True,
         "is_running": True,
@@ -265,11 +266,11 @@ def test_status_inactive(mock_read):
         "version": "0.4.8.10",
     },
 )
-@patch("ttp.cli.tor_install.setup_selinux_if_needed")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.state.is_orphan", return_value=False)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.state.write_lock")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("os.geteuid", return_value=0)
 def test_start_with_interface_flag(
     mock_euid,
     mock_orphan,
@@ -290,12 +291,12 @@ def test_start_with_interface_flag(
 # health check warning
 
 
-@patch("ttp.cli._verify_tor", return_value=(False, "1.2.3.4"))
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
+@patch("ttp.commands.start._verify_tor", return_value=(False, "1.2.3.4"))
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
 @patch(
-    "ttp.cli.tor_install.ensure_tor_ready",
+    "ttp.tor_install.ensure_tor_ready",
     return_value={
         "is_installed": True,
         "is_running": True,
@@ -304,11 +305,11 @@ def test_start_with_interface_flag(
         "version": "0.4.8.10",
     },
 )
-@patch("ttp.cli.tor_install.setup_selinux_if_needed")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.state.is_orphan", return_value=False)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.state.write_lock")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("os.geteuid", return_value=0)
 def test_start_tor_verification_fails(
     mock_euid,
     mock_orphan,
@@ -330,12 +331,12 @@ def test_start_tor_verification_fails(
 # uninstall
 
 
-@patch("ttp.cli._do_stop")
-@patch("ttp.cli.tor_install.remove_selinux_module")
+@patch("ttp.commands.admin._do_stop")
+@patch("ttp.commands.admin.tor_install.remove_selinux_module")
 @patch("ttp.tor_detect.is_selinux_module_installed", return_value=True)
-@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
-@patch("ttp.cli.state.delete_star_sentinel")
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
+@patch("ttp.state.delete_star_sentinel")
+@patch("os.geteuid", return_value=0)
 def test_uninstall_calls_cleanup(
     mock_euid, mock_del_star, mock_read, mock_is_sel, mock_rem_sel, mock_stop
 ):
@@ -352,19 +353,19 @@ def test_uninstall_calls_cleanup(
 # start with --bootstrap-timeout
 
 
-@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
+@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
 @patch(
-    "ttp.cli.tor_install.ensure_tor_ready",
+    "ttp.tor_install.ensure_tor_ready",
     return_value={"is_installed": True, "version": "0.4.8.10"},
 )
-@patch("ttp.cli.tor_install.setup_selinux_if_needed")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.state.is_orphan", return_value=False)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.state.write_lock")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("os.geteuid", return_value=0)
 def test_start_with_bootstrap_timeout(
     mock_euid,
     mock_orphan,
@@ -386,15 +387,15 @@ def test_start_with_bootstrap_timeout(
 
 
 @patch("ttp.watchdog.stop_watchdog")
-@patch("ttp.cli.state.delete_lock")
-@patch("ttp.cli.dns.restore_dns")
-@patch("ttp.cli.firewall.destroy_rules")
-@patch("ttp.cli.tor_install.stop_tor_service")
+@patch("ttp.state.delete_lock")
+@patch("ttp.dns.restore_dns")
+@patch("ttp.firewall.destroy_rules")
+@patch("ttp.tor_install.stop_tor_service")
 @patch(
-    "ttp.cli.state.read_lock",
+    "ttp.state.read_lock",
     return_value={"dns_backup": {"mount_target": "/etc/resolv.conf"}},
 )
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 def test_stop_restore_only_with_lock(
     mock_euid, mock_read, mock_stop_tor, mock_fw, mock_dns, mock_del, mock_stop_wd
 ):
@@ -409,12 +410,12 @@ def test_stop_restore_only_with_lock(
 
 
 @patch("ttp.watchdog.stop_watchdog")
-@patch("ttp.cli.state.delete_lock")
-@patch("ttp.cli.dns.restore_dns")
-@patch("ttp.cli.firewall.destroy_rules")
-@patch("ttp.cli.tor_install.stop_tor_service")
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.state.delete_lock")
+@patch("ttp.dns.restore_dns")
+@patch("ttp.firewall.destroy_rules")
+@patch("ttp.tor_install.stop_tor_service")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("os.geteuid", return_value=0)
 def test_stop_restore_only_no_lock(
     mock_euid,
     mock_read,
@@ -437,11 +438,11 @@ def test_stop_restore_only_no_lock(
 # restart
 
 
-@patch("ttp.cli.start")
-@patch("ttp.cli.time.sleep")
-@patch("ttp.cli._do_stop")
-@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.commands.stop_restart.start_command")
+@patch("time.sleep")
+@patch("ttp.commands.stop_restart._do_stop")
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
+@patch("os.geteuid", return_value=0)
 def test_restart_active_session(
     mock_euid, mock_read, mock_stop, mock_sleep, mock_start
 ):
@@ -465,10 +466,10 @@ def test_restart_active_session(
     )
 
 
-@patch("ttp.cli.start")
-@patch("ttp.cli._do_stop")
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.commands.stop_restart.start_command")
+@patch("ttp.commands.stop_restart._do_stop")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("os.geteuid", return_value=0)
 def test_restart_inactive_session(mock_euid, mock_read, mock_stop, mock_start):
     result = runner.invoke(app, ["restart"])
     assert result.exit_code == 0
@@ -515,7 +516,7 @@ def test_check_failure(mock_verify_tor):
 @patch("subprocess.run")
 @patch("shutil.which", return_value="/usr/bin/dig")
 @patch("urllib.request.urlopen")
-@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_success(mock_read, mock_urlopen, mock_which, mock_run):
     import json
 
@@ -545,7 +546,7 @@ def test_check_leak_success(mock_read, mock_urlopen, mock_which, mock_run):
 @patch("subprocess.run")
 @patch("shutil.which", return_value="/usr/bin/dig")
 @patch("urllib.request.urlopen")
-@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_akahelp_txt_ip_not_a_leak(
     mock_read, mock_urlopen, mock_which, mock_run
 ):
@@ -576,7 +577,7 @@ def test_check_leak_akahelp_txt_ip_not_a_leak(
 
 
 @patch("urllib.request.urlopen")
-@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_detected_istor_false(mock_read, mock_urlopen):
     import json
 
@@ -611,7 +612,7 @@ def test_check_leak_detected_istor_false(mock_read, mock_urlopen):
 @patch("urllib.request.urlopen", side_effect=OSError("network down"))
 @patch("shutil.which", return_value="/usr/bin/dig")
 @patch("subprocess.run")
-@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_tor_api_error(mock_read, mock_run, mock_which, mock_urlopen):
     def side_effect(cmd, *args, **kwargs):
         m = MagicMock()
@@ -626,7 +627,7 @@ def test_check_leak_tor_api_error(mock_read, mock_run, mock_which, mock_urlopen)
 
 @patch("urllib.request.urlopen")
 @patch("shutil.which", return_value=None)
-@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_no_dig_binary(mock_read, mock_which, mock_urlopen):
     import json
 
@@ -641,7 +642,7 @@ def test_check_leak_no_dig_binary(mock_read, mock_which, mock_urlopen):
 @patch("urllib.request.urlopen")
 @patch("shutil.which", return_value="/usr/bin/dig")
 @patch("subprocess.run")
-@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_empty_dig_a(mock_read, mock_run, mock_which, mock_urlopen):
     import json
 
@@ -665,7 +666,7 @@ def test_check_leak_empty_dig_a(mock_read, mock_run, mock_which, mock_urlopen):
     assert "Leaks detected!" in result.output
 
 
-@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("ttp.state.read_lock", return_value=None)
 def test_check_leak_inactive(mock_read):
     result = runner.invoke(app, ["check-leak"])
     assert result.exit_code == 1
@@ -675,7 +676,7 @@ def test_check_leak_inactive(mock_read):
 # logs
 
 
-@patch("ttp.cli._LOG_PATH")
+@patch("ttp.commands.admin._LOG_PATH")
 def test_logs_command(mock_log_path):
     mock_log_path.exists.return_value = True
     mock_log_path.read_text.return_value = "Mock log content"
@@ -686,7 +687,7 @@ def test_logs_command(mock_log_path):
     mock_log_path.read_text.assert_called_once_with(encoding="utf-8")
 
 
-@patch("ttp.cli._LOG_PATH")
+@patch("ttp.commands.admin._LOG_PATH")
 def test_logs_command_no_file(mock_log_path):
     mock_log_path.exists.return_value = False
 
@@ -698,9 +699,9 @@ def test_logs_command_no_file(mock_log_path):
 # tmpfs pre-flight
 
 
-@patch("ttp.cli.state.check_tmpfs_space")
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.state.check_tmpfs_space")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("os.geteuid", return_value=0)
 def test_start_tmpfs_check_fails(mock_euid, mock_read, mock_check):
     """start aborts cleanly when /run has no space, without touching system state."""
     from ttp.exceptions import StateError
@@ -716,13 +717,13 @@ def test_start_tmpfs_check_fails(mock_euid, mock_read, mock_check):
 # Custom Ports and Validation Tests
 
 
-@patch("ttp.cli._is_port_in_use", return_value=False)
-@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
+@patch("ttp.commands.start._is_port_in_use", return_value=False)
+@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
 @patch(
-    "ttp.cli.tor_install.ensure_tor_ready",
+    "ttp.tor_install.ensure_tor_ready",
     return_value={
         "is_installed": True,
         "is_running": True,
@@ -731,11 +732,11 @@ def test_start_tmpfs_check_fails(mock_euid, mock_read, mock_check):
         "version": "0.4.8.10",
     },
 )
-@patch("ttp.cli.tor_install.setup_selinux_if_needed")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.state.is_orphan", return_value=False)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.state.write_lock")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("os.geteuid", return_value=0)
 def test_start_custom_ports_success(
     mock_euid,
     mock_orphan,
@@ -784,7 +785,7 @@ def test_start_custom_ports_success(
     )
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 def test_start_invalid_transport_port(mock_euid):
     """start with privileged or invalid transport port -> validation error."""
     # Under 1024
@@ -800,7 +801,7 @@ def test_start_invalid_transport_port(mock_euid):
     assert "between 1024 and 65535" in result.output
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 def test_start_invalid_dns_port(mock_euid):
     """start with privileged or invalid dns port -> validation error."""
     # Under 1024
@@ -816,7 +817,7 @@ def test_start_invalid_dns_port(mock_euid):
     assert "between 1024 and 65535" in result.output
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 def test_start_duplicate_ports(mock_euid):
     """start with same port for transport and dns -> validation error."""
     result = runner.invoke(app, ["start", "-t", "9000", "-d", "9000"])
@@ -825,8 +826,8 @@ def test_start_duplicate_ports(mock_euid):
     assert "cannot be the same" in result.output
 
 
-@patch("ttp.cli._is_port_in_use", return_value=True)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.commands.start._is_port_in_use", return_value=True)
+@patch("os.geteuid", return_value=0)
 def test_start_port_already_in_use(mock_euid, mock_in_use):
     """start with port already in use -> pre-flight check error."""
     result = runner.invoke(app, ["start", "-t", "9041"])
@@ -835,11 +836,11 @@ def test_start_port_already_in_use(mock_euid, mock_in_use):
     assert "already in use by another process" in result.output
 
 
-@patch("ttp.cli.start")
-@patch("ttp.cli.time.sleep")
-@patch("ttp.cli._do_stop")
-@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.commands.stop_restart.start_command")
+@patch("time.sleep")
+@patch("ttp.commands.stop_restart._do_stop")
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
+@patch("os.geteuid", return_value=0)
 def test_restart_custom_ports(mock_euid, mock_read, mock_stop, mock_sleep, mock_start):
     """restart propagates custom ports to start command."""
     result = runner.invoke(app, ["restart", "-t", "9080", "-d", "9090"])
@@ -860,9 +861,9 @@ def test_restart_custom_ports(mock_euid, mock_read, mock_stop, mock_sleep, mock_
 
 
 @patch("ttp.tor_control.get_exit_ip", return_value="5.6.7.8")
-@patch("ttp.cli.state.is_orphan", return_value=False)
+@patch("ttp.state.is_orphan", return_value=False)
 @patch(
-    "ttp.cli.state.read_lock",
+    "ttp.state.read_lock",
     return_value={
         "timestamp": "2025-04-10T14:32:01",
         "pid": 12345,
@@ -882,7 +883,7 @@ def test_status_shows_custom_ports(mock_read, mock_orphan, mock_ip):
 @patch("ttp.tor_control.get_controller")
 @patch("ttp.tor_control.verify_tor", return_value=(True, "100.200.100.200"))
 @patch(
-    "ttp.cli.state.read_lock",
+    "ttp.state.read_lock",
     return_value={
         "transport_port": 9080,
         "dns_port": 9090,
@@ -898,23 +899,23 @@ def test_check_shows_custom_ports(mock_read, mock_verify_tor, mock_get_ctrl):
     assert "DNSPort:         9090" in result.output
 
 
-@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
+@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
 @patch(
-    "ttp.cli.tor_install.ensure_tor_ready",
+    "ttp.tor_install.ensure_tor_ready",
     return_value={
         "is_installed": True,
         "tor_user": "debian-tor",
         "version": "0.4.8.10",
     },
 )
-@patch("ttp.cli.tor_install.setup_selinux_if_needed")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.state.is_orphan", return_value=False)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.state.write_lock")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("os.geteuid", return_value=0)
 def test_start_with_allow_root_and_no_lan_bypass(
     mock_euid,
     mock_orphan,
@@ -954,8 +955,8 @@ def test_start_with_allow_root_and_no_lan_bypass(
 # watchdog commands
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
-@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("os.geteuid", return_value=0)
+@patch("ttp.state.read_lock", return_value=None)
 def test_watchdog_start_no_session(mock_read, mock_euid):
     """watchdog start fails if no TTP session is running."""
     result = runner.invoke(app, ["watchdog", "start"])
@@ -963,8 +964,8 @@ def test_watchdog_start_no_session(mock_read, mock_euid):
     assert "No active TTP session found" in result.output
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
-@patch("ttp.cli.state.read_lock", return_value={"pid": 1234})
+@patch("os.geteuid", return_value=0)
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
 @patch("ttp.watchdog.start_watchdog")
 def test_watchdog_start_success(mock_start_wd, mock_read, mock_euid):
     """watchdog start succeeds when session is running."""
@@ -974,7 +975,7 @@ def test_watchdog_start_success(mock_start_wd, mock_read, mock_euid):
     mock_start_wd.assert_called_once()
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 @patch("ttp.watchdog.stop_watchdog")
 def test_watchdog_stop(mock_stop_wd, mock_euid):
     """watchdog stop calls watchdog.stop_watchdog."""
@@ -984,7 +985,7 @@ def test_watchdog_stop(mock_stop_wd, mock_euid):
     mock_stop_wd.assert_called_once()
 
 
-@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("ttp.state.read_lock", return_value=None)
 def test_watchdog_status_no_session(mock_read):
     """watchdog status indicates INACTIVE when no session exists."""
     result = runner.invoke(app, ["watchdog", "status"])
@@ -992,7 +993,7 @@ def test_watchdog_status_no_session(mock_read):
     assert "INACTIVE (TTP is not running)" in result.output
 
 
-@patch("ttp.cli.state.read_lock", return_value={"watchdog_active": False})
+@patch("ttp.state.read_lock", return_value={"watchdog_active": False})
 def test_watchdog_status_inactive(mock_read):
     """watchdog status shows INACTIVE if session exists but watchdog is disabled."""
     result = runner.invoke(app, ["watchdog", "status"])
@@ -1001,7 +1002,7 @@ def test_watchdog_status_inactive(mock_read):
 
 
 @patch(
-    "ttp.cli.state.read_lock",
+    "ttp.state.read_lock",
     return_value={"watchdog_active": True, "watchdog_pid": 9999},
 )
 def test_watchdog_status_active(mock_read):
@@ -1012,7 +1013,7 @@ def test_watchdog_status_active(mock_read):
     assert "Watchdog PID: 9999" in result.output
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 @patch("ttp.watchdog.run_watchdog_loop")
 def test_watchdog_run(mock_run_loop, mock_euid):
     """watchdog run hidden command executes run_watchdog_loop."""
@@ -1026,7 +1027,7 @@ def test_json_formatter_records():
     """JSONFormatter converts a LogRecord into a valid JSON string with expected keys."""
     import logging
     import json
-    from ttp.cli import JSONFormatter
+    from ttp.commands._common import JSONFormatter
 
     formatter = JSONFormatter()
     record = logging.LogRecord(
@@ -1070,12 +1071,12 @@ def test_json_formatter_records():
     assert "ValueError: Oops!" in data_exc["exception"]
 
 
-@patch("ttp.cli.state.ensure_runtime_dir")
+@patch("ttp.state.ensure_runtime_dir")
 @patch("logging.handlers.RotatingFileHandler")
 @patch("logging.StreamHandler")
 def test_setup_logging_json(mock_stream, mock_file, mock_ensure):
     """_setup_logging configures JSON formatter on handlers when log_format is 'json'."""
-    from ttp.cli import cli_state, JSONFormatter, logger
+    from ttp.commands._common import cli_state, JSONFormatter, logger
 
     mock_file_handler = MagicMock()
     mock_file.return_value = mock_file_handler
@@ -1116,7 +1117,7 @@ def test_setup_logging_json(mock_stream, mock_file, mock_ensure):
 
 def test_log_format_argument_parsing():
     """Passing --log-format json updates cli_state.log_format accordingly."""
-    from ttp.cli import cli_state
+    from ttp.commands._common import cli_state
 
     orig_format = cli_state.log_format
     try:
@@ -1127,12 +1128,12 @@ def test_log_format_argument_parsing():
         cli_state.log_format = orig_format
 
 
-@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
+@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
 @patch(
-    "ttp.cli.tor_install.ensure_tor_ready",
+    "ttp.tor_install.ensure_tor_ready",
     return_value={
         "is_installed": True,
         "is_running": True,
@@ -1141,11 +1142,11 @@ def test_log_format_argument_parsing():
         "version": "0.4.8.10",
     },
 )
-@patch("ttp.cli.tor_install.setup_selinux_if_needed")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.state.is_orphan", return_value=False)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.state.write_lock")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("os.geteuid", return_value=0)
 @patch("pwd.getpwnam")
 @patch("grp.getgrnam")
 def test_start_with_bypass_user_and_group(
@@ -1185,7 +1186,7 @@ def test_start_with_bypass_user_and_group(
     assert kwargs_fw["bypass_gids"] == [2001]
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 @patch("pwd.getpwnam", side_effect=KeyError)
 def test_start_with_invalid_bypass_user(mock_pwd_nam, mock_euid):
     """Test start command with invalid bypass user returns an error."""
@@ -1197,16 +1198,16 @@ def test_start_with_invalid_bypass_user(mock_pwd_nam, mock_euid):
 # CLI Bridges Tests
 
 
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.tor_install.setup_selinux_if_needed")
-@patch("ttp.cli.tor_install.ensure_tor_ready")
-@patch("ttp.cli.firewall.apply_rules")
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.dns.apply_dns", return_value={"resolv": "conf"})
-@patch("ttp.cli._verify_tor", return_value=(True, "198.51.100.1"))
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.state.is_orphan", return_value=False)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.state.write_lock")
+@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.tor_install.ensure_tor_ready")
+@patch("ttp.firewall.apply_rules")
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.dns.apply_dns", return_value={"resolv": "conf"})
+@patch("ttp.commands.start._verify_tor", return_value=(True, "198.51.100.1"))
+@patch("ttp.state.read_lock", return_value=None)
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("os.geteuid", return_value=0)
 def test_start_with_bridges_direct(
     mock_euid,
     mock_orphan,
@@ -1250,16 +1251,16 @@ def test_start_with_bridges_direct(
     ]
 
 
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.tor_install.setup_selinux_if_needed")
-@patch("ttp.cli.tor_install.ensure_tor_ready")
-@patch("ttp.cli.firewall.apply_rules")
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.dns.apply_dns", return_value={"resolv": "conf"})
-@patch("ttp.cli._verify_tor", return_value=(True, "198.51.100.1"))
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.state.is_orphan", return_value=False)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.state.write_lock")
+@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.tor_install.ensure_tor_ready")
+@patch("ttp.firewall.apply_rules")
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.dns.apply_dns", return_value={"resolv": "conf"})
+@patch("ttp.commands.start._verify_tor", return_value=(True, "198.51.100.1"))
+@patch("ttp.state.read_lock", return_value=None)
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("os.geteuid", return_value=0)
 def test_start_with_bridge_file(
     mock_euid,
     mock_orphan,
@@ -1295,7 +1296,7 @@ def test_start_with_bridge_file(
     ]
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 def test_start_with_invalid_bridge_format(mock_euid):
     """Test start command with invalid bridge format returns validation error."""
     result = runner.invoke(app, ["start", "--bridge", "obfs4_no_ip_port"])
@@ -1303,7 +1304,7 @@ def test_start_with_invalid_bridge_format(mock_euid):
     assert "Invalid Bridge Line" in result.output
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 def test_start_use_bridges_without_bridges(mock_euid):
     """Test start command with --use-bridges but no bridges specified returns error."""
     result = runner.invoke(app, ["start", "--use-bridges"])
@@ -1314,7 +1315,7 @@ def test_start_use_bridges_without_bridges(mock_euid):
 # external-daemon (BYOD) mode tests
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 def test_start_external_daemon_watchdog_conflict(mock_euid):
     """Verify that passing --external-daemon and --watchdog raises a conflict error."""
     result = runner.invoke(app, ["start", "--external-daemon", "--watchdog"])
@@ -1323,9 +1324,9 @@ def test_start_external_daemon_watchdog_conflict(mock_euid):
     assert "Watchdog daemon cannot be used in external-daemon mode" in result.output
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
-@patch("ttp.cli._is_port_listening_tcp", return_value=False)
-@patch("ttp.cli._is_port_listening_udp", return_value=False)
+@patch("os.geteuid", return_value=0)
+@patch("ttp.commands.start._is_port_listening_tcp", return_value=False)
+@patch("ttp.commands.start._is_port_listening_udp", return_value=False)
 def test_start_external_daemon_inactive(mock_euid, mock_udp, mock_tcp):
     """Verify that starting TTP in BYOD mode when ports are not active fails."""
     result = runner.invoke(app, ["start", "--external-daemon"])
@@ -1333,16 +1334,16 @@ def test_start_external_daemon_inactive(mock_euid, mock_udp, mock_tcp):
     assert "Tor Not Running" in result.output
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
-@patch("ttp.cli._is_port_listening_tcp", return_value=True)
-@patch("ttp.cli._is_port_listening_udp", return_value=True)
+@patch("os.geteuid", return_value=0)
+@patch("ttp.commands.start._is_port_listening_tcp", return_value=True)
+@patch("ttp.commands.start._is_port_listening_udp", return_value=True)
 @patch("pwd.getpwnam")
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.cli.tor_install.ensure_tor_ready")
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
+@patch("ttp.state.write_lock")
+@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.tor_install.ensure_tor_ready")
 def test_start_external_daemon_happy_path_manual_uid(
     mock_ensure,
     mock_verify,
@@ -1381,17 +1382,17 @@ def test_start_external_daemon_happy_path_manual_uid(
     assert kwargs_lock["external_daemon"] is True
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
-@patch("ttp.cli._is_port_listening_tcp", return_value=True)
-@patch("ttp.cli._is_port_listening_udp", return_value=True)
-@patch("ttp.cli._get_uid_from_port", return_value=105)
+@patch("os.geteuid", return_value=0)
+@patch("ttp.commands.start._is_port_listening_tcp", return_value=True)
+@patch("ttp.commands.start._is_port_listening_udp", return_value=True)
+@patch("ttp.commands.start._get_uid_from_port", return_value=105)
 @patch("pwd.getpwuid")
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.cli.tor_install.ensure_tor_ready")
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
+@patch("ttp.state.write_lock")
+@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.tor_install.ensure_tor_ready")
 def test_start_external_daemon_happy_path_auto_uid(
     mock_ensure,
     mock_verify,
@@ -1425,17 +1426,17 @@ def test_start_external_daemon_happy_path_auto_uid(
     )
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
-@patch("ttp.cli._is_port_listening_tcp", return_value=True)
-@patch("ttp.cli._is_port_listening_udp", return_value=True)
-@patch("ttp.cli._get_uid_from_port", return_value=None)
+@patch("os.geteuid", return_value=0)
+@patch("ttp.commands.start._is_port_listening_tcp", return_value=True)
+@patch("ttp.commands.start._is_port_listening_udp", return_value=True)
+@patch("ttp.commands.start._get_uid_from_port", return_value=None)
 @patch("pwd.getpwnam")
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.cli.tor_install.ensure_tor_ready")
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
+@patch("ttp.state.write_lock")
+@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.tor_install.ensure_tor_ready")
 def test_start_external_daemon_happy_path_fallback_user(
     mock_ensure,
     mock_verify,
@@ -1462,16 +1463,16 @@ def test_start_external_daemon_happy_path_fallback_user(
     mock_pwnam.assert_any_call("tor")
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
-@patch("ttp.cli._is_port_listening_tcp", return_value=True)
-@patch("ttp.cli._is_port_listening_udp", return_value=True)
-@patch("ttp.cli._get_uid_from_port", return_value=None)
+@patch("os.geteuid", return_value=0)
+@patch("ttp.commands.start._is_port_listening_tcp", return_value=True)
+@patch("ttp.commands.start._is_port_listening_udp", return_value=True)
+@patch("ttp.commands.start._get_uid_from_port", return_value=None)
 @patch("pwd.getpwnam", side_effect=KeyError("Not found"))
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.tor_install.ensure_tor_ready")
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
+@patch("ttp.state.write_lock")
+@patch("ttp.tor_install.ensure_tor_ready")
 def test_start_external_daemon_uid_resolution_failure(
     mock_ensure,
     mock_lock,
@@ -1490,12 +1491,12 @@ def test_start_external_daemon_uid_resolution_failure(
     assert "Tor UID Resolution Failed" in result.output
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
-@patch("ttp.cli.state.read_lock")
-@patch("ttp.cli.state.delete_lock")
-@patch("ttp.cli.dns.restore_dns")
-@patch("ttp.cli.firewall.destroy_rules")
-@patch("ttp.cli.tor_install.stop_tor_service")
+@patch("os.geteuid", return_value=0)
+@patch("ttp.state.read_lock")
+@patch("ttp.state.delete_lock")
+@patch("ttp.dns.restore_dns")
+@patch("ttp.firewall.destroy_rules")
+@patch("ttp.tor_install.stop_tor_service")
 @patch("ttp.tor_control.graceful_shutdown")
 def test_stop_external_daemon(
     mock_shutdown,
@@ -1526,7 +1527,7 @@ def test_stop_external_daemon(
 
 def test_get_uid_from_port_parser():
     """Verify that _get_uid_from_port correctly parses /proc/net/tcp."""
-    from ttp.cli import _get_uid_from_port
+    from ttp.commands._common import get_uid_from_port as _get_uid_from_port
 
     mock_content = (
         "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
@@ -1537,19 +1538,19 @@ def test_get_uid_from_port_parser():
         assert uid == 1001
 
 
-@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
+@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
 @patch(
-    "ttp.cli.tor_install.ensure_tor_ready",
+    "ttp.tor_install.ensure_tor_ready",
     return_value={"is_installed": True, "version": "0.4.8.10"},
 )
-@patch("ttp.cli.tor_install.setup_selinux_if_needed")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.state.is_orphan", return_value=False)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.state.write_lock")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("os.geteuid", return_value=0)
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=False)
 def test_start_no_ipv6_unsupported(
     mock_ipv6,
@@ -1598,19 +1599,19 @@ def test_start_no_ipv6_unsupported(
     )
 
 
-@patch("ttp.cli._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.cli.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.cli.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.cli.firewall.apply_rules")
+@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
+@patch("ttp.dns.detect_active_interface", return_value="eth0")
+@patch("ttp.firewall.apply_rules")
 @patch(
-    "ttp.cli.tor_install.ensure_tor_ready",
+    "ttp.tor_install.ensure_tor_ready",
     return_value={"is_installed": True, "version": "0.4.8.10"},
 )
-@patch("ttp.cli.tor_install.setup_selinux_if_needed")
-@patch("ttp.cli.state.write_lock")
-@patch("ttp.cli.state.read_lock", return_value=None)
-@patch("ttp.cli.state.is_orphan", return_value=False)
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.state.write_lock")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("os.geteuid", return_value=0)
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
 def test_start_no_ipv6_supported(
     mock_ipv6,
@@ -1659,23 +1660,23 @@ def test_start_no_ipv6_supported(
     )
 
 
-@patch("ttp.cli.state.delete_lock")
-@patch("ttp.cli.dns.restore_dns")
-@patch("ttp.cli.firewall.destroy_rules")
+@patch("ttp.state.delete_lock")
+@patch("ttp.dns.restore_dns")
+@patch("ttp.firewall.destroy_rules")
 @patch("subprocess.run")
 @patch("shutil.which", return_value="/usr/sbin/conntrack")
-@patch("ttp.cli.time.sleep")
-@patch("ttp.cli.firewall.apply_active_socket_slaughter")
-@patch("ttp.cli.tor_install.stop_tor_service")
+@patch("time.sleep")
+@patch("ttp.firewall.apply_active_socket_slaughter")
+@patch("ttp.tor_install.stop_tor_service")
 @patch("ttp.tor_control.graceful_shutdown")
-@patch("ttp.cli.firewall.apply_teardown_lockdown")
+@patch("ttp.firewall.apply_teardown_lockdown")
 @patch("pwd.getpwnam")
 @patch(
-    "ttp.cli.state.read_lock",
+    "ttp.state.read_lock",
     return_value={"dns_backup": {}, "tor_uid": 123, "transport_port": 9041},
 )
 @patch("ttp.watchdog.stop_watchdog")
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 def test_stop_graceful_teardown_sequence(
     mock_euid,
     mock_stop_wd,
@@ -1716,7 +1717,7 @@ def test_stop_graceful_teardown_sequence(
     )
     mock_lockdown.assert_called_once_with(123)
     mock_slaughter.assert_called_once()
-    mock_sleep.assert_called_once_with(1.5)
+    mock_sleep.assert_called_once_with(0.3)
 
     expected_order = [
         "stop_wd",
@@ -1733,23 +1734,23 @@ def test_stop_graceful_teardown_sequence(
     assert call_order == expected_order
 
 
-@patch("ttp.cli.state.delete_lock")
-@patch("ttp.cli.dns.restore_dns")
-@patch("ttp.cli.firewall.destroy_rules")
+@patch("ttp.state.delete_lock")
+@patch("ttp.dns.restore_dns")
+@patch("ttp.firewall.destroy_rules")
 @patch("subprocess.run")
 @patch("shutil.which", return_value=None)
-@patch("ttp.cli.time.sleep")
-@patch("ttp.cli.firewall.apply_active_socket_slaughter")
-@patch("ttp.cli.tor_install.stop_tor_service")
+@patch("time.sleep")
+@patch("ttp.firewall.apply_active_socket_slaughter")
+@patch("ttp.tor_install.stop_tor_service")
 @patch("ttp.tor_control.graceful_shutdown")
-@patch("ttp.cli.firewall.apply_teardown_lockdown")
+@patch("ttp.firewall.apply_teardown_lockdown")
 @patch("pwd.getpwnam")
 @patch(
-    "ttp.cli.state.read_lock",
+    "ttp.state.read_lock",
     return_value={"dns_backup": {}, "tor_uid": 123, "transport_port": 9041},
 )
 @patch("ttp.watchdog.stop_watchdog")
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 def test_stop_graceful_teardown_no_conntrack(
     mock_euid,
     mock_stop_wd,
@@ -1776,7 +1777,7 @@ def test_stop_graceful_teardown_no_conntrack(
 # bypass
 
 
-@patch("ttp.cli.os.geteuid", return_value=1000)
+@patch("os.geteuid", return_value=1000)
 def test_bypass_requires_root(mock_euid):
     """bypass without root -> exit code 1."""
     result = runner.invoke(app, ["bypass", "curl", "http://example.com"])
@@ -1784,7 +1785,7 @@ def test_bypass_requires_root(mock_euid):
     assert "must be run with sudo" in result.output
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 @patch("os.path.exists", return_value=False)
 @patch.dict("os.environ", {"SUDO_UID": "1000", "SUDO_GID": "1000"})
 def test_bypass_requires_systemd(mock_exists, mock_euid):
@@ -1794,9 +1795,9 @@ def test_bypass_requires_systemd(mock_exists, mock_euid):
     assert "requires systemd" in result.output
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 @patch("os.path.exists", return_value=True)
-@patch("ttp.cli.state.read_lock", return_value=None)
+@patch("ttp.state.read_lock", return_value=None)
 @patch.dict("os.environ", {"SUDO_UID": "1000", "SUDO_GID": "1000"})
 def test_bypass_requires_active_session(mock_read, mock_exists, mock_euid):
     """bypass fails if no TTP session is active."""
@@ -1805,9 +1806,9 @@ def test_bypass_requires_active_session(mock_read, mock_exists, mock_euid):
     assert "no active session" in result.output.lower()
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 @patch("os.path.exists", return_value=True)
-@patch("ttp.cli.state.read_lock", return_value={"pid": 123})
+@patch("ttp.state.read_lock", return_value={"pid": 123})
 @patch.dict("os.environ", {}, clear=True)
 def test_bypass_requires_sudo_env(mock_read, mock_exists, mock_euid):
     """bypass fails if SUDO_UID or SUDO_GID is missing."""
@@ -1816,9 +1817,9 @@ def test_bypass_requires_sudo_env(mock_read, mock_exists, mock_euid):
     assert "must be run with sudo" in result.output
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 @patch("os.path.exists", return_value=True)
-@patch("ttp.cli.state.read_lock", return_value={"pid": 123})
+@patch("ttp.state.read_lock", return_value={"pid": 123})
 @patch.dict("os.environ", {"SUDO_UID": "1000", "SUDO_GID": "1000"})
 @patch("shutil.which", return_value=None)
 def test_bypass_requires_systemd_run(mock_which, mock_read, mock_exists, mock_euid):
@@ -1828,9 +1829,9 @@ def test_bypass_requires_systemd_run(mock_which, mock_read, mock_exists, mock_eu
     assert "systemd-run' command is required" in result.output
 
 
-@patch("ttp.cli.os.geteuid", return_value=0)
+@patch("os.geteuid", return_value=0)
 @patch("os.path.exists", return_value=True)
-@patch("ttp.cli.state.read_lock", return_value={"pid": 123})
+@patch("ttp.state.read_lock", return_value={"pid": 123})
 @patch.dict("os.environ", {"SUDO_UID": "1000", "SUDO_GID": "1000"})
 @patch("shutil.which", return_value="/usr/bin/systemd-run")
 @patch("subprocess.run")

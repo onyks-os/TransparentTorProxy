@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.6] - 2026-06-23
+## [0.4.6] - 2026-06-25
 
 ### Added
 
@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Polkit Authorization Rules**: Added `ttp/resources/polkit/50-ttp-watchdog.rules` to authorize the `ttp-watchdog` user to restart the Tor daemon and watchdog services via systemd without elevated privileges.
 - **Fail-Closed Watchdog Policy**: Modified the watchdog to implement a strict fail-closed policy. Under DNS overlay mount or firewall tampering/failure, the watchdog immediately applies the emergency killswitch and halts (rather than attempting unsafe file-modifying operations without root privileges).
 - **Arch, Debian, RPM, and Installer Integration**: Updated installers and packages to dynamically create the `ttp-watchdog` system user and group, deploy the Polkit policy rule, and clean them up during uninstallation.
+- **CLI Thin Orchestrator (Modularization)**: Refactored the monolithic `cli.py` (previously over 1200 lines) into a pure, thin Typer orchestrator (under 150 lines). All operational logic has been extracted into isolated command modules under `ttp/commands/` (e.g., `start.py`, `stop_restart.py`, `session.py`, `admin.py`, `watchdog.py`), dramatically improving maintainability and testability.
+- **Micro-Sleep Teardown Optimization**: Refined the "Zero-Leak" graceful shutdown sequence. Reduced the socket slaughter wait time from 1.5 seconds down to a precise 300ms micro-sleep, significantly accelerating the shutdown process without compromising the delivery of TCP RST and ICMP Port Unreachable packets.
+- **Protocol-Specific Socket Slaughter**: Hardened the Active Socket Slaughter implementation by explicitly targeting UDP connections with `meta l4proto udp counter reject` rather than relying on a generic reject, ensuring precise ICMP error generation for pending connections.
 
 ### Changed
 

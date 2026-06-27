@@ -58,7 +58,7 @@ The project is divided into independent Python modules. Each module has a single
 | `tor_control.py` | **Control**      | Encapsulates Tor interaction (Stem, Bootstrap, IP Check).                        |
 | `system_info.py` | **Diagnostic**   | Gathers system state (torrc, rules, logs) for debugging.                         |
 | `watchdog.py`    | **Watchdog**     | Manages the session background watchdog, auto-healing, and emergency killswitch. |
-| `cli.py`         | **Interface**    | Typer entry point: start, stop, refresh, status, check, logs, etc.               |
+| `cli.py` / `commands/` | **Interface**    | Typer entry point orchestrator (`cli.py`) and command modules (`start`, `stop`, etc.). |
 
 ### 2.1 Execution Flow - `start`
 
@@ -165,7 +165,7 @@ Implements a **stateless overlay** by bind-mounting a volatile resolver file fro
 
 Manages `/run/ttp/ttp.lock` (JSON) on a volatile `tmpfs` mount. This ensures that session state disappears on power loss, preventing stale lock issues. Contains PID, timestamps, and metadata. Detects orphaned sessions. Also handles the **tmpfs pre-flight check** (`check_tmpfs_space`) to ensure at least 5MB of RAM is free before starting, preventing `ENOSPC` crashes mid-setup.
 
-### 3.6 `cli.py`
+### 3.6 `cli.py` & `ttp/commands/` (CLI Architecture)
 
 Typer CLI acting as the primary orchestrator. It manages the **TTP Tor service lifecycle** via a dedicated `ttp-tor.service` unit, handling signals (`SIGINT`/`SIGTERM`) to ensure clean network restoration.
 
@@ -206,7 +206,11 @@ Implements continuous, proactive session monitoring and auto-healing features to
 
 ### 3.10 Architecture Graph & Module Interactions
 
-The following dependency graph illustrates how modules interact with each other and with the underlying Linux system. `cli.py` acts as the controller, coordinating the specialized modules, and `watchdog.py` runs as a daemon monitoring session health.
+The entry point `ttp/cli.py` is a thin Typer orchestrator that delegates execution to isolated command modules in the `ttp/commands/` directory.
+
+- **`cli.py`**: Initializes the root Typer app, defines global state callbacks (`--verbose`, `--quiet`, `--log-format`), and mounts all sub-commands.
+- **`ttp/commands/`**: Contains specialized command handlers (`start.py`, `stop_restart.py`, `session.py`, `admin.py`, `watchdog.py`) mapping 1:1 to user intents.
+- **`_common.py` / `lifecycle.py`**: Provide shared utilities and state management across all CLI commands.
 
 ```mermaid
 %%{init: {

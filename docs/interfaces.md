@@ -136,7 +136,7 @@ TTP creates a dedicated, isolated nftables table that does not interfere with an
 | **Table name**         | `inet ttp`                                                      |
 | **Application method** | Atomic load via `nft -f <rules_file>` (all-or-nothing)          |
 | **Teardown Lockdown**  | `nft insert rule inet ttp filter_out [meta skuid != <tor_uid>] oifname != "lo" drop` (applied at stop start) |
-| **Socket Slaughter**   | `nft insert rule inet ttp filter_out meta l4proto tcp counter reject with tcp reset` and `nft insert rule inet ttp filter_out counter reject` (applied before final cleanup) |
+| **Socket Slaughter**   | `nft insert rule inet ttp filter_out meta l4proto tcp counter reject with tcp reset` and `nft insert rule inet ttp filter_out meta l4proto udp counter reject` (applied before final cleanup) |
 | **Conntrack Flush**    | `conntrack -F` (atomic flush of Netfilter tracked streams)      |
 | **Cleanup method**     | `nft flush table inet ttp` followed by `nft destroy table inet ttp` |
 
@@ -151,7 +151,7 @@ TTP creates a dedicated, isolated nftables table that does not interfere with an
 **Rule execution order within `filter_out`:**
 
 0. **Teardown Lockdown**: drop all outbound traffic except loopback and the Tor UID (inserted dynamically during the teardown sequence)
-0b. **Active Socket Slaughter**: TCP Reset (`meta l4proto tcp counter reject with tcp reset`) and generic reject (`counter reject`) rules (inserted dynamically at the start of final ruleset removal)
+0b. **Active Socket Slaughter**: TCP Reset (`meta l4proto tcp counter reject with tcp reset`) and UDP Port Unreachable (`meta l4proto udp counter reject`) rules (inserted dynamically at the start of final ruleset removal)
 1. Exempt Tor process user (prevent routing loops)
 2. Exempt bypass users/groups (split tunneling — `meta skuid`/`meta skgid`)
 3. Exempt root processes (if `--allow-root` is set)

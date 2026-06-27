@@ -30,6 +30,9 @@ jobs:
       - name: Run Ruff (Python Linting)
         run: ruff check ttp/ tests/
 
+      - name: Run Ruff Format Check
+        run: ruff format --check ttp/ tests/
+
       - name: Run ShellCheck (Script Linting)
         run: find scripts -name "*.sh" -exec shellcheck {} +
 
@@ -56,4 +59,14 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run unit tests
-        run: pytest tests/ -v -m "not integration"
+        run: pytest tests/ -v -m "not integration and not nse"
+
+  integration-debian:
+    name: Integration Tests (Debian)
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Debian integration tests
+        run: make integration-debian
