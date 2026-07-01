@@ -46,12 +46,30 @@ def test_ensure_runtime_dir(_use_tmp_lock):
     with (
         patch("ttp.state.os.chmod") as mock_chmod,
         patch("ttp.state.os.chown") as mock_chown,
+        patch("pwd.getpwnam", side_effect=KeyError("ttp-watchdog")),
     ):
         state.ensure_runtime_dir()
 
         assert runtime_dir.exists()
         mock_chmod.assert_called_once_with(runtime_dir, 0o755)
         mock_chown.assert_called_once_with(runtime_dir, 0, 0)
+
+
+def test_ensure_runtime_dir_watchdog_exists(_use_tmp_lock):
+    """ensure_runtime_dir uses ttp-watchdog owner if the user exists."""
+    _, runtime_dir = _use_tmp_lock
+    mock_pw = MagicMock(pw_uid=123, pw_gid=456)
+
+    with (
+        patch("ttp.state.os.chmod") as mock_chmod,
+        patch("ttp.state.os.chown") as mock_chown,
+        patch("pwd.getpwnam", return_value=mock_pw),
+    ):
+        state.ensure_runtime_dir()
+
+        assert runtime_dir.exists()
+        mock_chmod.assert_called_once_with(runtime_dir, 0o755)
+        mock_chown.assert_called_once_with(runtime_dir, 123, 456)
 
 
 # write_lock creates JSON with correct fields

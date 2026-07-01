@@ -188,7 +188,7 @@ Both units are registered via `systemctl daemon-reload` and removed on `ttp stop
 
 ### 3.4 Filesystem — Volatile Runtime Paths
 
-All TTP runtime state is stored in tmpfs paths that **disappear on reboot**, leaving no forensic traces.
+All TTP runtime state is stored in tmpfs paths that **disappear on reboot**, ensuring zero persistent configuration state or residue is left on the host storage.
 
 | Path                                       | Contents                                                     | Cleared On           |
 | :----------------------------------------- | :----------------------------------------------------------- | :------------------- |

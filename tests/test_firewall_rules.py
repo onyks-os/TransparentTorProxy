@@ -8,6 +8,12 @@ from unittest.mock import patch, MagicMock
 from ttp.firewall import apply_rules
 
 
+@pytest.fixture(autouse=True)
+def mock_cgroup_support():
+    with patch("ttp.firewall._has_cgroup_bypass_support", return_value=True):
+        yield
+
+
 @pytest.fixture
 def mocked_firewall():
     with (
@@ -48,7 +54,7 @@ def test_filter_out_chain_completeness(mocked_firewall):
     ruleset = mocked_firewall["mock_run_string"].call_args[0][0]
 
     assert "chain filter_out" in ruleset
-    filter_block = ruleset.split("chain filter_out")[1]
+    filter_block = ruleset.split("chain filter_out")[1].split("chain filter_forward")[0]
 
     expected_rules = [
         "meta skuid 110 accept",
@@ -95,7 +101,9 @@ def test_filter_out_chain_ipv6_supported():
         ruleset = mock_run_string.call_args[0][0]
 
         assert "chain filter_out" in ruleset
-        filter_block = ruleset.split("chain filter_out")[1]
+        filter_block = ruleset.split("chain filter_out")[1].split(
+            "chain filter_forward"
+        )[0]
 
         assert "ip6 daddr ::1 accept" in filter_block
         assert "ip6 daddr { fc00::/7, fe80::/10 } accept" in filter_block

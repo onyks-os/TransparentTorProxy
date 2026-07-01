@@ -96,6 +96,7 @@ def test_restore_dns_overlay(_mock_resolv_conf):
     fake_runtime.touch()
 
     with (
+        patch("ttp.dns._is_ttp_mount", return_value=True),
         patch("ttp.dns._is_mount_point", return_value=True),
         patch("ttp.dns.subprocess.run") as mock_run,
     ):
@@ -162,7 +163,7 @@ def test_clear_stale_mounts_removes_layers():
     """_clear_stale_mounts calls umount iteratively until target is clean."""
     # Returns True, True, False → umount called exactly 2 times
     with (
-        patch("ttp.dns._is_mount_point", side_effect=[True, True, False]),
+        patch("ttp.dns._is_ttp_mount", side_effect=[True, True, False]),
         patch("ttp.dns.subprocess.run") as mock_run,
     ):
         dns._clear_stale_mounts("/etc/resolv.conf")
@@ -307,6 +308,7 @@ def test_restore_dns_systemd_resolved(tmp_path):
                 fake_resolved_conf if "resolved.conf.d" in str(p) else real_path(p)
             ),
         ),
+        patch("ttp.dns._is_ttp_mount", return_value=True),
         patch("ttp.dns._is_mount_point", return_value=True),
     ):
         dns.restore_dns({"mount_target": "/etc/resolv.conf", "systemd_resolved": True})

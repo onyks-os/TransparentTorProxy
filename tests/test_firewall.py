@@ -8,10 +8,18 @@ All tests mock subprocess.run so no real firewall rules are ever touched.
 
 from __future__ import annotations
 
+import pytest
 import subprocess
 from unittest.mock import patch, MagicMock
 from ttp.firewall import apply_rules, destroy_rules
 from ttp.exceptions import FirewallError
+
+
+@pytest.fixture(autouse=True)
+def mock_cgroup_support():
+    with patch("ttp.firewall._has_cgroup_bypass_support", return_value=True):
+        yield
+
 
 # apply_rules
 
@@ -78,8 +86,9 @@ def test_ruleset_logic_content(mock_ipv6, mock_run_nft, mock_run_string, mock_pw
     # Capture the ruleset string passed to _run_nft_string
     ruleset = mock_run_string.call_args[0][0]
 
-    # 1. Check for the Kill-Switch chain
+    # 1. Check for the Kill-Switch and forwarding filter chains
     assert "chain filter_out" in ruleset
+    assert "chain filter_forward" in ruleset
 
     # 2. Check for UID exemptions in the NAT output chain (Order is critical)
     output_block = ruleset.split("chain output")[1].split("chain filter_out")[0]
@@ -90,7 +99,7 @@ def test_ruleset_logic_content(mock_ipv6, mock_run_nft, mock_run_string, mock_pw
     assert 'socket cgroupv2 level 1 "ttp-bypass.slice" accept' in output_block
 
     # 3. Check for exemptions in the filter_out chain
-    filter_block = ruleset.split("chain filter_out")[1]
+    filter_block = ruleset.split("chain filter_out")[1].split("chain filter_forward")[0]
     assert "meta skuid 110 accept" in filter_block
     assert 'socket cgroupv2 level 1 "ttp-bypass.slice" accept' in filter_block
     # By default, root is NOT exempted (allow_root=False)

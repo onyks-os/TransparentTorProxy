@@ -16,8 +16,6 @@ import pytest
 
 from ttp import tor_install
 from ttp.tor_install import (
-    detect_package_manager,
-    install_tor,
     remove_selinux_module,
     setup_selinux_if_needed,
     generate_torrc,
@@ -197,65 +195,6 @@ def test_generate_torrc_creates_file(
 # Package Installation
 
 
-def test_detect_package_manager_apt():
-    """apt-get available -> returns 'apt-get'."""
-    with patch("ttp.tor_install.shutil.which") as mock_which:
-        mock_which.side_effect = lambda name: (
-            "/usr/bin/apt-get" if name == "apt-get" else None
-        )
-        assert detect_package_manager() == "apt-get"
-
-
-def test_detect_package_manager_pacman():
-    """Only pacman available -> returns 'pacman'."""
-    with patch("ttp.tor_install.shutil.which") as mock_which:
-        mapping = {"pacman": "/usr/bin/pacman"}
-        mock_which.side_effect = lambda name: mapping.get(name)
-        assert detect_package_manager() == "pacman"
-
-
-def test_detect_package_manager_none():
-    """No package manager found -> returns None."""
-    with patch("ttp.tor_install.shutil.which", return_value=None):
-        assert detect_package_manager() is None
-
-
-def test_install_tor_success():
-    """install_tor with apt-get -> calls correct command."""
-    with patch("ttp.tor_install.subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0, stderr="")
-        install_tor("apt-get")
-        # For apt-get, we call update then install
-        assert mock_run.call_count == 2
-        mock_run.assert_any_call(["apt-get", "update"], check=True)
-        mock_run.assert_any_call(["apt-get", "install", "-y", "tor"], check=True)
-
-
-def test_install_tor_failure():
-    """install_tor fails -> raises CalledProcessError."""
-    with patch("ttp.tor_install.subprocess.run") as mock_run:
-        mock_run.side_effect = [
-            MagicMock(returncode=0),
-            subprocess.CalledProcessError(
-                1, ["apt-get", "install"], stderr="E: Unable to locate package tor"
-            ),
-        ]
-        try:
-            install_tor("apt-get")
-            assert False, "Should have raised"
-        except (TorError, subprocess.CalledProcessError):
-            pass
-
-
-def test_install_tor_unsupported_pm():
-    """install_tor with unknown pm -> raises TorError."""
-    try:
-        install_tor("brew")
-        assert False, "Should have raised TorError"
-    except TorError as exc:
-        assert "Unsupported" in str(exc)
-
-
 # SELinux policy management
 
 
@@ -285,7 +224,6 @@ def test_is_selinux_module_installed_false():
 @patch("ttp.tor_detect.is_selinux_enforcing", return_value=True)
 @patch("ttp.tor_detect.is_fedora_family", return_value=True)
 @patch("ttp.tor_install.Path.exists", return_value=True)
-@patch("ttp.tor_install._install_selinux_tools")
 @patch("ttp.tor_install.shutil.which", return_value="/usr/bin/cmd")
 @patch("ttp.tor_install.tempfile.TemporaryDirectory")
 @patch("ttp.tor_install.subprocess.run")
@@ -293,7 +231,6 @@ def test_setup_selinux_if_needed_installs(
     mock_run,
     mock_tempdir,
     mock_which,
-    mock_install_tools,
     mock_exists,
     mock_fedora,
     mock_enforcing,
@@ -367,22 +304,11 @@ def test_ensure_pluggable_transports_already_installed(mock_which):
 
 
 @patch("ttp.tor_install.shutil.which")
-@patch("ttp.tor_install.detect_package_manager")
-@patch("ttp.tor_install.subprocess.run")
-def test_ensure_pluggable_transports_auto_installs(mock_run, mock_detect, mock_which):
-    """ensure_pluggable_transports triggers install if missing."""
-    # First call: not found, Second call (double check): found
-    mock_which.side_effect = [None, "/usr/bin/obfs4proxy"]
-    mock_detect.return_value = "apt-get"
-    mock_run.return_value = MagicMock(returncode=0)
-
-    tor_install.ensure_pluggable_transports(["obfs4"])
-
-    assert mock_run.call_count == 2
-    mock_run.assert_any_call(["apt-get", "update"], capture_output=True, check=False)
-    mock_run.assert_any_call(
-        ["apt-get", "install", "-y", "obfs4proxy"], check=True, capture_output=True
-    )
+def test_ensure_pluggable_transports_missing_raises(mock_which):
+    """ensure_pluggable_transports raises TorError if transport binary is missing."""
+    mock_which.return_value = None
+    with pytest.raises(TorError, match="is missing. Please install"):
+        tor_install.ensure_pluggable_transports(["obfs4"])
 
 
 @patch("ttp.tor_install.shutil.which", return_value=None)
@@ -390,14 +316,3 @@ def test_ensure_pluggable_transports_unsupported_pt(mock_which):
     """ensure_pluggable_transports raises TorError for unsupported transports."""
     with pytest.raises(TorError, match="Unsupported pluggable transport"):
         tor_install.ensure_pluggable_transports(["shadow"])
-
-
-@patch("ttp.tor_install.shutil.which")
-@patch("ttp.tor_install.detect_package_manager")
-def test_ensure_pluggable_transports_no_package_manager(mock_detect, mock_which):
-    """ensure_pluggable_transports raises TorError if package manager not found."""
-    mock_which.return_value = None
-    mock_detect.return_value = None
-
-    with pytest.raises(TorError, match="no supported package manager was found"):
-        tor_install.ensure_pluggable_transports(["obfs4"])

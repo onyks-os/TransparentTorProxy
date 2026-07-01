@@ -40,6 +40,22 @@ def detect_active_interface() -> str:
     return "eth0"  # Sane fallback if detection fails
 
 
+def _is_ttp_mount(target: str) -> bool:
+    """Check if the mount point at *target* is a TTP DNS overlay mount."""
+    try:
+        with open("/proc/self/mountinfo", "r") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 5:
+                    mount_point = parts[4]
+                    if mount_point == target:
+                        if "ttp" in line:
+                            return True
+    except Exception:
+        pass
+    return False
+
+
 def _is_mount_point(target: str) -> bool:
     """Check if *target* is an active mount point by inspecting ``/proc/mounts``."""
     try:
@@ -54,16 +70,11 @@ def _is_mount_point(target: str) -> bool:
 
 
 def _clear_stale_mounts(target: str) -> None:
-    """Iteratively unmount all stacked overlays on *target*.
-
-    Keeps calling ``umount -l`` until the path is no longer listed
-    in ``/proc/mounts``.  A safety limit of 10 iterations prevents
-    infinite loops.
-    """
+    """Iteratively unmount TTP overlay mounts on *target*."""
     for i in range(10):
-        if not _is_mount_point(target):
+        if not _is_ttp_mount(target):
             return
-        logger.debug("Removing stale mount layer %d on %s", i + 1, target)
+        logger.debug("Removing stale TTP mount layer %d on %s", i + 1, target)
         subprocess.run(
             ["umount", "-l", target],
             capture_output=True,
@@ -71,9 +82,9 @@ def _clear_stale_mounts(target: str) -> None:
             check=False,
         )
 
-    if _is_mount_point(target):
+    if _is_ttp_mount(target):
         logger.warning(
-            "Could not fully clear stale mounts on %s after 10 attempts", target
+            "Could not fully clear stale TTP mounts on %s after 10 attempts", target
         )
 
 
@@ -206,7 +217,28 @@ def restore_dns(backup: dict[str, Any] | None) -> None:
     if not backup:
         return
 
-    # First, handle systemd-resolved teardown if it was active
+    # 1. Unmount TTP DNS overlay first to restore the base /etc/resolv.conf file
+    mount_target = backup.get("mount_target", str(RESOLV_CONF))
+
+    if _is_ttp_mount(mount_target):
+        try:
+            # Lazy unmount ensures immediate release even if busy
+            subprocess.run(
+                ["umount", "-l", mount_target],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            logger.info("Successfully unmounted DNS overlay on %s", mount_target)
+        except subprocess.CalledProcessError as e:
+            err_msg = e.stderr.strip() if e.stderr else str(e)
+            logger.warning(
+                "Failed to unmount DNS overlay on %s: %s", mount_target, err_msg
+            )
+    else:
+        logger.debug("DNS target %s is not mounted, skipping unmount", mount_target)
+
+    # 2. Handle systemd-resolved teardown second (so it reads the restored base resolv.conf)
     if backup.get("systemd_resolved"):
         resolved_config_file = Path("/run/systemd/resolved.conf.d/ttp.conf")
         try:
@@ -242,27 +274,7 @@ def restore_dns(backup: dict[str, Any] | None) -> None:
         except Exception as e:
             logger.debug("Failed to flush systemd-resolved caches: %s", e)
 
-    mount_target = backup.get("mount_target", str(RESOLV_CONF))
-
-    if _is_mount_point(mount_target):
-        try:
-            # Lazy unmount ensures immediate release even if busy
-            subprocess.run(
-                ["umount", "-l", mount_target],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            logger.info("Successfully unmounted DNS overlay on %s", mount_target)
-        except subprocess.CalledProcessError as e:
-            err_msg = e.stderr.strip() if e.stderr else str(e)
-            logger.warning(
-                "Failed to unmount DNS overlay on %s: %s", mount_target, err_msg
-            )
-    else:
-        logger.debug("DNS target %s is not mounted, skipping unmount", mount_target)
-
-    # Cleanup the ephemeral file to free tmpfs space
+    # 3. Cleanup the ephemeral file to free tmpfs space
     try:
         if RUNTIME_RESOLV.exists():
             RUNTIME_RESOLV.unlink()

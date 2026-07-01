@@ -18,7 +18,9 @@ RUN systemctl mask systemd-udevd.service \
                    systemd-modules-load.service \
                    sys-kernel-debug.mount \
                    sys-kernel-tracing.mount
-
+# Configure systemd-resolved with a public DNS server to prevent loopback DNS resolution failures inside the Docker network namespace
+RUN mkdir -p /etc/systemd/resolved.conf.d && \
+    echo -e "[Resolve]\nDNS=8.8.8.8" > /etc/systemd/resolved.conf.d/test-dns.conf
 # Set up virtual environment
 RUN python3 -m venv /venv
 ENV PATH="/venv/bin:$PATH"

@@ -25,6 +25,42 @@ def temp_watchdog_path(tmp_path: Path):
         yield temp_file
 
 
+@pytest.fixture(autouse=True)
+def mock_resolv_conf():
+    original_read_text = Path.read_text
+
+    def mock_read_text(self, *args, **kwargs):
+        if "resolv.conf" in str(self):
+            return "nameserver 127.0.0.1"
+        return original_read_text(self, *args, **kwargs)
+
+    with patch("pathlib.Path.read_text", mock_read_text):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_netlink_and_inotify():
+    # Mock socket.socket
+    mock_sock = MagicMock()
+    with (
+        patch("socket.socket", return_value=mock_sock),
+        patch("select.select") as mock_select,
+        patch("ctypes.CDLL") as mock_cdll,
+        patch("ctypes.util.find_library", return_value="libc.so.6"),
+        patch("os.set_blocking"),
+        patch("os.read", return_value=b""),
+    ):
+        mock_select.return_value = ([], [], [])
+
+        mock_libc = MagicMock()
+        mock_libc.inotify_init.return_value = 999
+        mock_libc.inotify_add_watch.return_value = 1
+        mock_libc.inotify_rm_watch.return_value = 0
+        mock_cdll.return_value = mock_libc
+
+        yield
+
+
 # 1. _write_watchdog_service_unit
 def test_write_watchdog_service_unit(temp_watchdog_path):
     """_write_watchdog_service_unit writes a valid systemd unit to the volatile directory."""

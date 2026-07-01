@@ -70,8 +70,8 @@ PT_MAP = {
 def ensure_pluggable_transports(required_transports: list[str]) -> None:
     """Verify that required pluggable transport helper binaries are installed.
 
-    If a binary is missing, attempt to automatically install it via the local
-    package manager.
+    If any binary is missing, raise a TorError instructing the user to install
+    it manually.
     """
     for pt in required_transports:
         pt = pt.lower()
@@ -82,55 +82,10 @@ def ensure_pluggable_transports(required_transports: list[str]) -> None:
         binary = pt_info["binary"]
 
         # Check if binary is in PATH
-        if shutil.which(binary):
-            continue
-
-        # Try to install
-        pm = detect_package_manager()
-        if pm is None:
-            raise TorError(
-                f"Pluggable transport helper '{binary}' for '{pt}' is missing, "
-                "and no supported package manager was found to install it."
-            )
-
-        pkg = pt_info.get(pm)
-        if not pkg:
-            raise TorError(
-                f"Pluggable transport helper '{binary}' for '{pt}' is missing, "
-                f"and the package name is not defined for package manager '{pm}'."
-            )
-
-        logger.info("Installing pluggable transport package '%s' via %s...", pkg, pm)
-        cmd = []
-        if pm == "apt-get":
-            # Ensure apt cache is updated if installing a new package
-            subprocess.run(["apt-get", "update"], capture_output=True, check=False)
-            cmd = ["apt-get", "install", "-y", pkg]
-        elif pm == "dnf":
-            cmd = ["dnf", "install", "-y", pkg]
-        elif pm == "pacman":
-            cmd = ["pacman", "-Sy", "--noconfirm", pkg]
-        elif pm == "zypper":
-            cmd = ["zypper", "install", "-y", pkg]
-
-        if not cmd:
-            raise TorError(f"Unsupported package manager for installation: {pm}")
-
-        try:
-            subprocess.run(cmd, check=True, capture_output=True)
-            logger.info("Successfully installed '%s'.", pkg)
-        except subprocess.CalledProcessError as e:
-            err_output = (
-                e.stderr.decode(errors="replace").strip() if e.stderr else str(e)
-            )
-            raise TorError(
-                f"Failed to install pluggable transport package '{pkg}' via {pm}: {err_output}"
-            ) from e
-
-        # Double check
         if not shutil.which(binary):
             raise TorError(
-                f"Pluggable transport helper '{binary}' was installed but is still not found in PATH."
+                f"Pluggable transport helper binary '{binary}' (required for '{pt}') is missing. "
+                f"Please install the appropriate package (e.g. '{binary}') manually."
             )
 
 
@@ -401,60 +356,7 @@ def stop_tor_service() -> None:
     logger.info("TTP Tor service stopped and unit removed.")
 
 
-# Package installation
-
-
-def detect_package_manager() -> Optional[str]:
-    """Detect available package manager."""
-    for pm in _PKG_COMMANDS:
-        if shutil.which(pm):
-            return pm
-    return None
-
-
-def install_tor(pm: str) -> None:
-    """Install Tor using the detected package manager."""
-    logger.info(f"Installing Tor via {pm}...")
-    cmd = []
-    if pm == "apt-get":
-        subprocess.run(["apt-get", "update"], check=True)
-        cmd = ["apt-get", "install", "-y", "tor"]
-    elif pm == "dnf":
-        cmd = ["dnf", "install", "-y", "tor"]
-    elif pm == "pacman":
-        cmd = ["pacman", "-Sy", "--noconfirm", "tor"]
-    elif pm == "zypper":
-        cmd = ["zypper", "install", "-y", "tor"]
-
-    if not cmd:
-        raise TorError(f"Unsupported package manager: {pm}")
-
-    subprocess.run(cmd, check=True)
-
-
 # SELinux policy management
-
-
-def _install_selinux_tools() -> None:
-    """Install policycoreutils and checkpolicy if missing."""
-    if shutil.which("checkmodule") and shutil.which("semodule_package"):
-        return
-
-    logger.info("SELinux compilation tools missing. Attempting to install...")
-    pm = detect_package_manager()
-    if pm != "dnf":
-        logger.warning(
-            "Auto-install of checkpolicy is only supported on dnf (Fedora/RHEL)."
-        )
-        return
-
-    try:
-        subprocess.run(
-            ["dnf", "install", "-y", "checkpolicy", "policycoreutils"], check=True
-        )
-        logger.info("SELinux compilation tools installed successfully.")
-    except subprocess.CalledProcessError as e:
-        logger.warning(f"Failed to install SELinux tools: {e}")
 
 
 def setup_selinux_if_needed() -> None:
@@ -483,11 +385,10 @@ def setup_selinux_if_needed() -> None:
             logger.warning(f"SELinux policy source missing at {te_path}. Skipping.")
             return
 
-        _install_selinux_tools()
-
         if not shutil.which("checkmodule") or not shutil.which("semodule_package"):
             logger.warning(
-                "checkmodule or semodule_package not found. Cannot compile SELinux policy."
+                "checkmodule or semodule_package not found. Cannot compile SELinux policy. "
+                "Please install checkpolicy and policycoreutils manually."
             )
             return
 
@@ -554,14 +455,9 @@ def ensure_tor_ready(
     info = detect_tor(transport_port=transport_port, dns_port=dns_port)
 
     if not info["is_installed"]:
-        pm = detect_package_manager()
-        if pm is None:
-            raise TorError("No supported package manager found.")
-        install_tor(pm)
-        info = detect_tor(transport_port=transport_port, dns_port=dns_port)
-
-    if not info["is_installed"]:
-        raise TorError("Tor binary not found after installation attempt.")
+        raise TorError(
+            "Tor is not installed. Please install the Tor daemon manually (e.g. 'apt install tor' or 'dnf install tor')."
+        )
 
     tor_user = info.get("tor_user", "debian-tor")
 

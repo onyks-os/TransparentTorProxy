@@ -21,6 +21,39 @@ logger = logging.getLogger("ttp")
 RULES_TEMP_PATH = LOCK_DIR / "ttp.rules"
 
 
+def _has_cgroup_bypass_support() -> bool:
+    """Check if the system supports cgroupv2 socket bypass by trying to load a test rule."""
+    from pathlib import Path
+
+    cgroup_path = Path("/sys/fs/cgroup/ttp-bypass.slice")
+    try:
+        cgroup_path.mkdir(exist_ok=True)
+    except Exception:
+        pass
+
+    test_ruleset = """
+    table inet ttp_cgroup_test {
+        chain output {
+            type filter hook output priority filter;
+            socket cgroupv2 level 1 "ttp-bypass.slice" accept
+        }
+    }
+    """
+    try:
+        res = subprocess.run(
+            ["nft", "--check", "-f", "-"],
+            input=test_ruleset,
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode == 0:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
 def apply_rules(
     tor_user: str,
     transport_port: int = 9041,
@@ -36,14 +69,6 @@ def apply_rules(
     Orchestrates the process: Create -> Flush -> Inject.
     If any step fails, it triggers an automatic rollback (destruction).
     """
-    # Pre-create the systemd slice cgroup directory so that nftables can resolve its path at load time
-    from pathlib import Path
-
-    try:
-        Path("/sys/fs/cgroup/ttp-bypass.slice").mkdir(exist_ok=True)
-    except Exception as e:
-        logger.debug("Could not pre-create cgroupv2 slice directory: %s", e)
-
     # Resolve numeric UID for the tor user to avoid nft resolution issues
     try:
         if tor_user.isdigit():
@@ -70,8 +95,11 @@ def apply_rules(
         root_rule = "meta skuid 0 accept"
 
     # Construct bypass rules
-    bypass_rules_nat = ['socket cgroupv2 level 1 "ttp-bypass.slice" accept']
-    bypass_rules_filter = ['socket cgroupv2 level 1 "ttp-bypass.slice" accept']
+    bypass_rules_nat = []
+    bypass_rules_filter = []
+    if _has_cgroup_bypass_support():
+        bypass_rules_nat.append('socket cgroupv2 level 1 "ttp-bypass.slice" accept')
+        bypass_rules_filter.append('socket cgroupv2 level 1 "ttp-bypass.slice" accept')
     if bypass_uids:
         for uid in bypass_uids:
             bypass_rules_nat.append(f"meta skuid {uid} ip daddr != 127.0.0.1 accept")
@@ -213,6 +241,11 @@ def apply_rules(
 
             # 7. Brutal Reject: Kill any cleartext traffic that bypassed NAT (e.g., pre-existing connections)
             reject
+        }}
+
+        chain filter_forward {{
+            type filter hook forward priority filter; policy drop;
+            # Drop all forwarded traffic that bypasses standard OUTPUT chains
         }}
     }}
     """
@@ -362,8 +395,9 @@ def destroy_rules() -> bool:
             # The table is gone - destroy "failed" because it was already clean
             return True
         # The table still exists - destroy actually failed
-        logger.error(f"nft destroy failed: {result.stderr.strip()}")
-        return False
+        err_msg = result.stderr.decode().strip() if result.stderr else "unknown error"
+        logger.error(f"nft destroy failed: {err_msg}")
+        raise FirewallError(f"Failed to destroy nftables ruleset: {err_msg}")
 
     RULES_TEMP_PATH.unlink(missing_ok=True)
     return True

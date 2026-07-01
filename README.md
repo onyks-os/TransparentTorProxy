@@ -52,11 +52,11 @@ Key architectural advantages:
 * **No Per-Application Configuration**: Intercepts all TCP and DNS traffic globally at the network layer, eliminating the need to configure SOCKS5 settings in individual applications.
 * **Zero DNS Leaks**: Reroutes DNS queries via a kernel-level bind-mount overlay on `/etc/resolv.conf` (with automated cleanup on teardown), resolving leaks natively without altering persistent files.
 * **Systemd-Native Fail-Closed Design**: Leverages isolated `inet ttp` nftables tables and dedicated systemd units. In the event of a crash, watchdog trigger, or unclean termination, the network is either securely routed via Tor or blocked entirely (fail-closed), preventing cleartext leaks.
-* **Volatile Core**: The entire session state, temporary configurations, lockfiles, and logs reside exclusively in volatile memory (`tmpfs`), leaving no forensic footprint on physical storage.
+* **Volatile Core**: The entire session state, temporary configurations, lockfiles, and logs reside exclusively in volatile memory (`tmpfs`), ensuring zero persistent configuration state or residue is left on the host storage.
 
 ## Features
 
-* **Volatile Core**: Stores the entire session state, lockfiles, and logs exclusively in volatile `tmpfs` (`/run/ttp/` and `/run/tor/ttp/`), ensuring no traces are written to physical storage and all state disappears automatically on reboot.
+* **Volatile Core**: Stores the entire session state, lockfiles, and logs exclusively in volatile `tmpfs` (`/run/ttp/` and `/run/tor/ttp/`), ensuring zero persistent configuration state or residue is left on the host storage, with all state disappearing automatically on reboot.
 * **Stateless Overlay & systemd-resolved Intercept**: Transparently routes DNS requests using a kernel-level `mount --bind` overlay on `/etc/resolv.conf` without modifying the original file on disk. Hijacks active `systemd-resolved` configurations using a volatile drop-in to prevent leaks via D-Bus or NSS, backed by a strict kernel-level firewall drop policy on non-localhost outbound resolved queries.
 * **Continuous Integrity Protection (Watchdog & Killswitch)**: Runs an active background monitor checking Tor status, nftables chain presence, and the DNS overlay mount, automatically triggering single-strike repairs or a hard network lockout (emergency drop-all killswitch) on persistent integrity failure.
 * **Preserved LAN Access & Segmented Traffic (LAN Bypass & Split Tunneling)**: Dynamically excludes local subnets (RFC 1918 and Link-Local) from Tor routing to preserve access to local devices. Supports user- or group-specific exemptions (`--bypass-user` / `--bypass-group`) using native `nftables` UID/GID checks.

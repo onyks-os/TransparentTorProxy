@@ -12,19 +12,7 @@ This document details the recommended security and usage profiles for Transparen
   ```
 * **Why**: Runs without background active processes (no watchdog overhead), utilizing extremely efficient `nftables` redirect rules and local bypass for smooth home/work LAN printer/NAS sharing.
 
----
-
-## 2. Maximum Security Profile (High-Risk)
-* **Goal**: Whistleblowing, high-risk activity, total protection against accidental cleartext leaks or network state changes.
-* **Command**:
-  ```bash
-  sudo ttp start --watchdog --no-lan-bypass
-  ```
-* **Why**: Starts the continuous background **Watchdog** daemon to monitor state integrity every 15s. Disables LAN bypass to prevent side-channel leaks to local LAN devices. If any component (DNS overlay, nftables, or Tor daemon) is tampered with or fails, the system instantly isolates the network completely (Emergency Killswitch) and notifies the user.
-
----
-
-## 3. Administrative / Maintenance Profile
+## 2. Administrative / Maintenance Profile
 * **Goal**: Perform local updates (e.g., `apt update`, `dnf upgrade`) or maintenance that requires high bandwidth or direct native route while Tor is active, or speed up initial bootstrapping.
 * **Command**:
   ```bash
@@ -34,7 +22,7 @@ This document details the recommended security and usage profiles for Transparen
 
 ---
 
-## 4. Split Tunneling Profile
+## 3. Split Tunneling Profile
 * **Goal**: Route all network traffic through Tor except for specific system users or groups (e.g. running a local media server, backups, or gaming in cleartext).
 * **Command**:
   ```bash
@@ -44,7 +32,7 @@ This document details the recommended security and usage profiles for Transparen
 
 ---
 
-## 5. Censorship Circumvention Profile (Tor Bridges)
+## 4. Censorship Circumvention Profile (Tor Bridges)
 * **Goal**: Connect to the Tor network in censored environments where standard Tor entry nodes are blocked.
 * **Command**:
   ```bash
@@ -52,11 +40,11 @@ This document details the recommended security and usage profiles for Transparen
   # OR specify individual bridges directly:
   sudo ttp start --bridge "obfs4 192.0.2.1:1234 ..." --bridge "snowflake 192.0.2.2:4321 ..."
   ```
-* **Why**: Configures Tor to connect via bridges. If pluggable transports like `obfs4proxy` or `snowflake-client` are needed, TTP automatically checks their presence and installs them using the system package manager.
+* **Why**: Configures Tor to connect via bridges. If pluggable transports like `obfs4proxy` or `snowflake-client` are needed, TTP automatically checks their presence and raises an error if they are missing.
 
 ---
 
-## 6. Bring Your Own Daemon (BYOD) Profile
+## 5. Bring Your Own Daemon (BYOD) Profile
 * **Goal**: Run TTP inside Docker containers or custom systemd configurations by separating Tor lifecycle management from network redirection routing.
 * **Command**:
   ```bash

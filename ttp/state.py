@@ -33,7 +33,7 @@ LOCK_PATH = LOCK_DIR / "ttp.lock"
 # Minimum required free space on /run (tmpfs): 5 MB.
 MIN_TMPFS_BYTES = 5 * 1024 * 1024
 
-# Persistent directory - survives reboots. Only non-relevant forensic data here.
+# Persistent directory - survives reboots. Only non-sensitive persistent configurations or flags here.
 PERSISTENT_DIR = Path("/var/lib/ttp")
 STAR_NOTIFIED_PATH = PERSISTENT_DIR / ".starred_notified"
 

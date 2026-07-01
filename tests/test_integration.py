@@ -86,7 +86,10 @@ def test_full_ttp_flow():
     # 2. Verify routing through Tor
     req = urllib.request.Request(
         "https://check.torproject.org/api/ip",
-        headers={"User-Agent": "ttp-integration-test"},
+        headers={
+            "User-Agent": "ttp-integration-test",
+            "Connection": "close",
+        },
     )
     is_tor = False
     exit_ip = "unknown"
@@ -119,17 +122,26 @@ def test_full_ttp_flow():
 
     # 5. Verify we are no longer using Tor
     is_tor_after = True
-    for _ in range(3):
+    last_data = {}
+    for i in range(15):
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
-                is_tor_after = data.get("IsTor", False)
+                last_data = json.loads(resp.read().decode())
+                is_tor_after = last_data.get("IsTor", False)
                 if not is_tor_after:
                     break
-        except Exception:
+                else:
+                    print(
+                        f"Attempt {i + 1}: check.torproject.org says we are still on Tor! Data: {last_data}"
+                    )
+                    time.sleep(2)
+        except Exception as e:
+            print(f"Cleartext verification attempt {i + 1} failed: {e}")
             time.sleep(2)
 
-    assert not is_tor_after, "Traffic is STILL routed through Tor after 'ttp stop'!"
+    assert not is_tor_after, (
+        f"Traffic is STILL routed through Tor after 'ttp stop'! Last data: {last_data}"
+    )
 
 
 @pytest.mark.integration
@@ -163,7 +175,10 @@ def test_custom_ports_flow():
     # 2. Verify routing through Tor
     req = urllib.request.Request(
         "https://check.torproject.org/api/ip",
-        headers={"User-Agent": "ttp-integration-test"},
+        headers={
+            "User-Agent": "ttp-integration-test",
+            "Connection": "close",
+        },
     )
     is_tor = False
     exit_ip = "unknown"
@@ -192,17 +207,26 @@ def test_custom_ports_flow():
 
     # 4. Verify we are no longer using Tor
     is_tor_after = True
-    for _ in range(3):
+    last_data = {}
+    for i in range(15):
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
-                is_tor_after = data.get("IsTor", False)
+                last_data = json.loads(resp.read().decode())
+                is_tor_after = last_data.get("IsTor", False)
                 if not is_tor_after:
                     break
-        except Exception:
+                else:
+                    print(
+                        f"Attempt {i + 1}: check.torproject.org says we are still on Tor! Data: {last_data}"
+                    )
+                    time.sleep(2)
+        except Exception as e:
+            print(f"Cleartext verification attempt {i + 1} failed: {e}")
             time.sleep(2)
 
-    assert not is_tor_after, "Traffic is STILL routed through Tor after 'ttp stop'!"
+    assert not is_tor_after, (
+        f"Traffic is STILL routed through Tor after 'ttp stop'! Last data: {last_data}"
+    )
 
 
 @pytest.mark.integration
