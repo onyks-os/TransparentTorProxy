@@ -249,7 +249,7 @@ def test_apply_dns_systemd_resolved_active(tmp_path):
 
         # Verify commands executed
         assert ["systemctl", "is-active", "systemd-resolved"] in run_cmds
-        assert ["systemctl", "reload-or-restart", "systemd-resolved"] in run_cmds
+        assert ["systemctl", "restart", "systemd-resolved"] in run_cmds
         assert ["resolvectl", "flush-caches"] in run_cmds
 
 
@@ -284,7 +284,7 @@ def test_apply_dns_systemd_resolved_inactive(tmp_path):
         assert not fake_resolved_conf.exists()
 
         # Reload and flush should NOT be called
-        assert ["systemctl", "reload-or-restart", "systemd-resolved"] not in run_cmds
+        assert ["systemctl", "restart", "systemd-resolved"] not in run_cmds
         assert ["resolvectl", "flush-caches"] not in run_cmds
 
 
@@ -314,5 +314,5 @@ def test_restore_dns_systemd_resolved(tmp_path):
         dns.restore_dns({"mount_target": "/etc/resolv.conf", "systemd_resolved": True})
 
         assert not fake_resolved_conf.exists()
-        assert ["systemctl", "reload-or-restart", "systemd-resolved"] in run_cmds
+        assert ["systemctl", "restart", "systemd-resolved"] in run_cmds
         assert ["resolvectl", "flush-caches"] in run_cmds

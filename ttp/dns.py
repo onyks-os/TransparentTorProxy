@@ -137,7 +137,7 @@ def apply_dns(
 
             # Reload/restart resolved
             subprocess.run(
-                ["systemctl", "reload-or-restart", "systemd-resolved"],
+                ["systemctl", "restart", "systemd-resolved"],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -189,7 +189,7 @@ def apply_dns(
                 if resolved_config_file.exists():
                     resolved_config_file.unlink()
                 subprocess.run(
-                    ["systemctl", "reload-or-restart", "systemd-resolved"],
+                    ["systemctl", "restart", "systemd-resolved"],
                     capture_output=True,
                     text=True,
                     check=False,
@@ -249,7 +249,7 @@ def restore_dns(backup: dict[str, Any] | None) -> None:
 
         try:
             subprocess.run(
-                ["systemctl", "reload-or-restart", "systemd-resolved"],
+                ["systemctl", "restart", "systemd-resolved"],
                 capture_output=True,
                 text=True,
                 check=True,
