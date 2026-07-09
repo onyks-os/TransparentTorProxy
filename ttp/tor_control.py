@@ -195,7 +195,7 @@ def verify_tor() -> tuple[bool, str]:
                     # Fallback endpoints: we got a response, so traffic is routed
                     # through *something*. We can't confirm it's Tor, but we have an IP.
                     ip = data.get("ip") or data.get("ip_addr") or "unknown"
-                    return True, ip
+                    return False, ip
             except (
                 urllib.error.URLError,
                 TimeoutError,

@@ -62,6 +62,10 @@ def do_stop() -> None:
 
         console.print(f"{_PREFIX} Stopping Tor service...")
         tor_install.stop_tor_service()
+        tor_install.unlabel_ports_selinux(
+            lock.get("transport_port", 9041),
+            lock.get("dns_port", 9054),
+        )
 
     console.print(
         f"{_PREFIX} Executing active socket slaughter (Zero-Leak teardown)..."
@@ -75,7 +79,11 @@ def do_stop() -> None:
         console.print(f"{_PREFIX} Flushing connection tracking table...")
         try:
             subprocess.run(
-                [conntrack_path, "-F"], capture_output=True, text=True, check=True
+                [conntrack_path, "-F"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
             )
         except subprocess.CalledProcessError as e:
             logger.warning(

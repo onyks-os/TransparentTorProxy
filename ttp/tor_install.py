@@ -222,6 +222,10 @@ def generate_torrc(
         lines.append(f"User {tor_user}")
 
     torrc_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        os.chmod(torrc_path, 0o600)
+    except OSError:
+        pass
     logger.info("Generated runtime torrc at %s", torrc_path)
     return torrc_path
 
@@ -311,6 +315,7 @@ def start_tor_service(
         bridges=bridges,
         disable_ipv6=disable_ipv6,
     )
+    label_ports_selinux(transport_port, dns_port)
     _write_service_unit(tor_user)
 
     try:
@@ -416,6 +421,76 @@ def setup_selinux_if_needed() -> None:
             logger.warning(
                 f"SELinux policy installation failed: {e}. Tor might have permission issues."
             )
+
+
+def label_ports_selinux(transport_port: int, dns_port: int) -> None:
+    """Label our specific TransPort and DNSPort as tor_port_t in SELinux if semanage is available."""
+    if not shutil.which("semanage"):
+        logger.debug("semanage not available, skipping dynamic SELinux port labeling.")
+        return
+
+    for port, proto in [(transport_port, "tcp"), (dns_port, "udp")]:
+        try:
+            logger.debug("Adding SELinux port label tor_port_t for %s/%s", port, proto)
+            subprocess.run(
+                [
+                    "semanage",
+                    "port",
+                    "-a",
+                    "-t",
+                    "tor_port_t",
+                    "-p",
+                    proto,
+                    str(port),
+                ],
+                capture_output=True,
+                check=True,
+                timeout=10,
+            )
+        except subprocess.CalledProcessError:
+            # If the port mapping already exists, modify it instead
+            try:
+                subprocess.run(
+                    [
+                        "semanage",
+                        "port",
+                        "-m",
+                        "-t",
+                        "tor_port_t",
+                        "-p",
+                        proto,
+                        str(port),
+                    ],
+                    capture_output=True,
+                    check=True,
+                    timeout=10,
+                )
+            except subprocess.CalledProcessError as e_mod:
+                logger.warning(
+                    "Failed to label port %d/%s as tor_port_t: %s",
+                    port,
+                    proto,
+                    e_mod.stderr.decode().strip(),
+                )
+
+
+def unlabel_ports_selinux(transport_port: int, dns_port: int) -> None:
+    """Remove our specific TransPort and DNSPort labels from SELinux if semanage is available."""
+    if not shutil.which("semanage"):
+        return
+
+    for port, proto in [(transport_port, "tcp"), (dns_port, "udp")]:
+        try:
+            logger.debug("Removing SELinux port label for %s/%s", port, proto)
+            subprocess.run(
+                ["semanage", "port", "-d", "-p", proto, str(port)],
+                capture_output=True,
+                check=True,
+                timeout=10,
+            )
+        except subprocess.CalledProcessError:
+            # Non-fatal if removal fails (e.g. was never added or already removed)
+            pass
 
 
 def remove_selinux_module() -> None:

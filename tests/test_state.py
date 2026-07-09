@@ -51,7 +51,7 @@ def test_ensure_runtime_dir(_use_tmp_lock):
         state.ensure_runtime_dir()
 
         assert runtime_dir.exists()
-        mock_chmod.assert_called_once_with(runtime_dir, 0o755)
+        mock_chmod.assert_called_once_with(runtime_dir, 0o700)
         mock_chown.assert_called_once_with(runtime_dir, 0, 0)
 
 
@@ -68,7 +68,7 @@ def test_ensure_runtime_dir_watchdog_exists(_use_tmp_lock):
         state.ensure_runtime_dir()
 
         assert runtime_dir.exists()
-        mock_chmod.assert_called_once_with(runtime_dir, 0o755)
+        mock_chmod.assert_called_once_with(runtime_dir, 0o700)
         mock_chown.assert_called_once_with(runtime_dir, 123, 456)
 
 
@@ -141,8 +141,22 @@ def test_is_orphan_alive_pid(_use_tmp_lock):
     """is_orphan with PID still running -> returns False."""
     state.write_lock(pid=1)
 
-    with patch("ttp.state.os.kill"):  # No exception -> process alive
+    with (
+        patch("ttp.state.os.kill"),
+        patch("ttp.state._is_pid_ttp", return_value=True),
+    ):  # No exception -> process alive
         assert state.is_orphan() is False
+
+
+def test_is_orphan_recycled_pid(_use_tmp_lock):
+    """is_orphan with PID still running but recycled -> returns True."""
+    state.write_lock(pid=1)
+
+    with (
+        patch("ttp.state.os.kill"),
+        patch("ttp.state._is_pid_ttp", return_value=False),
+    ):  # PID is alive but not TTP
+        assert state.is_orphan() is True
 
 
 # delete_lock removes the file

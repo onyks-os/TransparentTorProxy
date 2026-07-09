@@ -59,6 +59,7 @@ def test_apply_dns_overlay(_mock_resolv_conf):
             capture_output=True,
             text=True,
             check=True,
+            timeout=10,
         )
 
 
@@ -84,6 +85,7 @@ def test_apply_dns_symlink_overlay(_mock_resolv_conf):
             capture_output=True,
             text=True,
             check=True,
+            timeout=10,
         )
 
 
@@ -110,6 +112,7 @@ def test_restore_dns_overlay(_mock_resolv_conf):
             capture_output=True,
             text=True,
             check=True,
+            timeout=10,
         )
 
         # Check file cleanup
@@ -174,6 +177,7 @@ def test_clear_stale_mounts_removes_layers():
             capture_output=True,
             text=True,
             check=False,
+            timeout=10,
         )
 
 

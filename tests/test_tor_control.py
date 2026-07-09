@@ -179,7 +179,7 @@ def test_verify_tor_retries(mock_urlopen, mock_sleep):
 @patch("ttp.tor_control.time.sleep")
 @patch("ttp.tor_control.urllib.request.urlopen")
 def test_verify_tor_fallback_endpoint(mock_urlopen, mock_sleep):
-    """verify_tor falls back to secondary endpoint when primary is down."""
+    """verify_tor falls back to secondary endpoint when primary is down and returns is_tor=False."""
     mock_resp = MagicMock()
     mock_resp.read.return_value = b'{"ip": "9.9.9.9"}'
     mock_urlopen.side_effect = [
@@ -188,7 +188,7 @@ def test_verify_tor_fallback_endpoint(mock_urlopen, mock_sleep):
     ]
 
     is_tor, ip = tor_control.verify_tor()
-    assert is_tor is True
+    assert is_tor is False
     assert ip == "9.9.9.9"
 
 

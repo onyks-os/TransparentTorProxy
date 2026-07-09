@@ -39,7 +39,7 @@ STAR_NOTIFIED_PATH = PERSISTENT_DIR / ".starred_notified"
 
 
 def ensure_runtime_dir() -> None:
-    """Create ``/run/ttp`` with mode 0755.
+    """Create ``/run/ttp`` with mode 0700.
 
     Must be called early in the CLI startup before any I/O that targets
     the runtime directory (lock file, log file, torrc, etc.).
@@ -49,7 +49,7 @@ def ensure_runtime_dir() -> None:
     import pwd
 
     LOCK_DIR.mkdir(parents=True, exist_ok=True)
-    os.chmod(LOCK_DIR, 0o755)
+    os.chmod(LOCK_DIR, 0o700)
 
     uid = 0
     gid = 0
@@ -147,7 +147,6 @@ def write_lock(
         The resolved UID of the Tor daemon process.
     """
     try:
-        ensure_runtime_dir()
         data = {
             "pid": pid if pid is not None else os.getpid(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -168,10 +167,24 @@ def write_lock(
             "no_ipv6": no_ipv6,
             "tor_uid": tor_uid,
         }
-        LOCK_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        os.chmod(LOCK_PATH, 0o644)
+        _write_lock_file(data)
     except OSError as e:
         raise StateError(f"Failed to write session lock file: {e}")
+
+
+def _write_lock_file(data: dict[str, Any]) -> None:
+    ensure_runtime_dir()
+    fd = os.open(LOCK_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with open(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+    except Exception as e:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise e
 
 
 def update_lock_keys(**kwargs: Any) -> None:
@@ -184,8 +197,7 @@ def update_lock_keys(**kwargs: Any) -> None:
         raise StateError("No active TTP session found to update.")
     data.update(kwargs)
     try:
-        ensure_runtime_dir()
-        LOCK_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        _write_lock_file(data)
     except OSError as e:
         raise StateError(f"Failed to update session lock file: {e}")
 
@@ -205,8 +217,18 @@ def delete_lock() -> None:
     LOCK_PATH.unlink(missing_ok=True)
 
 
+def _is_pid_ttp(pid: int) -> bool:
+    """Check if the PID actually belongs to a TTP process (prevents PID recycling)."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmdline = f.read()
+            return b"ttp" in cmdline
+    except (FileNotFoundError, OSError):
+        return False
+
+
 def is_orphan() -> bool:
-    """Return ``True`` if the lock file exists but its PID is dead.
+    """Return ``True`` if the lock file exists but its PID is dead or recycled.
 
     Uses ``os.kill(pid, 0)`` which sends no signal but raises
     ``OSError`` when the target process does not exist.
@@ -221,6 +243,8 @@ def is_orphan() -> bool:
 
     try:
         os.kill(pid, 0)
+        if not _is_pid_ttp(pid):
+            return True  # PID is alive but not TTP -> recycled (orphan)
     except OSError:
         return True  # process not running -> orphan
     return False

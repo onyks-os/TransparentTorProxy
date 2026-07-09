@@ -357,10 +357,25 @@ def attempt_auto_healing(failed_component: str) -> bool:
         return False
 
 
+def _sanitize_alert_text(text: str) -> str:
+    """Strip ANSI escape sequences and non-printable control characters."""
+    import re
+
+    # Strip ANSI escape sequences (e.g. \x1b[31m)
+    text = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
+    # Keep only printable characters or space
+    return "".join(c for c in text if c.isprintable() or c == " ")
+
+
 def trigger_emergency_killswitch(failed_component: str, err_msg: str) -> None:
     """Lock down network interfaces to prevent traffic leakage, then sound alert."""
+    failed_component = _sanitize_alert_text(failed_component)
+    err_msg = _sanitize_alert_text(err_msg)
+
     logger.critical(
-        "EMERGENCY KILLSWITCH ACTIVATED! Reason: %s (%s)", failed_component, err_msg
+        "EMERGENCY KILLSWITCH ACTIVATED! Reason: %s (%s)",
+        failed_component,
+        err_msg,
     )
 
     # 1. Apply emergency total drop ruleset
@@ -437,6 +452,7 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
         IN_ATTRIB = 0x00000004
         IN_DELETE_SELF = 0x00000400
         IN_MOVE_SELF = 0x00000800
+        IN_DONT_FOLLOW = 0x02000000
         WATCH_MASK = IN_CLOSE_WRITE | IN_ATTRIB | IN_DELETE_SELF | IN_MOVE_SELF
 
         inotify_fd = libc.inotify_init()
@@ -444,7 +460,8 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
             raise OSError("inotify_init failed")
         os.set_blocking(inotify_fd, False)
 
-        wd = -1
+        wd_real = -1
+        wd_link = -1
     except Exception as e:
         logger.critical("Watchdog failed to setup Inotify: %s", e)
         try:
@@ -455,28 +472,53 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
         return
 
     def readd_watch() -> None:
-        nonlocal wd
-        if wd >= 0:
-            try:
-                libc.inotify_rm_watch(inotify_fd, wd)
-            except Exception:
-                pass
-            wd = -1
+        nonlocal wd_real, wd_link
+        # Remove old watches
+        for wd_val in (wd_real, wd_link):
+            if wd_val >= 0:
+                try:
+                    libc.inotify_rm_watch(inotify_fd, wd_val)
+                except Exception:
+                    pass
+        wd_real = -1
+        wd_link = -1
+
+        # 1. Watch the real target path of resolv.conf
         try:
             resolv_real_path = os.path.realpath("/etc/resolv.conf")
-            wd = libc.inotify_add_watch(
+            wd_real = libc.inotify_add_watch(
                 inotify_fd, resolv_real_path.encode("utf-8"), WATCH_MASK
             )
-            if wd >= 0:
+            if wd_real >= 0:
                 logger.info(
-                    "Watchdog: Inotify watch established on %s", resolv_real_path
+                    "Watchdog: Inotify watch established on real target %s",
+                    resolv_real_path,
                 )
             else:
                 logger.warning(
-                    "Watchdog: Failed to add inotify watch on %s", resolv_real_path
+                    "Watchdog: Failed to add inotify watch on real target %s",
+                    resolv_real_path,
                 )
         except Exception as e:
-            logger.warning("Watchdog: Exception when re-adding watch: %s", e)
+            logger.warning(
+                "Watchdog: Exception when adding watch on real target: %s", e
+            )
+
+        # 2. Watch the symlink itself (without following) to detect link target swapping
+        try:
+            wd_link = libc.inotify_add_watch(
+                inotify_fd, b"/etc/resolv.conf", WATCH_MASK | IN_DONT_FOLLOW
+            )
+            if wd_link >= 0:
+                logger.info(
+                    "Watchdog: Inotify watch established on symlink /etc/resolv.conf"
+                )
+            else:
+                logger.warning(
+                    "Watchdog: Failed to add inotify watch on symlink /etc/resolv.conf"
+                )
+        except Exception as e:
+            logger.warning("Watchdog: Exception when adding watch on symlink: %s", e)
 
     # Initial watch establishment
     readd_watch()

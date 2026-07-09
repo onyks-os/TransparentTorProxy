@@ -55,9 +55,10 @@ def test_write_service_unit(mock_which, tmp_path: Path):
 
 
 @patch("ttp.tor_install.subprocess.run")
+@patch("ttp.tor_install.label_ports_selinux")
 @patch("ttp.tor_install._write_service_unit")
 @patch("ttp.tor_install.generate_torrc")
-def test_start_tor_service(mock_generate, mock_write_unit, mock_run):
+def test_start_tor_service(mock_generate, mock_write_unit, mock_label, mock_run):
     """start_tor_service generates torrc, writes unit, reloads, and starts."""
     mock_generate.return_value = Path("/run/tor/ttp/torrc")
     mock_run.return_value = MagicMock(returncode=0)
@@ -73,6 +74,7 @@ def test_start_tor_service(mock_generate, mock_write_unit, mock_run):
         bridges=None,
         disable_ipv6=False,
     )
+    mock_label.assert_called_once_with(9041, 9054)
     mock_write_unit.assert_called_once_with("tor")
     assert mock_run.call_count == 2
     mock_run.assert_any_call(
@@ -120,9 +122,12 @@ def test_generate_torrc_doh_mitigation(
 
 
 @patch("ttp.tor_install.subprocess.run")
+@patch("ttp.tor_install.label_ports_selinux")
 @patch("ttp.tor_install._write_service_unit")
 @patch("ttp.tor_install.generate_torrc")
-def test_start_tor_service_failure(mock_generate, mock_write_unit, mock_run):
+def test_start_tor_service_failure(
+    mock_generate, mock_write_unit, mock_label, mock_run
+):
     """start_tor_service raises TorError if systemctl restart fails."""
     mock_generate.return_value = Path("/run/tor/ttp/torrc")
     # daemon-reload succeeds, restart fails

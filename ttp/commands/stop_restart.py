@@ -47,6 +47,10 @@ def stop_command(
 
         lock = state.read_lock()
         if lock:
+            tor_install.unlabel_ports_selinux(
+                lock.get("transport_port", 9041),
+                lock.get("dns_port", 9054),
+            )
             dns.restore_dns(lock.get("dns_backup"))
         else:
             dns.restore_dns(None)

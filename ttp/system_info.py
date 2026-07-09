@@ -64,6 +64,7 @@ def collect_diagnostics() -> Dict[str, str]:
             ["systemctl", "status", "ttp-tor"],
             capture_output=True,
             text=True,
+            timeout=10,
         ).stdout.strip()
         if not svc_status:
             svc_status = "(ttp-tor service not found)"
@@ -77,6 +78,7 @@ def collect_diagnostics() -> Dict[str, str]:
             ["grep", "-v", r"^\s*#\|^\s*$", "/run/tor/ttp/torrc"],
             capture_output=True,
             text=True,
+            timeout=10,
         ).stdout.strip()
         if not torrc:
             torrc = "(Empty or not readable)"
@@ -90,6 +92,7 @@ def collect_diagnostics() -> Dict[str, str]:
             ["nft", "list", "ruleset"],
             capture_output=True,
             text=True,
+            timeout=10,
         ).stdout.strip()
         if not nft:
             nft = "(Empty ruleset)"
@@ -105,6 +108,7 @@ def collect_diagnostics() -> Dict[str, str]:
             ["findmnt", "-n", "/etc/resolv.conf"],
             capture_output=True,
             text=True,
+            timeout=10,
         ).stdout.strip()
 
         if mount_check:

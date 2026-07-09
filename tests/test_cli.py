@@ -1668,6 +1668,7 @@ def test_start_no_ipv6_supported(
 @patch("time.sleep")
 @patch("ttp.firewall.apply_active_socket_slaughter")
 @patch("ttp.tor_install.stop_tor_service")
+@patch("ttp.tor_install.unlabel_ports_selinux")
 @patch("ttp.tor_control.graceful_shutdown")
 @patch("ttp.firewall.apply_teardown_lockdown")
 @patch("pwd.getpwnam")
@@ -1684,6 +1685,7 @@ def test_stop_graceful_teardown_sequence(
     mock_getpwnam,
     mock_lockdown,
     mock_graceful,
+    mock_unlabel,
     mock_stop_tor,
     mock_slaughter,
     mock_sleep,
@@ -1699,6 +1701,7 @@ def test_stop_graceful_teardown_sequence(
     mock_lockdown.side_effect = lambda *args, **kwargs: call_order.append("lockdown")
     mock_graceful.side_effect = lambda *args, **kwargs: call_order.append("graceful")
     mock_stop_tor.side_effect = lambda *args, **kwargs: call_order.append("stop_tor")
+    mock_unlabel.side_effect = lambda *args, **kwargs: call_order.append("unlabel")
     mock_slaughter.side_effect = lambda *args, **kwargs: call_order.append("slaughter")
     mock_sleep.side_effect = lambda *args, **kwargs: call_order.append("sleep")
     mock_run.side_effect = lambda *args, **kwargs: call_order.append("run")
@@ -1714,6 +1717,7 @@ def test_stop_graceful_teardown_sequence(
         capture_output=True,
         text=True,
         check=True,
+        timeout=10,
     )
     mock_lockdown.assert_called_once_with(123)
     mock_slaughter.assert_called_once()
@@ -1724,6 +1728,7 @@ def test_stop_graceful_teardown_sequence(
         "lockdown",
         "graceful",
         "stop_tor",
+        "unlabel",
         "slaughter",
         "sleep",
         "run",
@@ -1742,6 +1747,7 @@ def test_stop_graceful_teardown_sequence(
 @patch("time.sleep")
 @patch("ttp.firewall.apply_active_socket_slaughter")
 @patch("ttp.tor_install.stop_tor_service")
+@patch("ttp.tor_install.unlabel_ports_selinux")
 @patch("ttp.tor_control.graceful_shutdown")
 @patch("ttp.firewall.apply_teardown_lockdown")
 @patch("pwd.getpwnam")
@@ -1758,6 +1764,7 @@ def test_stop_graceful_teardown_no_conntrack(
     mock_getpwnam,
     mock_lockdown,
     mock_graceful,
+    mock_unlabel,
     mock_stop_tor,
     mock_slaughter,
     mock_sleep,

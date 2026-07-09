@@ -29,11 +29,29 @@ fi
 echo "[TTP-Emergency] Starting network recovery..."
 
 # 1. Firewall Cleanup
-# We brutally flush the entire nftables ruleset to ensure no 'drop' or 
-# 'redirect' rules are left active.
+# We target specifically the 'ttp' table to avoid destroying other custom firewall rules.
 if command -v nft >/dev/null 2>&1; then
-    nft flush ruleset
-    echo "[TTP-Emergency] nftables ruleset flushed."
+    if nft list table inet ttp >/dev/null 2>&1; then
+        nft delete table inet ttp
+        echo "[TTP-Emergency] nftables 'inet ttp' table removed."
+    else
+        echo "[TTP-Emergency] nftables 'inet ttp' table not present."
+    fi
+fi
+
+# 1b. SELinux Port Cleanup
+# If semanage is present, attempt to clean up any registered custom ports from the lock file
+if [ -f /run/ttp/ttp.lock ] && command -v semanage >/dev/null 2>&1; then
+    tport=$(grep '"transport_port"' /run/ttp/ttp.lock | tr -cd '0-9')
+    dport=$(grep '"dns_port"' /run/ttp/ttp.lock | tr -cd '0-9')
+    if [ -n "$tport" ]; then
+        semanage port -d -p tcp "$tport" >/dev/null 2>&1
+        echo "[TTP-Emergency] Removed SELinux TCP port label for $tport."
+    fi
+    if [ -n "$dport" ]; then
+        semanage port -d -p udp "$dport" >/dev/null 2>&1
+        echo "[TTP-Emergency] Removed SELinux UDP port label for $dport."
+    fi
 fi
 
 # 2. DNS Recovery (systemd-resolved)

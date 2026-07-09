@@ -127,7 +127,37 @@ TTP is designed to achieve the following security properties, in order of priori
 | Watchdog service killed by attacker  | Denial of Service | An attacker with root access kills `ttp-watchdog.service` to disable monitoring    | Watchdog is optional; its absence does not degrade the firewall or DNS protection                       | **Medium.** Without watchdog, no auto-healing or killswitch. Mitigated by always-on nftables rules. |
 | False-positive killswitch activation | Denial of Service | A transient system event (e.g., systemd reload) triggers the two-strike killswitch | Two-strike policy (first failure triggers healing, second triggers killswitch); 3s stabilization window | **Low.** Designed to minimize false positives.                                                      |
 
-### 3.6 `cli.py` — Entry Point & Privilege Escalation
+### 3.6 `ttp bypass` — cgroups v2 Bypass
+
+| Threat | STRIDE Category | Description | Mitigation | Residual Risk |
+| :--- | :--- | :--- | :--- | :--- |
+| Slice hijacking by unprivileged user | Elevation of Privilege | An unprivileged process writes its own PID to `/sys/fs/cgroup/ttp-bypass.slice/cgroup.procs` to escape Tor routing | Slice controller cgroup directories are owned by root and writable only by root. `systemd-run` commands targeting `ttp-bypass.slice` require sudo/root privileges. | **Low.** Standard user processes cannot migrate themselves to the bypass slice. |
+| Insecure slice file configurations | Tampering | An attacker modifies `/run/systemd/system/ttp-bypass.slice` to gain persistent bypass or alter slice settings | Slice definition files are created dynamically on-demand, owned by root, and deleted upon `ttp stop`. | **Low.** Requires root access to edit systemd slice configurations. |
+
+### 3.7 `ttp-watchdog` — Privilege-Separated Watchdog Daemon
+
+| Threat | STRIDE Category | Description | Mitigation | Residual Risk |
+| :--- | :--- | :--- | :--- | :--- |
+| Watchdog process compromise | Elevation of Privilege | An attacker exploits the watchdog to execute arbitrary code with full root privileges | The watchdog drops all root privileges, running under the unprivileged user `ttp-watchdog` with `NoNewPrivileges=yes` and the minimal set of capabilities (`CAP_NET_ADMIN`). | **Low.** The watchdog process has no write access to system directories and cannot run administrative shell commands. |
+| Insecure Polkit rules authorization | Tampering | An attacker bypasses authentication checks to start/stop the watchdog service | Polkit rules explicitly restrict starting/stopping `ttp-watchdog.service` to root users and the TTP controller. | **Low.** Standard Polkit controls prevent unauthorized service state tampering. |
+
+### 3.8 systemd-resolved — DNS Resolution Edge Cases
+
+| Threat | STRIDE Category | Description | Mitigation | Residual Risk |
+| :--- | :--- | :--- | :--- | :--- |
+| DBus API query bypass | Information Disclosure | An application queries resolved via DBus IPC directly, bypassing the `/etc/resolv.conf` bind-mount overlay | Outbound DNS queries originating from the systemd-resolved daemon process are intercepted by the TTP NAT output firewall rules and forced through Tor's `DNSPort` on loopback. | **Low.** Intercepting outbound port 53 traffic from resolved guarantees DBus bypass queries are still Tor-resolved. |
+| resolved fallback DNS servers leak | Information Disclosure | resolved falls back to compiled-in Google/Cloudflare DNS servers, bypassing Tor | All outbound cleartext DNS queries (UDP/TCP port 53) are strictly intercepted by nftables. Direct WAN DNS queries are dropped/rejected. | **Low.** Fail-closed firewall ensures no fallback queries escape in cleartext. |
+
+#### systemd-resolved Interaction Matrix
+
+| systemd-resolved State | Resolv.conf Configuration | TTP Action & Mitigation | Risk Level |
+| :--- | :--- | :--- | :--- |
+| **Active (Stub Mode)** | Symlink to `/run/systemd/resolve/stub-resolv.conf` (pointing to `127.0.0.53`). | TTP applies bind-mount overlay to the target file. systemd-resolved's stub listener queries are hijacked by TTP firewall rules and redirected to Tor DNSPort. | **Low.** DNS queries to `127.0.0.53` are securely forced into Tor. |
+| **Active (Static Mode)** | Symlink to `/lib/systemd/resolv.conf` or `/usr/lib/...` | TTP resolves realpath and bind-mounts. Outgoing queries to external DNS servers are blocked by nftables filter drop rules. | **Low.** Fail-closed firewall blocks leaks. |
+| **Inactive** | Static file (managed by NetworkManager/dhclient). | TTP bind-mounts directly on `/etc/resolv.conf`. | **Low.** Overlay mount forces nameserver `127.0.0.1`. |
+| **Resolved DBus Query Bypass** | Direct DBus IPC from applications (e.g. systemd-resolved API). | resolved query is processed by systemd-resolved daemon, which attempts upstream DNS resolution. The upstream query is intercepted by TTP nftables output rules and redirected to Tor DNSPort. | **Low.** NAT redirection catches outbound DNS queries on port 53. |
+
+### 3.9 `cli.py` — Entry Point & Privilege Escalation
 
 | Threat                                       | STRIDE Category        | Description                                                          | Mitigation                                                                                                               | Residual Risk                                                      |
 | :------------------------------------------- | :--------------------- | :------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------- |

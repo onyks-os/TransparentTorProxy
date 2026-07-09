@@ -280,6 +280,13 @@ def start_command(
             )
             raise typer.Exit(code=1)
 
+    if allow_root:
+        console.print(
+            f"{_PREFIX} [bold red]WARNING: --allow-root is enabled. "
+            "All root-owned processes (e.g., systemd services, cron, package managers) "
+            "will bypass Tor and transmit in CLEARTEXT! Use with caution.[/bold red]"
+        )
+
     # Step 0a - Pre-flight: verify /run has enough space for tmpfs I/O.
     try:
         state.check_tmpfs_space()
@@ -312,11 +319,28 @@ def start_command(
 
         # 2. Sockets Auto-Detection
         if resolved_uid is None:
-            resolved_uid = _get_uid_from_port(transport_port)
-            if resolved_uid is not None:
-                logger.info(
-                    "Auto-detected Tor process owner UID via ports: %s", resolved_uid
-                )
+            detected_uid = _get_uid_from_port(transport_port)
+            if detected_uid is not None:
+                try:
+                    username = pwd.getpwuid(detected_uid).pw_name
+                    if "tor" in username.lower() and detected_uid != 0:
+                        resolved_uid = detected_uid
+                        logger.info(
+                            "Auto-detected Tor process owner UID via ports: %s (user: %s)",
+                            resolved_uid,
+                            username,
+                        )
+                    else:
+                        logger.warning(
+                            "Auto-detected Tor UID %d belongs to user '%s' which is not root but does not contain 'tor'. Ignoring.",
+                            detected_uid,
+                            username,
+                        )
+                except KeyError:
+                    logger.warning(
+                        "Auto-detected Tor UID %d is not registered in the pwd database. Ignoring.",
+                        detected_uid,
+                    )
 
         # 3. Standard Users Fallback
         if resolved_uid is None:

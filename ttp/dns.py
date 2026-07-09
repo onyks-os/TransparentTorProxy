@@ -30,6 +30,7 @@ def detect_active_interface() -> str:
             capture_output=True,
             text=True,
             check=True,
+            timeout=10,
         )
         # Output example: "default via 192.168.1.1 dev eth0 proto dhcp..."
         parts = result.stdout.split()
@@ -71,7 +72,7 @@ def _is_mount_point(target: str) -> bool:
 
 def _clear_stale_mounts(target: str) -> None:
     """Iteratively unmount TTP overlay mounts on *target*."""
-    for i in range(10):
+    for i in range(100):
         if not _is_ttp_mount(target):
             return
         logger.debug("Removing stale TTP mount layer %d on %s", i + 1, target)
@@ -80,11 +81,12 @@ def _clear_stale_mounts(target: str) -> None:
             capture_output=True,
             text=True,
             check=False,
+            timeout=10,
         )
 
     if _is_ttp_mount(target):
         logger.warning(
-            "Could not fully clear stale TTP mounts on %s after 10 attempts", target
+            "Could not fully clear stale TTP mounts on %s after 100 attempts", target
         )
 
 
@@ -110,6 +112,7 @@ def apply_dns(
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=10,
             )
             resolved_active = res.stdout.strip() == "active"
         except Exception:
@@ -141,6 +144,7 @@ def apply_dns(
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=10,
             )
 
             # Flush system cache
@@ -149,6 +153,7 @@ def apply_dns(
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=10,
             )
 
         nameservers = "nameserver 127.0.0.1\n"
@@ -175,6 +180,7 @@ def apply_dns(
             capture_output=True,
             text=True,
             check=True,
+            timeout=10,
         )
 
         return {
@@ -193,12 +199,14 @@ def apply_dns(
                     capture_output=True,
                     text=True,
                     check=False,
+                    timeout=10,
                 )
                 subprocess.run(
                     ["resolvectl", "flush-caches"],
                     capture_output=True,
                     text=True,
                     check=False,
+                    timeout=10,
                 )
             except Exception:
                 pass
@@ -228,6 +236,7 @@ def restore_dns(backup: dict[str, Any] | None) -> None:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=10,
             )
             logger.info("Successfully unmounted DNS overlay on %s", mount_target)
         except subprocess.CalledProcessError as e:
@@ -253,6 +262,7 @@ def restore_dns(backup: dict[str, Any] | None) -> None:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=10,
             )
         except subprocess.CalledProcessError as e:
             logger.warning(
@@ -270,6 +280,7 @@ def restore_dns(backup: dict[str, Any] | None) -> None:
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=10,
             )
         except Exception as e:
             logger.debug("Failed to flush systemd-resolved caches: %s", e)

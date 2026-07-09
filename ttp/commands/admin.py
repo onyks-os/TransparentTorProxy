@@ -142,6 +142,13 @@ def bypass_command(
         )
         raise typer.Exit(code=1)
 
+    if not sudo_uid.isdigit() or not sudo_gid.isdigit():
+        _print_error(
+            "Invalid Environment Context",
+            "SUDO_UID and SUDO_GID must be numeric values.",
+        )
+        raise typer.Exit(code=1)
+
     require_systemd()
 
     lock = state.read_lock()

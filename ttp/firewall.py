@@ -45,6 +45,7 @@ def _has_cgroup_bypass_support() -> bool:
             input=test_ruleset,
             capture_output=True,
             text=True,
+            timeout=10,
         )
         if res.returncode == 0:
             return True
@@ -166,86 +167,105 @@ def apply_rules(
         doh_reject_ipv6 = f"ip6 daddr {doh_ips_v6} tcp dport 443 reject"
 
     # Define the ruleset using a single atomic string.
+    # Invariant properties:
+    # 1. Non-exempt local traffic (not Tor, not bypassed UIDs/GIDs) MUST NOT leave the system in cleartext.
+    # 2. DNS traffic (UDP/TCP port 53) MUST be redirected to Tor DNSPort (dns_port) or dropped.
+    # 3. TCP traffic MUST be redirected to Tor TransPort (transport_port) or dropped.
+    # 4. Non-TCP, non-DNS traffic (ICMP, generic UDP, etc.) MUST be rejected in the filter_out chain.
     ruleset = f"""
     table inet ttp {{
+        # nat prerouting: Handles redirection for incoming traffic from other network namespaces/interfaces
+        # (e.g., virtual interfaces for VMs or Docker containers).
+        # Hook: prerouting (runs before routing decisions are made for incoming packets).
+        # Invariant: Redirection rules mirror output chain to ensure gateway traffic is equally sandboxed.
         chain prerouting {{
-            # Handle incoming traffic from other interfaces (e.g., if used as a gateway)
             type nat hook prerouting priority dstnat; policy accept;
-            # DNS MUST be redirected before LAN bypass
+            # Redirect external DNS queries to local Tor DNSPort
             {dns_redirect_ipv4}
             {dns_redirect_ipv6}
+            # Exempt LAN/local subnets from redirection
             {lan_rule}
             {lan6_rule}
+            # Redirect external TCP connections to local Tor TransPort
             {tcp_redirect_ipv4}
             {tcp_redirect_ipv6}
         }}
 
+        # nat output: Hijacks local outbound TCP and DNS traffic, redirecting it to Tor ports.
+        # Hook: output, priority -150 (dstnat, runs before routing decisions are finalized).
+        # Invariant: Traffic from Tor daemon, bypassed processes, LAN destination, and loopback bypasses redirection.
         chain output {{
             type nat hook output priority -150; policy accept;
 
-            # 1. Tor user EXEMPTION: Allow the Tor daemon to reach the real internet
+            # 1. Tor user EXEMPTION: Allow the Tor daemon to reach the real internet to build circuits.
             meta skuid {tor_uid} accept
 
-            # 1b. Bypass users and groups
+            # 1b. Bypass users and groups: Allow whitelisted processes to connect to cleartext WAN.
             {bypass_rules_nat_str}
 
-            # 2. DNS Redirection: MUST come before LAN bypass.
+            # 2. DNS Redirection: Redirect outbound cleartext DNS queries (UDP/TCP port 53) to local Tor DNSPort.
+            # Positioned before LAN bypass to prevent DNS leaking via local DNS servers.
             {dns_redirect_ipv4}
             {dns_redirect_ipv6}
 
-            # 3. LAN Bypass: Allow local subnet communication (non-DNS)
+            # 3. LAN Bypass: Allow direct local subnet communication (non-DNS) for printer/shares.
             {lan_rule}
             {lan6_rule}
 
-            # 4. Local Exemption: Allow traffic to localhost
+            # 4. Local Exemption: Allow loopback traffic to loopback interface.
             {loopback_ipv4}
             {loopback_ipv6}
 
-            # 5. TCP Redirection: Redirect all remaining TCP traffic to Tor's TransPort
+            # 5. TCP Redirection: Redirect all remaining outbound TCP traffic to Tor's TransPort.
             {tcp_redirect_ipv4}
             {tcp_redirect_ipv6}
         }}
 
+        # filter_out: The fail-safe "guillotine". Rejects any cleartext packet that escapes nat output.
+        # Hook: output, priority filter (standard filter hook, runs after routing decisions).
+        # Invariant: ∀ packet ∉ (Tor daemon, bypassed, LAN, loopback) → REJECT.
         chain filter_out {{
             type filter hook output priority filter; policy accept;
 
-            # 1. Allow the Tor daemon
+            # 1. Allow the Tor daemon to send TCP traffic directly to WAN guards/bridges.
             meta skuid {tor_uid} accept
 
-            # 1b. Bypass users and groups
+            # 1b. Bypass users and groups: Allow whitelisted processes to transmit in cleartext.
             {bypass_rules_filter_str}
 
-            # 1c. systemd-resolved fail-closed policy
+            # 1c. systemd-resolved fail-closed policy: Prevent resolved from leaking DNS queries directly to WAN.
             {resolved_rules_str}
 
-            # 2. Allow root processes (system maintenance, Tor bootstrapping) if explicitly allowed
+            # 2. Allow root processes if explicitly requested (e.g. system updates/Tor bootstrapping).
             {root_rule}
 
-            # 3. LAN Bypass: Allow local subnet communication
+            # 3. LAN Bypass: Allow local subnet filter bypass.
             {lan_rule}
             {lan6_rule}
 
-            # 4. Allow traffic to localhost
+            # 4. Allow loopback traffic.
             {loopback_ipv4}
             {loopback_ipv6}
 
-            # 5. DoT (DNS-over-TLS) Leak Prevention: Block direct connections to port 853
+            # 5. DoT (DNS-over-TLS) Leak Prevention: Block direct connections to port 853.
             tcp dport 853 reject
 
-            # 6. DoH (DNS-over-HTTPS) Leak Prevention: Block common public DoH resolvers on port 443
+            # 6. DoH (DNS-over-HTTPS) Leak Prevention: Block common public DoH resolvers on port 443.
             {doh_reject_ipv4}
             {doh_reject_ipv6}
 
-            # 7. IPv6 Leak Prevention
+            # 7. IPv6 Leak Prevention: Drop all IPv6 traffic if disabled or unrouteable.
             {ipv6_leak_prevention}
 
-            # 7. Brutal Reject: Kill any cleartext traffic that bypassed NAT (e.g., pre-existing connections)
+            # 8. Catch-all Reject: Drop/Reject all cleartext traffic not matching exemptions (e.g. UDP, ICMP, raw sockets, or pre-existing TCP connections).
             reject
         }}
 
         chain filter_forward {{
+            # filter_forward: Complete isolation of forwarding plane to prevent bypass via Docker/VM routing.
+            # Hook: forward (runs for packets routed through this host).
+            # Invariant: Policy drop ensures no unproxied forwarding is permitted.
             type filter hook forward priority filter; policy drop;
-            # Drop all forwarded traffic that bypasses standard OUTPUT chains
         }}
     }}
     """
@@ -379,17 +399,26 @@ def destroy_rules() -> bool:
     """
     # Flush the table first for absolute cleanup safety
     subprocess.run(
-        ["nft", "flush", "table", "inet", "ttp"], capture_output=True, check=False
+        ["nft", "flush", "table", "inet", "ttp"],
+        capture_output=True,
+        check=False,
+        timeout=10,
     )
     result = subprocess.run(
-        ["nft", "destroy", "table", "inet", "ttp"], capture_output=True, check=False
+        ["nft", "destroy", "table", "inet", "ttp"],
+        capture_output=True,
+        check=False,
+        timeout=10,
     )
     # returncode 1 with table absent = already clean, not an error
     # to distinguish it, check if the table exists
     if result.returncode != 0:
         # Check: does the table still exist?
         check = subprocess.run(
-            ["nft", "list", "table", "inet", "ttp"], capture_output=True, check=False
+            ["nft", "list", "table", "inet", "ttp"],
+            capture_output=True,
+            check=False,
+            timeout=10,
         )
         if check.returncode != 0:
             # The table is gone - destroy "failed" because it was already clean
@@ -405,7 +434,13 @@ def destroy_rules() -> bool:
 
 def _run_nft(args: list[str]) -> None:
     """Helper to run nft commands."""
-    subprocess.run(["nft"] + args, capture_output=True, text=True, check=True)
+    subprocess.run(
+        ["nft"] + args,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
 
 
 def _run_nft_string(ruleset: str) -> None:
@@ -421,6 +456,7 @@ def _run_nft_string(ruleset: str) -> None:
             capture_output=True,
             text=True,
             check=True,
+            timeout=10,
         )
     except (OSError, subprocess.CalledProcessError) as e:
         error_msg = str(e)

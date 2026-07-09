@@ -543,3 +543,41 @@ def test_check_system_integrity_systemd_resolved_inactive_service(
     comp, err = wd.check_system_integrity()
     assert comp == "dns"
     assert "systemd-resolved systemd service is inactive/stopped" in err
+
+
+def test_sanitize_alert_text():
+    """_sanitize_alert_text removes control characters and ANSI escape sequences."""
+    text_with_ansi = "\x1b[31mError!\x1b[0m \n\r\tTest"
+    sanitized = wd._sanitize_alert_text(text_with_ansi)
+    assert sanitized == "Error! Test"
+
+
+@patch("ttp.watchdog.firewall.apply_emergency_killswitch")
+@patch("ttp.watchdog.subprocess.run")
+@patch("ttp.watchdog.shutil.which", return_value="notify-send")
+def test_trigger_emergency_killswitch_sanitization(
+    mock_which, mock_run, mock_killswitch
+):
+    """trigger_emergency_killswitch sanitizes failed_component and err_msg before using them in shell commands."""
+    wd.trigger_emergency_killswitch(
+        failed_component="dns\x1b[31m", err_msg="unmounted\r\n"
+    )
+
+    # Verify firewall killswitch called
+    mock_killswitch.assert_called_once()
+
+    # Verify subprocess.run calls (wall and notify-send)
+    assert mock_run.call_count == 2
+
+    # Check wall command arguments: first call
+    wall_args = mock_run.call_args_list[0][0][0]
+    assert "dns" in wall_args[1]
+    assert "\x1b[31m" not in wall_args[1]
+    assert "unmounted" in wall_args[1]
+    assert "\r\n" not in wall_args[1]
+
+    # Check notify-send command arguments: second call
+    notify_args = mock_run.call_args_list[1][0][0]
+    assert notify_args[0] == "notify-send"
+    assert "dns" in notify_args[2]
+    assert "\x1b[31m" not in notify_args[2]

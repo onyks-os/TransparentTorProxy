@@ -83,6 +83,20 @@ def setup_logging() -> None:
         pass
 
     try:
+        # Pre-create the log file with mode 0o600 if it does not exist,
+        # or chmod it to 0o600 if it already exists.
+        if not _LOG_PATH.exists():
+            try:
+                fd = os.open(_LOG_PATH, os.O_WRONLY | os.O_CREAT, 0o600)
+                os.close(fd)
+            except OSError:
+                pass
+        else:
+            try:
+                os.chmod(_LOG_PATH, 0o600)
+            except OSError:
+                pass
+
         handler = RotatingFileHandler(_LOG_PATH, maxBytes=1048576, backupCount=1)
         if cli_state.log_format == "json":
             handler.setFormatter(JSONFormatter())
