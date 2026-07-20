@@ -8,8 +8,8 @@ using a JSON-formatted lock file stored in ``/run/ttp/`` (a ``tmpfs``
 mount).  Because the lock lives on a volatile filesystem, it vanishes
 on reboot, eliminating stale-lock issues after power loss.
 
-The only persistent path is ``/var/lib/ttp/`` which holds the star
-notification sentinel and the Tor cache directory.
+The only persistent path used by TTP is ``/var/lib/ttp/`` which is
+managed by ``ttp.ux`` (one-time UX engagement features).
 
 CORE CONCEPTS:
 - Lock File: Located at /run/ttp/ttp.lock (volatile - tmpfs).
@@ -33,9 +33,19 @@ LOCK_PATH = LOCK_DIR / "ttp.lock"
 # Minimum required free space on /run (tmpfs): 5 MB.
 MIN_TMPFS_BYTES = 5 * 1024 * 1024
 
-# Persistent directory - survives reboots. Only non-sensitive persistent configurations or flags here.
+# Persistent directory - kept for backward compatibility (managed by ttp.ux).
 PERSISTENT_DIR = Path("/var/lib/ttp")
-STAR_NOTIFIED_PATH = PERSISTENT_DIR / ".starred_notified"
+
+# ---------------------------------------------------------------------------
+# Backward-compatible re-exports from ttp.ux
+# ---------------------------------------------------------------------------
+
+from ttp.ux import (  # noqa: E402, F401
+    STAR_NOTIFIED_PATH,
+    delete_star_sentinel,
+    mark_star_message_shown,
+    should_show_star_message,
+)
 
 
 def ensure_runtime_dir() -> None:
@@ -277,23 +287,3 @@ def attempt_recovery(
         delete_lock()
 
     return True
-
-
-def should_show_star_message() -> bool:
-    """Return ``True`` if the one-time star message should be shown."""
-    return not STAR_NOTIFIED_PATH.exists()
-
-
-def mark_star_message_shown() -> None:
-    """Mark the star message as shown by creating a sentinel file."""
-    try:
-        PERSISTENT_DIR.mkdir(parents=True, exist_ok=True)
-        STAR_NOTIFIED_PATH.touch()
-    except OSError:
-        # Best effort - if we can't write, we might show it again next time.
-        pass
-
-
-def delete_star_sentinel() -> None:
-    """Remove the star notification sentinel file."""
-    STAR_NOTIFIED_PATH.unlink(missing_ok=True)

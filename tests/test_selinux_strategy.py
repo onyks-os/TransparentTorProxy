@@ -120,7 +120,7 @@ def test_setup_selinux_if_needed_installs_when_missing():
         patch("ttp.tor_detect.is_selinux_module_installed", return_value=False),
         patch.object(Path, "exists", return_value=True),
         patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/cmd"),
-        patch("ttp.tor_install.tempfile.TemporaryDirectory") as mock_tempdir,
+        patch("ttp.selinux.tempfile.TemporaryDirectory") as mock_tempdir,
         patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
         mock_tempdir.return_value.__enter__.return_value = "/tmp/fake"

@@ -21,7 +21,10 @@ from ttp.exceptions import TorError
 def temp_watchdog_path(tmp_path: Path):
     """Patch the volatile systemd unit path to point to a temporary file."""
     temp_file = tmp_path / "run" / "systemd" / "system" / "ttp-watchdog.service"
-    with patch.object(wd, "WATCHDOG_SERVICE_PATH", temp_file):
+    with (
+        patch("ttp.watchdog.service.WATCHDOG_SERVICE_PATH", temp_file),
+        patch("ttp.watchdog.WATCHDOG_SERVICE_PATH", temp_file),
+    ):
         yield temp_file
 
 
@@ -74,8 +77,8 @@ def test_write_watchdog_service_unit(temp_watchdog_path):
 
 
 # 2. start_watchdog
-@patch("ttp.watchdog.subprocess.run")
-@patch("ttp.watchdog.state.update_lock_keys")
+@patch("subprocess.run")
+@patch("ttp.state.update_lock_keys")
 def test_start_watchdog_success(mock_update, mock_run, temp_watchdog_path):
     """start_watchdog writes unit, reloads daemon, starts service, queries PID, and updates state."""
     # Mock systemctl show to return MainPID=12345
@@ -90,7 +93,7 @@ def test_start_watchdog_success(mock_update, mock_run, temp_watchdog_path):
     mock_update.assert_called_once_with(watchdog_active=True, watchdog_pid=12345)
 
 
-@patch("ttp.watchdog.subprocess.run", side_effect=Exception("systemd error"))
+@patch("subprocess.run", side_effect=Exception("systemd error"))
 def test_start_watchdog_failure(mock_run, temp_watchdog_path):
     """start_watchdog raises TorError if any systemctl call fails."""
     with pytest.raises(TorError, match="Failed to start watchdog service"):
@@ -98,8 +101,8 @@ def test_start_watchdog_failure(mock_run, temp_watchdog_path):
 
 
 # 3. stop_watchdog
-@patch("ttp.watchdog.subprocess.run")
-@patch("ttp.watchdog.state.update_lock_keys")
+@patch("subprocess.run")
+@patch("ttp.state.update_lock_keys")
 def test_stop_watchdog(mock_update, mock_run, temp_watchdog_path):
     """stop_watchdog stops service, unlinks unit file, reloads systemd daemon, and updates state."""
     # Write a dummy unit first
@@ -117,7 +120,7 @@ def test_stop_watchdog(mock_update, mock_run, temp_watchdog_path):
 # 4. check_system_integrity
 @patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
 @patch("ttp.dns._is_mount_point", return_value=True)
-@patch("ttp.watchdog.subprocess.run")
+@patch("subprocess.run")
 @patch("ttp.tor_control.get_controller")
 def test_check_system_integrity_healthy(mock_get_ctrl, mock_run, mock_is_mount):
     """check_system_integrity returns (None, None) when all systems are healthy."""
@@ -152,7 +155,7 @@ def test_check_system_integrity_dns_failure(mock_is_mount):
 
 @patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
 @patch("ttp.dns._is_mount_point", return_value=True)
-@patch("ttp.watchdog.subprocess.run")
+@patch("subprocess.run")
 def test_check_system_integrity_firewall_missing_table(mock_run, mock_is_mount):
     """check_system_integrity detects when the nftables 'inet ttp' table is entirely missing."""
     mock_run.return_value = MagicMock(stdout="", returncode=1)
@@ -164,7 +167,7 @@ def test_check_system_integrity_firewall_missing_table(mock_run, mock_is_mount):
 
 @patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
 @patch("ttp.dns._is_mount_point", return_value=True)
-@patch("ttp.watchdog.subprocess.run")
+@patch("subprocess.run")
 def test_check_system_integrity_firewall_incomplete_table(mock_run, mock_is_mount):
     """check_system_integrity detects when 'inet ttp' table is present but incomplete."""
     mock_run.return_value = MagicMock(
@@ -178,7 +181,7 @@ def test_check_system_integrity_firewall_incomplete_table(mock_run, mock_is_moun
 
 @patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
 @patch("ttp.dns._is_mount_point", return_value=True)
-@patch("ttp.watchdog.subprocess.run")
+@patch("subprocess.run")
 @patch("ttp.tor_control.get_controller", return_value=None)
 def test_check_system_integrity_tor_socket_inactive_service(
     mock_get_ctrl, mock_run, mock_is_mount
@@ -205,7 +208,7 @@ def test_check_system_integrity_tor_socket_inactive_service(
 
 @patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
 @patch("ttp.dns._is_mount_point", return_value=True)
-@patch("ttp.watchdog.subprocess.run")
+@patch("subprocess.run")
 @patch("ttp.tor_control.get_controller")
 def test_check_system_integrity_tor_unresponsive(
     mock_get_ctrl, mock_run, mock_is_mount
@@ -229,7 +232,7 @@ def test_check_system_integrity_tor_unresponsive(
 
 # 5. attempt_auto_healing
 @patch(
-    "ttp.watchdog.state.read_lock",
+    "ttp.state.read_lock",
     return_value={"transport_port": 9041, "dns_port": 9054},
 )
 def test_attempt_auto_healing_dns(mock_read):
@@ -239,7 +242,7 @@ def test_attempt_auto_healing_dns(mock_read):
 
 
 @patch(
-    "ttp.watchdog.state.read_lock",
+    "ttp.state.read_lock",
     return_value={
         "transport_port": 9080,
         "dns_port": 9090,
@@ -254,7 +257,7 @@ def test_attempt_auto_healing_firewall(mock_read):
 
 
 @patch(
-    "ttp.watchdog.state.read_lock",
+    "ttp.state.read_lock",
     return_value={
         "pid": 1234,
         "transport_port": 9041,
@@ -263,7 +266,7 @@ def test_attempt_auto_healing_firewall(mock_read):
         "bridges": ["obfs4 192.0.2.1:1234"],
     },
 )
-@patch("ttp.watchdog.subprocess.run")
+@patch("subprocess.run")
 def test_attempt_auto_healing_tor(mock_run, mock_read):
     """attempt_auto_healing('tor') restarts the systemd 'ttp-tor.service' service."""
     mock_run.return_value = MagicMock(returncode=0)
@@ -274,13 +277,14 @@ def test_attempt_auto_healing_tor(mock_run, mock_read):
         capture_output=True,
         text=True,
         check=False,
+        timeout=10,
     )
 
 
 # 6. trigger_emergency_killswitch
 @patch("ttp.firewall.apply_emergency_killswitch")
-@patch("ttp.watchdog.subprocess.run")
-@patch("ttp.watchdog.shutil.which", return_value="/usr/bin/notify-send")
+@patch("subprocess.run")
+@patch("shutil.which", return_value="/usr/bin/notify-send")
 def test_trigger_emergency_killswitch(mock_which, mock_run, mock_apply_ks):
     """trigger_emergency_killswitch isolates network, sends wall alert, and desktop notification."""
     wd.trigger_emergency_killswitch("firewall", "nftables table deleted")
@@ -294,8 +298,8 @@ def test_trigger_emergency_killswitch(mock_which, mock_run, mock_apply_ks):
 
 
 # 7. run_watchdog_loop
-@patch("ttp.watchdog.state.read_lock", return_value=None)
-@patch("ttp.watchdog.time.sleep")
+@patch("ttp.state.read_lock", return_value=None)
+@patch("time.sleep")
 def test_run_watchdog_loop_no_lock(mock_sleep, mock_read):
     """run_watchdog_loop terminates immediately if no active session lock is found."""
     # Should exit loop immediately
@@ -303,12 +307,12 @@ def test_run_watchdog_loop_no_lock(mock_sleep, mock_read):
     mock_sleep.assert_called_once_with(2)  # Startup stabilization sleep
 
 
-@patch("ttp.watchdog.state.read_lock")
-@patch("ttp.watchdog.check_system_integrity")
-@patch("ttp.watchdog.attempt_auto_healing", return_value=True)
-@patch("ttp.watchdog.is_interface_online", return_value=True)
-@patch("ttp.watchdog.has_default_route", return_value=True)
-@patch("ttp.watchdog.time.sleep")
+@patch("ttp.state.read_lock")
+@patch("ttp.watchdog.inotify.check_system_integrity")
+@patch("ttp.watchdog.inotify.attempt_auto_healing", return_value=True)
+@patch("ttp.watchdog.inotify.is_interface_online", return_value=True)
+@patch("ttp.watchdog.inotify.has_default_route", return_value=True)
+@patch("time.sleep")
 def test_run_watchdog_loop_first_strike_healed(
     mock_sleep, mock_has_route, mock_online, mock_heal, mock_check, mock_read
 ):
@@ -333,13 +337,13 @@ def test_run_watchdog_loop_first_strike_healed(
     assert 3 in sleep_calls
 
 
-@patch("ttp.watchdog.state.read_lock", return_value={"pid": 123})
-@patch("ttp.watchdog.check_system_integrity")
-@patch("ttp.watchdog.attempt_auto_healing", return_value=True)
-@patch("ttp.watchdog.is_interface_online", return_value=True)
-@patch("ttp.watchdog.has_default_route", return_value=True)
-@patch("ttp.watchdog.trigger_emergency_killswitch")
-@patch("ttp.watchdog.time.sleep")
+@patch("ttp.state.read_lock", return_value={"pid": 123})
+@patch("ttp.watchdog.inotify.check_system_integrity")
+@patch("ttp.watchdog.inotify.attempt_auto_healing", return_value=True)
+@patch("ttp.watchdog.inotify.is_interface_online", return_value=True)
+@patch("ttp.watchdog.inotify.has_default_route", return_value=True)
+@patch("ttp.watchdog.inotify.trigger_emergency_killswitch")
+@patch("time.sleep")
 def test_run_watchdog_loop_second_strike_killswitch(
     mock_sleep, mock_ks, mock_has_route, mock_online, mock_heal, mock_check, mock_read
 ):
@@ -357,13 +361,13 @@ def test_run_watchdog_loop_second_strike_killswitch(
     mock_ks.assert_called_once_with("tor", "service dead")
 
 
-@patch("ttp.watchdog.state.read_lock", return_value={"pid": 123})
-@patch("ttp.watchdog.check_system_integrity")
-@patch("ttp.watchdog.attempt_auto_healing", return_value=False)
-@patch("ttp.watchdog.is_interface_online", return_value=True)
-@patch("ttp.watchdog.has_default_route", return_value=True)
-@patch("ttp.watchdog.trigger_emergency_killswitch")
-@patch("ttp.watchdog.time.sleep")
+@patch("ttp.state.read_lock", return_value={"pid": 123})
+@patch("ttp.watchdog.inotify.check_system_integrity")
+@patch("ttp.watchdog.inotify.attempt_auto_healing", return_value=False)
+@patch("ttp.watchdog.inotify.is_interface_online", return_value=True)
+@patch("ttp.watchdog.inotify.has_default_route", return_value=True)
+@patch("ttp.watchdog.inotify.trigger_emergency_killswitch")
+@patch("time.sleep")
 def test_run_watchdog_loop_healing_command_fails_immediate_killswitch(
     mock_sleep, mock_ks, mock_has_route, mock_online, mock_heal, mock_check, mock_read
 ):
@@ -381,7 +385,7 @@ def test_run_watchdog_loop_healing_command_fails_immediate_killswitch(
 
 
 # 8. Diagnostic helper tests and loop suspension
-@patch("ttp.watchdog.Path.exists", return_value=True)
+@patch("pathlib.Path.exists", return_value=True)
 def test_is_interface_online_up(mock_exists):
     """is_interface_online returns True if operstate is up and carrier is 1."""
 
@@ -392,11 +396,11 @@ def test_is_interface_online_up(mock_exists):
             return "1\n"
         return ""
 
-    with patch("ttp.watchdog.Path.read_text", read_text_side_effect):
+    with patch("pathlib.Path.read_text", read_text_side_effect):
         assert wd.is_interface_online("eth0") is True
 
 
-@patch("ttp.watchdog.Path.exists", return_value=True)
+@patch("pathlib.Path.exists", return_value=True)
 def test_is_interface_online_down(mock_exists):
     """is_interface_online returns False if operstate is down or carrier is 0."""
 
@@ -406,7 +410,7 @@ def test_is_interface_online_down(mock_exists):
             return "down\n"
         return "1\n"
 
-    with patch("ttp.watchdog.Path.read_text", read_text_down):
+    with patch("pathlib.Path.read_text", read_text_down):
         assert wd.is_interface_online("eth0") is False
 
     # 2. carrier 0
@@ -415,11 +419,11 @@ def test_is_interface_online_down(mock_exists):
             return "up\n"
         return "0\n"
 
-    with patch("ttp.watchdog.Path.read_text", read_text_carrier_zero):
+    with patch("pathlib.Path.read_text", read_text_carrier_zero):
         assert wd.is_interface_online("eth0") is False
 
 
-@patch("ttp.watchdog.Path.exists", return_value=True)
+@patch("pathlib.Path.exists", return_value=True)
 def test_has_default_route_true(mock_exists):
     """has_default_route returns True if /proc/net/route has destination 00000000 and mask 00000000."""
     mock_content = (
@@ -430,7 +434,7 @@ def test_has_default_route_true(mock_exists):
         assert wd.has_default_route() is True
 
 
-@patch("ttp.watchdog.Path.exists", return_value=True)
+@patch("pathlib.Path.exists", return_value=True)
 def test_has_default_route_false(mock_exists):
     """has_default_route returns False if no default route exists."""
     mock_content = (
@@ -441,11 +445,11 @@ def test_has_default_route_false(mock_exists):
         assert wd.has_default_route() is False
 
 
-@patch("ttp.watchdog.state.read_lock")
-@patch("ttp.watchdog.is_interface_online")
-@patch("ttp.watchdog.has_default_route")
-@patch("ttp.watchdog.time.sleep")
-@patch("ttp.watchdog.check_system_integrity")
+@patch("ttp.state.read_lock")
+@patch("ttp.watchdog.inotify.is_interface_online")
+@patch("ttp.watchdog.inotify.has_default_route")
+@patch("time.sleep")
+@patch("ttp.watchdog.inotify.check_system_integrity")
 def test_run_watchdog_loop_suspends_and_resumes(
     mock_check, mock_sleep, mock_has_route, mock_online, mock_read
 ):
@@ -470,9 +474,9 @@ def test_run_watchdog_loop_suspends_and_resumes(
 @patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
 @patch("ttp.dns._is_mount_point", return_value=True)
 @patch("ttp.tor_control.get_controller")
-@patch("ttp.watchdog.state.read_lock")
-@patch("ttp.watchdog.subprocess.run")
-@patch("ttp.watchdog.Path.exists")
+@patch("ttp.state.read_lock")
+@patch("subprocess.run")
+@patch("pathlib.Path.exists")
 def test_check_system_integrity_systemd_resolved_healthy(
     mock_exists, mock_run, mock_read_lock, mock_get_ctrl, mock_is_mount
 ):
@@ -508,8 +512,8 @@ def test_check_system_integrity_systemd_resolved_healthy(
 
 @patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
 @patch("ttp.dns._is_mount_point", return_value=True)
-@patch("ttp.watchdog.state.read_lock")
-@patch("ttp.watchdog.Path.exists", return_value=False)
+@patch("ttp.state.read_lock")
+@patch("pathlib.Path.exists", return_value=False)
 def test_check_system_integrity_systemd_resolved_missing_config(
     mock_exists, mock_read_lock, mock_is_mount
 ):
@@ -523,9 +527,9 @@ def test_check_system_integrity_systemd_resolved_missing_config(
 
 @patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
 @patch("ttp.dns._is_mount_point", return_value=True)
-@patch("ttp.watchdog.state.read_lock")
-@patch("ttp.watchdog.subprocess.run")
-@patch("ttp.watchdog.Path.exists")
+@patch("ttp.state.read_lock")
+@patch("subprocess.run")
+@patch("pathlib.Path.exists")
 def test_check_system_integrity_systemd_resolved_inactive_service(
     mock_exists, mock_run, mock_read_lock, mock_is_mount
 ):
@@ -552,9 +556,9 @@ def test_sanitize_alert_text():
     assert sanitized == "Error! Test"
 
 
-@patch("ttp.watchdog.firewall.apply_emergency_killswitch")
-@patch("ttp.watchdog.subprocess.run")
-@patch("ttp.watchdog.shutil.which", return_value="notify-send")
+@patch("ttp.firewall.apply_emergency_killswitch")
+@patch("subprocess.run")
+@patch("shutil.which", return_value="notify-send")
 def test_trigger_emergency_killswitch_sanitization(
     mock_which, mock_run, mock_killswitch
 ):

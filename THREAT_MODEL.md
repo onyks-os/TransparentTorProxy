@@ -9,6 +9,6 @@ SPDX-License-Identifier: MIT
 
 **[`docs/security-assessment.md`](docs/security-assessment.md)**
 
-That document covers all TTP components (`firewall.py`, `dns.py`, `tor_install.py`, `tor_control.py`, `state.py`, `watchdog.py`, `cli.py`), supply chain controls, and known limitations with severity ratings.
+That document covers all TTP components (`firewall.py`, `dns.py`, `tor_install.py`, `tor_control.py`, `state.py`, `selinux.py`, `watchdog/`, `cli.py`), supply chain controls, and known limitations with severity ratings.
 
 For operational security reporting, see [`SECURITY.md`](SECURITY.md).

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import pwd
 import grp
+import pwd
 from pathlib import Path
 from typing import Optional
 
@@ -24,7 +24,254 @@ from ttp.commands._common import (
     verify_tor as _verify_tor,
 )
 from ttp.commands.lifecycle import register_signal_handlers
-from ttp.exceptions import FirewallError, DNSError, StateError, TorError
+from ttp.exceptions import DNSError, FirewallError, StateError, TorError
+
+
+# ---------------------------------------------------------------------------
+# Private helpers extracted from start_command for testability
+# ---------------------------------------------------------------------------
+
+
+def _parse_bypass_users_groups(
+    bypass_user: list[str] | None,
+    bypass_group: list[str] | None,
+) -> tuple[list[str], list[str], list[int], list[int]]:
+    """Parse, validate and resolve bypass users and groups to system UIDs/GIDs.
+
+    Parameters
+    ----------
+    bypass_user:
+        Raw CLI ``--bypass-user`` values (may include comma-separated names).
+    bypass_group:
+        Raw CLI ``--bypass-group`` values (may include comma-separated names).
+
+    Returns
+    -------
+    tuple[list[str], list[str], list[int], list[int]]
+        ``(users, groups, bypass_uids, bypass_gids)``
+
+    Raises
+    ------
+    typer.Exit
+        If any user or group does not exist on the system.
+    """
+    users: list[str] = []
+    if bypass_user:
+        for u in bypass_user:
+            users.extend([item.strip() for item in u.split(",") if item.strip()])
+
+    groups: list[str] = []
+    if bypass_group:
+        for g in bypass_group:
+            groups.extend([item.strip() for item in g.split(",") if item.strip()])
+
+    bypass_uids: list[int] = []
+    for u in users:
+        try:
+            if u.isdigit():
+                uid = int(u)
+                pwd.getpwuid(uid)
+            else:
+                uid = pwd.getpwnam(u).pw_uid
+            bypass_uids.append(uid)
+        except KeyError:
+            _print_error("Invalid User", f"User '{u}' does not exist on this system.")
+            raise typer.Exit(code=1)
+
+    bypass_gids: list[int] = []
+    for g in groups:
+        try:
+            if g.isdigit():
+                gid = int(g)
+                grp.getgrgid(gid)
+            else:
+                gid = grp.getgrnam(g).gr_gid
+            bypass_gids.append(gid)
+        except KeyError:
+            _print_error("Invalid Group", f"Group '{g}' does not exist on this system.")
+            raise typer.Exit(code=1)
+
+    return users, groups, bypass_uids, bypass_gids
+
+
+def _parse_bridges(
+    bridge_file: Path | None,
+    bridge: list[str] | None,
+    use_bridges: bool,
+) -> tuple[list[str], bool]:
+    """Parse, validate and collect Tor bridge lines from file and/or CLI flags.
+
+    Parameters
+    ----------
+    bridge_file:
+        Path to a file containing bridge lines (one per line, ``#`` comments
+        are ignored).
+    bridge:
+        Individual bridge lines provided via ``--bridge`` flags.
+    use_bridges:
+        Whether ``--use-bridges`` was specified on the CLI.
+
+    Returns
+    -------
+    tuple[list[str], bool]
+        ``(bridge_lines, use_bridges)`` — the collected bridge lines and the
+        resolved value of *use_bridges* (True if any lines were found).
+
+    Raises
+    ------
+    typer.Exit
+        On missing file, unreadable file, or invalid bridge line format.
+    """
+    bridge_lines: list[str] = []
+
+    if bridge_file:
+        if not bridge_file.exists():
+            _print_error("Bridge File Missing", f"File '{bridge_file}' not found.")
+            raise typer.Exit(code=1)
+        try:
+            for line in bridge_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    try:
+                        _validate_bridge_line(line)
+                        bridge_lines.append(line)
+                    except ValueError as exc:
+                        _print_error(
+                            "Invalid Bridge Line",
+                            f"Line '{line}' in file '{bridge_file}': {exc}",
+                        )
+                        raise typer.Exit(code=1)
+        except OSError as exc:
+            _print_error("Failed to read bridge file", str(exc))
+            raise typer.Exit(code=1)
+
+    if bridge:
+        for b in bridge:
+            b = b.strip()
+            if b:
+                try:
+                    _validate_bridge_line(b)
+                    bridge_lines.append(b)
+                except ValueError as exc:
+                    _print_error("Invalid Bridge Line", f"Bridge '{b}': {exc}")
+                    raise typer.Exit(code=1)
+
+    if use_bridges and not bridge_lines:
+        _print_error(
+            "No Bridges Provided",
+            "Bridges are enabled but no bridge lines or bridge files were specified.",
+        )
+        raise typer.Exit(code=1)
+
+    if bridge_lines:
+        use_bridges = True
+
+    return bridge_lines, use_bridges
+
+
+def _resolve_external_tor_uid(
+    transport_port: int,
+    tor_uid_override: str | None,
+) -> str:
+    """Resolve the UID of an externally managed Tor daemon (BYOD mode).
+
+    Applies a 4-step resolution strategy:
+
+    1. **Manual override** — ``--tor-uid`` CLI flag (name or numeric UID).
+    2. **Socket auto-detection** — inspect ``/proc/net/tcp`` for the process
+       bound to *transport_port*; accept only if the username contains ``"tor"``
+       and is not root.
+    3. **Known usernames fallback** — scan ``/etc/passwd`` for ``"tor"`` or
+       ``"debian-tor"``.
+    4. **Fatal error** — none of the above succeeded; caller must exit.
+
+    Parameters
+    ----------
+    transport_port:
+        The TCP port Tor's TransPort is expected to be bound on.
+    tor_uid_override:
+        Optional raw value of the ``--tor-uid`` CLI flag.
+
+    Returns
+    -------
+    str
+        The resolved UID as a string (numeric, e.g. ``"1001"``).
+
+    Raises
+    ------
+    typer.Exit
+        If the manual override references a non-existent user, or if UID
+        resolution fails entirely.
+    """
+    resolved_uid: int | None = None
+
+    # Step 1 — Manual override
+    if tor_uid_override:
+        if tor_uid_override.isdigit():
+            resolved_uid = int(tor_uid_override)
+        else:
+            try:
+                resolved_uid = pwd.getpwnam(tor_uid_override).pw_uid
+            except KeyError:
+                _print_error(
+                    "Invalid Tor User",
+                    f"The specified Tor user '{tor_uid_override}' does not exist on this system.",
+                )
+                raise typer.Exit(code=1)
+
+    # Step 2 — Socket auto-detection
+    if resolved_uid is None:
+        detected_uid = _get_uid_from_port(transport_port)
+        if detected_uid is not None:
+            try:
+                username = pwd.getpwuid(detected_uid).pw_name
+                if "tor" in username.lower() and detected_uid != 0:
+                    resolved_uid = detected_uid
+                    logger.info(
+                        "Auto-detected Tor process owner UID via ports: %s (user: %s)",
+                        resolved_uid,
+                        username,
+                    )
+                else:
+                    logger.warning(
+                        "Auto-detected Tor UID %d belongs to user '%s' which is not root but does not contain 'tor'. Ignoring.",
+                        detected_uid,
+                        username,
+                    )
+            except KeyError:
+                logger.warning(
+                    "Auto-detected Tor UID %d is not registered in the pwd database. Ignoring.",
+                    detected_uid,
+                )
+
+    # Step 3 — Known usernames fallback
+    if resolved_uid is None:
+        for fallback_user in ("tor", "debian-tor"):
+            try:
+                resolved_uid = pwd.getpwnam(fallback_user).pw_uid
+                logger.info(
+                    "Fallback resolved Tor UID to user '%s' (UID: %d)",
+                    fallback_user,
+                    resolved_uid,
+                )
+                break
+            except KeyError:
+                continue
+
+    # Step 4 — Fatal error
+    if resolved_uid is None:
+        _print_error(
+            "Tor UID Resolution Failed",
+            "Unable to determine Tor's UID. Specify the UID manually via --tor-uid.",
+        )
+        raise typer.Exit(code=1)
+
+    return str(resolved_uid)
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
 
 
 def start_command(
@@ -120,90 +367,15 @@ def start_command(
         )
         raise typer.Exit(code=1)
 
-    # Resolve and validate bypass users and groups
+    # --- Input parsing & validation ---
 
-    users = []
-    if bypass_user:
-        for u in bypass_user:
-            users.extend([item.strip() for item in u.split(",") if item.strip()])
-
-    groups = []
-    if bypass_group:
-        for g in bypass_group:
-            groups.extend([item.strip() for item in g.split(",") if item.strip()])
-
+    users, groups, bypass_uids, bypass_gids = _parse_bypass_users_groups(
+        bypass_user, bypass_group
+    )
     cli_state.bypass_users = users
     cli_state.bypass_groups = groups
 
-    # Resolve and validate bridges
-    bridge_lines = []
-    if bridge_file:
-        if not bridge_file.exists():
-            _print_error("Bridge File Missing", f"File '{bridge_file}' not found.")
-            raise typer.Exit(code=1)
-        try:
-            for line in bridge_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    try:
-                        _validate_bridge_line(line)
-                        bridge_lines.append(line)
-                    except ValueError as exc:
-                        _print_error(
-                            "Invalid Bridge Line",
-                            f"Line '{line}' in file '{bridge_file}': {exc}",
-                        )
-                        raise typer.Exit(code=1)
-        except OSError as exc:
-            _print_error("Failed to read bridge file", str(exc))
-            raise typer.Exit(code=1)
-
-    if bridge:
-        for b in bridge:
-            b = b.strip()
-            if b:
-                try:
-                    _validate_bridge_line(b)
-                    bridge_lines.append(b)
-                except ValueError as exc:
-                    _print_error("Invalid Bridge Line", f"Bridge '{b}': {exc}")
-                    raise typer.Exit(code=1)
-
-    if use_bridges and not bridge_lines:
-        _print_error(
-            "No Bridges Provided",
-            "Bridges are enabled but no bridge lines or bridge files were specified.",
-        )
-        raise typer.Exit(code=1)
-
-    if bridge_lines:
-        use_bridges = True
-
-    bypass_uids = []
-    for u in users:
-        try:
-            if u.isdigit():
-                uid = int(u)
-                pwd.getpwuid(uid)
-            else:
-                uid = pwd.getpwnam(u).pw_uid
-            bypass_uids.append(uid)
-        except KeyError:
-            _print_error("Invalid User", f"User '{u}' does not exist on this system.")
-            raise typer.Exit(code=1)
-
-    bypass_gids = []
-    for g in groups:
-        try:
-            if g.isdigit():
-                gid = int(g)
-                grp.getgrgid(gid)
-            else:
-                gid = grp.getgrnam(g).gr_gid
-            bypass_gids.append(gid)
-        except KeyError:
-            _print_error("Invalid Group", f"Group '{g}' does not exist on this system.")
-            raise typer.Exit(code=1)
+    bridge_lines, use_bridges = _parse_bridges(bridge_file, bridge, use_bridges)
 
     # Ports validation
     if not (1024 <= transport_port <= 65535):
@@ -287,84 +459,22 @@ def start_command(
             "will bypass Tor and transmit in CLEARTEXT! Use with caution.[/bold red]"
         )
 
-    # Step 0a - Pre-flight: verify /run has enough space for tmpfs I/O.
+    # --- Step 0a: Pre-flight — verify /run has enough space for tmpfs I/O ---
     try:
         state.check_tmpfs_space()
     except StateError as exc:
         _print_error("Pre-flight Failed", str(exc))
         raise typer.Exit(code=1)
 
-    # Step 0b - SELinux optimization (for Fedora/RHEL).
-    # This ensures the kernel policy allows Tor to bind to our ports.
-    # It only runs once and has zero overhead on subsequent calls.
+    # --- Step 0b: SELinux optimization (for Fedora/RHEL) ---
+    # Ensures the kernel policy allows Tor to bind to our ports.
+    # Runs once and has zero overhead on subsequent calls.
     tor_install.setup_selinux_if_needed()
 
-    # Step 1 - Detect / install Tor.
+    # --- Step 1: Detect / install Tor ---
     info = {}
     if external_daemon:
-        resolved_uid = None
-        # 1. Manual Override
-        if tor_uid:
-            if tor_uid.isdigit():
-                resolved_uid = int(tor_uid)
-            else:
-                try:
-                    resolved_uid = pwd.getpwnam(tor_uid).pw_uid
-                except KeyError:
-                    _print_error(
-                        "Invalid Tor User",
-                        f"The specified Tor user '{tor_uid}' does not exist on this system.",
-                    )
-                    raise typer.Exit(code=1)
-
-        # 2. Sockets Auto-Detection
-        if resolved_uid is None:
-            detected_uid = _get_uid_from_port(transport_port)
-            if detected_uid is not None:
-                try:
-                    username = pwd.getpwuid(detected_uid).pw_name
-                    if "tor" in username.lower() and detected_uid != 0:
-                        resolved_uid = detected_uid
-                        logger.info(
-                            "Auto-detected Tor process owner UID via ports: %s (user: %s)",
-                            resolved_uid,
-                            username,
-                        )
-                    else:
-                        logger.warning(
-                            "Auto-detected Tor UID %d belongs to user '%s' which is not root but does not contain 'tor'. Ignoring.",
-                            detected_uid,
-                            username,
-                        )
-                except KeyError:
-                    logger.warning(
-                        "Auto-detected Tor UID %d is not registered in the pwd database. Ignoring.",
-                        detected_uid,
-                    )
-
-        # 3. Standard Users Fallback
-        if resolved_uid is None:
-            for fallback_user in ("tor", "debian-tor"):
-                try:
-                    resolved_uid = pwd.getpwnam(fallback_user).pw_uid
-                    logger.info(
-                        "Fallback resolved Tor UID to user '%s' (UID: %d)",
-                        fallback_user,
-                        resolved_uid,
-                    )
-                    break
-                except KeyError:
-                    continue
-
-        # 4. Fatal Error
-        if resolved_uid is None:
-            _print_error(
-                "Tor UID Resolution Failed",
-                "Unable to determine Tor's UID. Specify the UID manually via --tor-uid.",
-            )
-            raise typer.Exit(code=1)
-
-        tor_user = str(resolved_uid)
+        tor_user = _resolve_external_tor_uid(transport_port, tor_uid)
         console.print(
             f"{_PREFIX} Tor daemon detected operating under UID: {tor_user} (BYOD Mode)."
         )
@@ -405,7 +515,7 @@ def start_command(
 
     lan_bypass = not no_lan_bypass
 
-    # Step 2 - Apply stateless firewall rules.
+    # --- Step 2: Apply stateless firewall rules ---
     try:
         kwargs_fw = {}
         if bypass_uids:
@@ -430,7 +540,7 @@ def start_command(
         raise typer.Exit(code=1)
     console.print(f"{_PREFIX} Stateless nftables rules applied (Table: inet ttp).")
 
-    # Step 3 - Modify DNS.
+    # --- Step 3: Modify DNS ---
     if interface is None:
         interface = dns.detect_active_interface()
     try:
@@ -454,9 +564,9 @@ def start_command(
     logger.info("Session started: interface=%s", interface)
     console.print(f"{_PREFIX} DNS set via overlay on interface {interface}.")
 
-    # Step 4 - Write lock file.
+    # --- Step 4: Write lock file ---
     try:
-        tor_uid_val = None
+        tor_uid_val: int | None = None
         try:
             if tor_user.isdigit():
                 tor_uid_val = int(tor_user)
@@ -465,7 +575,7 @@ def start_command(
         except Exception:
             pass
 
-        kwargs_lock = {}
+        kwargs_lock: dict = {}
         if users:
             kwargs_lock["bypass_users"] = users
         if groups:
@@ -499,7 +609,7 @@ def start_command(
         dns.restore_dns(dns_backup)
         raise typer.Exit(code=1)
 
-    # Step 5 - Verify Tor is working.
+    # --- Step 5: Verify Tor is working ---
     is_tor, exit_ip = _verify_tor(timeout=bootstrap_timeout)
     if is_tor:
         console.print(f"{_PREFIX} [bold green]Session active. Exit IP: {exit_ip}[/]")

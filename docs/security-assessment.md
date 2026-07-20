@@ -120,7 +120,7 @@ TTP is designed to achieve the following security properties, in order of priori
 | Lock file tampering by unprivileged user | Tampering              | An attacker modifies `/run/ttp/ttp.lock` to spoof session state      | Lock file is owned by root (`chmod 600`); tmpfs path is root-managed | **Low.** Requires root.       |
 | TOCTOU race on orphan detection          | Elevation of Privilege | Between orphan detection and cleanup, a new session could be started | Atomic lock write + PID validation; only root can run `ttp start`    | **Low.** Root-only execution. |
 
-### 3.5 `watchdog.py` — Session Watchdog
+### 3.5 `watchdog/` — Session Watchdog Package
 
 | Threat                               | STRIDE Category   | Description                                                                        | Mitigation                                                                                              | Residual Risk                                                                                       |
 | :----------------------------------- | :---------------- | :--------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------ | :-------------------------------------------------------------------------------------------------- |
@@ -235,7 +235,7 @@ Dependency CVE scanning, Dependabot configuration, and the remediation SLA are d
 ### 5.3 Trusted Code Paths
 
 - All commits to `main` require a Pull Request with maintainer review.
-- Security-critical files (`firewall.py`, `dns.py`, `tor_control.py`, `watchdog.py`, `.github/workflows/`) require explicit sign-off from the Project Lead (see [MAINTAINERS.md](../MAINTAINERS.md)).
+- Security-critical files (`firewall.py`, `dns.py`, `tor_control.py`, `selinux.py`, `watchdog/`, `.github/workflows/`) require explicit sign-off from the Project Lead (see [MAINTAINERS.md](../MAINTAINERS.md)).
 - All commits must include a `Signed-off-by` header (DCO) — see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ---

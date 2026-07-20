@@ -228,10 +228,10 @@ def test_is_selinux_module_installed_false():
 @patch("ttp.tor_detect.is_selinux_module_installed", return_value=False)
 @patch("ttp.tor_detect.is_selinux_enforcing", return_value=True)
 @patch("ttp.tor_detect.is_fedora_family", return_value=True)
-@patch("ttp.tor_install.Path.exists", return_value=True)
-@patch("ttp.tor_install.shutil.which", return_value="/usr/bin/cmd")
-@patch("ttp.tor_install.tempfile.TemporaryDirectory")
-@patch("ttp.tor_install.subprocess.run")
+@patch("ttp.selinux.Path.exists", return_value=True)
+@patch("ttp.selinux.shutil.which", return_value="/usr/bin/cmd")
+@patch("ttp.selinux.tempfile.TemporaryDirectory")
+@patch("ttp.selinux.subprocess.run")
 def test_setup_selinux_if_needed_installs(
     mock_run,
     mock_tempdir,
@@ -252,8 +252,8 @@ def test_setup_selinux_if_needed_installs(
 
 
 @patch("ttp.tor_detect.is_selinux_module_installed", return_value=True)
-@patch("ttp.tor_install.Path.exists", return_value=True)
-@patch("ttp.tor_install.subprocess.run")
+@patch("ttp.selinux.Path.exists", return_value=True)
+@patch("ttp.selinux.subprocess.run")
 def test_remove_selinux_module_calls_remove(mock_run, mock_exists, mock_installed):
     """remove_selinux_module calls semodule -r if installed."""
     mock_run.return_value = MagicMock(returncode=0)

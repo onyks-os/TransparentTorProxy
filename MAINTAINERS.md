@@ -66,7 +66,7 @@ Maintainers are expected to:
 - All changes to `main` must go through a Pull Request. Direct pushes to `main` are reserved for critical hotfixes only.
 - At least **one maintainer approval** is required before merging.
 - All CI checks (`make verify`, linting, unit and integration tests) must pass.
-- PRs touching security-critical paths (`firewall.py`, `dns.py`, `tor_control.py`, `watchdog.py`, `.github/workflows/`) require explicit sign-off from the Project Lead.
+- PRs touching security-critical paths (`firewall.py`, `dns.py`, `tor_control.py`, `selinux.py`, `watchdog/`, `.github/workflows/`) require explicit sign-off from the Project Lead.
 
 ---
 

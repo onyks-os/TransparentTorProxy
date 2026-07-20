@@ -5,13 +5,17 @@
 
 This module provides non-destructive system inspection functions to
 determine if Tor is installed, configured, and running. It also
-identifies distribution-specific details like the Tor user and
-SELinux status.
+identifies distribution-specific details like the Tor user.
 
 DESIGN PRINCIPLE:
 - This module must be READ-ONLY.
 - It should never modify the system state (use tor_install.py for that).
 - It returns descriptive dictionaries used by other modules to make decisions.
+
+OS-LEVEL HELPERS NOTE:
+Functions that detect OS properties (SELinux, Fedora family, firewalld,
+IPv6 support) have been consolidated in ``system_info.py``.  They are
+re-exported here for backward compatibility.
 """
 
 from __future__ import annotations
@@ -144,79 +148,18 @@ def _detect_tor_user() -> str:
     return "tor"
 
 
-def is_selinux_enforcing() -> bool:
-    """Return ``True`` if SELinux is in Enforcing mode."""
-    if not shutil.which("getenforce"):
-        return False
-    try:
-        result = subprocess.run(
-            ["getenforce"], capture_output=True, text=True, timeout=5
-        )
-        return result.stdout.strip() == "Enforcing"
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return False
+# ---------------------------------------------------------------------------
+# OS-level helpers — now canonical in system_info.py; re-exported here for
+# backward compatibility with any code that imports from tor_detect directly.
+# ---------------------------------------------------------------------------
 
-
-def is_fedora_family() -> bool:
-    """Return ``True`` if the OS belongs to the Red Hat/Fedora family."""
-    os_release = Path("/etc/os-release")
-    if not os_release.exists():
-        return Path("/etc/redhat-release").exists()
-
-    try:
-        content = os_release.read_text(encoding="utf-8").lower()
-        # Look for typical Fedora family identifiers
-        return any(
-            x in content for x in ["fedora", "rhel", "centos", "rocky", "almalinux"]
-        )
-    except OSError:
-        return False
-
-
-def is_selinux_module_installed() -> bool:
-    """Return ``True`` if the ``ttp_tor_policy`` module is already loaded."""
-    if not shutil.which("semodule"):
-        return False
-    try:
-        # semodule -l lists all active policy modules.
-        result = subprocess.run(
-            ["semodule", "-l"], capture_output=True, text=True, timeout=10
-        )
-        # Check if ttp_tor_policy is installed with version 1.1
-        import re
-
-        return bool(re.search(r"ttp_tor_policy\s+1\.1\b", result.stdout))
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return False
-
-
-def is_firewalld_active() -> bool:
-    """Return ``True`` if the ``firewalld`` service is active.
-
-    Uses ``pgrep`` to be agnostic of the init system (systemd, OpenRC, etc.).
-    """
-    try:
-        result = subprocess.run(
-            ["pgrep", "-x", "firewalld"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return False
-
-
-def is_ipv6_supported() -> bool:
-    """Return ``True`` if the system supports IPv6 loopback and socket operations."""
-    import socket
-
-    try:
-        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
-            s.bind(("::1", 0))
-        return True
-    except OSError:
-        return False
+from ttp.system_info import (  # noqa: E402, F401
+    is_firewalld_active,
+    is_fedora_family,
+    is_ipv6_supported,
+    is_selinux_enforcing,
+    is_selinux_module_installed,
+)
 
 
 def detect_tor(

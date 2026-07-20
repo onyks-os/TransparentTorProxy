@@ -1,18 +1,17 @@
-# Copyright (c) 2026 onyks-os
-# SPDX-License-Identifier: MIT
+"""System diagnostics, OS detection, and information gathering.
 
-"""System diagnostics and information gathering.
-
-This module is the "reporter" of TTP. It performs a comprehensive
-audit of the system state, including OS details, firewall rulesets,
-DNS configurations, and Tor daemon status. It is designed to be
-purely informational and is used by the `diagnose` command.
+This module is the "reporter" of TTP. It performs a comprehensive audit
+of the system state, including OS details, firewall rulesets, DNS
+configurations, and Tor daemon status.  It also provides **OS-level
+inspection helpers** (SELinux mode, distro family, IPv6 support, firewalld)
+that were formerly spread across ``tor_detect.py``.
 
 KEY FEATURES:
 - OS detection (/etc/os-release).
 - Firewall inspection (nft list ruleset).
 - DNS status (/etc/resolv.conf overlay).
 - TTP internal state (lock file contents).
+- SELinux / distro / network capability helpers.
 - Decoupled from the UI (returns a data dictionary).
 """
 
@@ -20,11 +19,88 @@ from __future__ import annotations
 
 import json
 import platform
+import re
+import shutil
 import subprocess
+from pathlib import Path
 from typing import Dict
 
 from ttp import state, tor_control
-from ttp.tor_detect import detect_tor
+
+
+# ---------------------------------------------------------------------------
+# OS-level inspection helpers (moved from tor_detect.py)
+# ---------------------------------------------------------------------------
+
+
+def is_selinux_enforcing() -> bool:
+    """Return ``True`` if SELinux is in Enforcing mode."""
+    if not shutil.which("getenforce"):
+        return False
+    try:
+        result = subprocess.run(
+            ["getenforce"], capture_output=True, text=True, timeout=5
+        )
+        return result.stdout.strip() == "Enforcing"
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return False
+
+
+def is_fedora_family() -> bool:
+    """Return ``True`` if the OS belongs to the Red Hat/Fedora family."""
+    os_release = Path("/etc/os-release")
+    if not os_release.exists():
+        return Path("/etc/redhat-release").exists()
+
+    try:
+        content = os_release.read_text(encoding="utf-8").lower()
+        return any(
+            x in content for x in ["fedora", "rhel", "centos", "rocky", "almalinux"]
+        )
+    except OSError:
+        return False
+
+
+def is_selinux_module_installed() -> bool:
+    """Return ``True`` if the ``ttp_tor_policy`` module is already loaded."""
+    if not shutil.which("semodule"):
+        return False
+    try:
+        result = subprocess.run(
+            ["semodule", "-l"], capture_output=True, text=True, timeout=10
+        )
+        return bool(re.search(r"ttp_tor_policy\s+1\.1\b", result.stdout))
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return False
+
+
+def is_firewalld_active() -> bool:
+    """Return ``True`` if the ``firewalld`` service is active.
+
+    Uses ``pgrep`` to be agnostic of the init system (systemd, OpenRC, etc.).
+    """
+    try:
+        result = subprocess.run(
+            ["pgrep", "-x", "firewalld"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return False
+
+
+def is_ipv6_supported() -> bool:
+    """Return ``True`` if the system supports IPv6 loopback and socket operations."""
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
+            s.bind(("::1", 0))
+        return True
+    except OSError:
+        return False
 
 
 def collect_diagnostics() -> Dict[str, str]:
@@ -136,6 +212,8 @@ def collect_diagnostics() -> Dict[str, str]:
     results["control_interface"] = ctrl_info
 
     # 7. TTP Internal
+    from ttp.tor_detect import detect_tor  # local import to avoid circular dependency
+
     lock = state.read_lock()
     info = detect_tor()
     ttp_info = (

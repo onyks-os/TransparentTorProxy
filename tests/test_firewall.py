@@ -446,3 +446,174 @@ def test_ruleset_systemd_resolved_rules_missing_user(
     ruleset = mock_run_string.call_args[0][0]
 
     assert "meta skuid 105" not in ruleset
+
+
+# ---------------------------------------------------------------------------
+# _build_ruleset — pure function tests (no subprocess, no root required)
+# ---------------------------------------------------------------------------
+
+
+from ttp.firewall import _build_ruleset  # noqa: E402
+
+
+def _base_kwargs(**overrides) -> dict:
+    """Return a baseline set of arguments for _build_ruleset."""
+    defaults = dict(
+        tor_uid=1000,
+        transport_port=9041,
+        dns_port=9054,
+        ipv6_avail=False,
+        allow_root=False,
+        lan_bypass=True,
+        bypass_uids=None,
+        bypass_gids=None,
+        resolved_uid=None,
+        cgroup_bypass=False,
+    )
+    defaults.update(overrides)
+    return defaults
+
+
+class TestBuildRuleset:
+    """Verify _build_ruleset() returns correct nftables rule strings."""
+
+    def test_returns_string(self):
+        result = _build_ruleset(**_base_kwargs())
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_contains_ttp_table(self):
+        result = _build_ruleset(**_base_kwargs())
+        assert "table inet ttp" in result
+
+    def test_tor_uid_exempt(self):
+        result = _build_ruleset(**_base_kwargs(tor_uid=555))
+        assert "meta skuid 555 accept" in result
+
+    def test_transport_port_in_redirect(self):
+        result = _build_ruleset(**_base_kwargs(transport_port=19041))
+        assert "127.0.0.1:19041" in result
+
+    def test_dns_port_in_redirect(self):
+        result = _build_ruleset(**_base_kwargs(dns_port=19054))
+        assert "127.0.0.1:19054" in result
+
+    def test_ipv4_only_no_ipv6_rules(self):
+        result = _build_ruleset(**_base_kwargs(ipv6_avail=False))
+        assert "::1" not in result
+        assert "ip6" not in result
+
+    def test_ipv6_avail_adds_ipv6_rules(self):
+        result = _build_ruleset(**_base_kwargs(ipv6_avail=True))
+        assert "ip6" in result
+        assert "::1" in result
+
+    def test_ipv6_leak_prevention_when_disabled(self):
+        result = _build_ruleset(**_base_kwargs(ipv6_avail=False))
+        assert "meta nfproto ipv6 drop" in result
+
+    def test_no_ipv6_leak_prevention_when_enabled(self):
+        result = _build_ruleset(**_base_kwargs(ipv6_avail=True))
+        assert "meta nfproto ipv6 drop" not in result
+
+    def test_allow_root_adds_root_rule(self):
+        result = _build_ruleset(**_base_kwargs(allow_root=True))
+        assert "meta skuid 0 accept" in result
+
+    def test_disallow_root_no_root_rule(self):
+        result = _build_ruleset(**_base_kwargs(allow_root=False))
+        assert "meta skuid 0 accept" not in result
+
+    def test_lan_bypass_adds_rfc1918_rules(self):
+        result = _build_ruleset(**_base_kwargs(lan_bypass=True))
+        assert "10.0.0.0/8" in result
+        assert "192.168.0.0/16" in result
+
+    def test_no_lan_bypass_omits_rfc1918_rules(self):
+        result = _build_ruleset(**_base_kwargs(lan_bypass=False))
+        assert "10.0.0.0/8" not in result
+        assert "192.168.0.0/16" not in result
+
+    def test_bypass_uid_nat_and_filter(self):
+        result = _build_ruleset(**_base_kwargs(bypass_uids=[1001, 1002]))
+        assert "meta skuid 1001 ip daddr != 127.0.0.1 accept" in result
+        assert "meta skuid 1002 ip daddr != 127.0.0.1 accept" in result
+        assert "meta skuid 1001 accept" in result
+
+    def test_bypass_gid_nat_and_filter(self):
+        result = _build_ruleset(**_base_kwargs(bypass_gids=[2001]))
+        assert "meta skgid 2001 ip daddr != 127.0.0.1 accept" in result
+        assert "meta skgid 2001 accept" in result
+
+    def test_bypass_uid_ipv6_rules_when_ipv6_enabled(self):
+        result = _build_ruleset(**_base_kwargs(bypass_uids=[1001], ipv6_avail=True))
+        assert "meta skuid 1001 ip6 daddr != ::1 accept" in result
+
+    def test_no_bypass_uid_ipv6_rules_when_ipv6_disabled(self):
+        result = _build_ruleset(**_base_kwargs(bypass_uids=[1001], ipv6_avail=False))
+        assert "meta skuid 1001 ip6 daddr != ::1 accept" not in result
+
+    def test_cgroup_bypass_rule_present(self):
+        result = _build_ruleset(**_base_kwargs(cgroup_bypass=True))
+        assert 'socket cgroupv2 level 1 "ttp-bypass.slice" accept' in result
+
+    def test_no_cgroup_bypass_rule_absent(self):
+        result = _build_ruleset(**_base_kwargs(cgroup_bypass=False))
+        assert "ttp-bypass.slice" not in result
+
+    def test_resolved_uid_drop_rule(self):
+        result = _build_ruleset(**_base_kwargs(resolved_uid=999))
+        assert "meta skuid 999 ip daddr != 127.0.0.1 drop" in result
+
+    def test_no_resolved_uid_no_drop_rule(self):
+        result = _build_ruleset(**_base_kwargs(resolved_uid=None))
+        # No resolved drop rule should appear (there is no uid to reference)
+        assert "ip daddr != 127.0.0.1 drop" not in result
+
+    def test_doh_reject_ipv4_always_present(self):
+        result = _build_ruleset(**_base_kwargs(ipv6_avail=False))
+        assert "1.1.1.1" in result
+        assert "8.8.8.8" in result
+        assert "tcp dport 443 reject" in result
+
+    def test_doh_reject_ipv6_present_when_ipv6_enabled(self):
+        result = _build_ruleset(**_base_kwargs(ipv6_avail=True))
+        assert "2606:4700:4700::1111" in result
+
+    def test_doh_reject_ipv6_absent_when_ipv6_disabled(self):
+        result = _build_ruleset(**_base_kwargs(ipv6_avail=False))
+        assert "2606:4700:4700::1111" not in result
+
+    def test_dot_reject_always_present(self):
+        result = _build_ruleset(**_base_kwargs())
+        assert "tcp dport 853 reject" in result
+
+    def test_catchall_reject_present(self):
+        result = _build_ruleset(**_base_kwargs())
+        # The catch-all reject must appear in filter_out, before filter_forward
+        filter_out_idx = result.index("chain filter_out")
+        filter_forward_idx = result.index("chain filter_forward")
+        filter_out_block = result[filter_out_idx:filter_forward_idx]
+        assert "reject" in filter_out_block
+
+    def test_filter_forward_policy_drop(self):
+        result = _build_ruleset(**_base_kwargs())
+        assert "filter_forward" in result
+        assert "policy drop" in result
+
+    def test_prerouting_chain_present(self):
+        result = _build_ruleset(**_base_kwargs())
+        assert "chain prerouting" in result
+        assert "hook prerouting" in result
+
+    def test_nat_output_chain_present(self):
+        result = _build_ruleset(**_base_kwargs())
+        assert "chain output" in result
+        assert "hook output" in result
+
+    def test_pure_function_idempotent(self):
+        """Same inputs must always produce identical output."""
+        kwargs = _base_kwargs(
+            tor_uid=42, bypass_uids=[100], bypass_gids=[200], ipv6_avail=True
+        )
+        assert _build_ruleset(**kwargs) == _build_ruleset(**kwargs)

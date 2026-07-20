@@ -50,34 +50,41 @@ except ImportError:
 _TTP_CONTROL_SOCKET = "/run/tor/ttp/control.sock"
 
 
+def _fetch_endpoint(url: str) -> dict | None:
+    """Fetch a JSON payload from *url*, returning the parsed dict or ``None``.
+
+    Uses stdlib ``urllib.request`` to avoid adding a ``requests`` dependency.
+    Returns ``None`` on any network, timeout, or parse error.
+    """
+    import urllib.error
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ttp"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+    ):
+        return None
+
+
 def get_exit_ip() -> str:
     """Fetch the current Tor exit IP, trying multiple endpoints for resilience.
 
     Uses ``urllib.request`` from the stdlib so we don't need to add
     ``requests`` as a dependency.
     """
-    import urllib.error
-
     for endpoint in VERIFY_ENDPOINTS:
-        try:
-            req = urllib.request.Request(
-                endpoint,
-                headers={"User-Agent": "ttp"},
-            )
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-                # check.torproject.org uses "IP", ipify uses "ip", ifconfig.me uses "ip_addr"
-                ip = data.get("IP") or data.get("ip") or data.get("ip_addr")
-                if ip:
-                    return ip
-        except (
-            urllib.error.URLError,
-            TimeoutError,
-            OSError,
-            json.JSONDecodeError,
-            UnicodeDecodeError,
-        ):
-            continue
+        data = _fetch_endpoint(endpoint)
+        if data is not None:
+            # check.torproject.org uses "IP", ipify uses "ip", ifconfig.me uses "ip_addr"
+            ip = data.get("IP") or data.get("ip") or data.get("ip_addr")
+            if ip:
+                return ip
     return "unknown"
 
 
@@ -176,34 +183,20 @@ def verify_tor() -> tuple[bool, str]:
         ``(is_tor, exit_ip)`` - whether we confirmed Tor routing,
         and the exit IP address.
     """
-    import urllib.error
-
     for attempt in range(1, 6):  # 5 attempts
         for endpoint in VERIFY_ENDPOINTS:
-            try:
-                req = urllib.request.Request(
-                    endpoint,
-                    headers={"User-Agent": "ttp"},
-                )
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    data = json.loads(resp.read().decode())
-
-                    # The Tor Project API is the only one that returns IsTor.
-                    if "IsTor" in data:
-                        return data.get("IsTor", False), data.get("IP", "unknown")
-
-                    # Fallback endpoints: we got a response, so traffic is routed
-                    # through *something*. We can't confirm it's Tor, but we have an IP.
-                    ip = data.get("ip") or data.get("ip_addr") or "unknown"
-                    return False, ip
-            except (
-                urllib.error.URLError,
-                TimeoutError,
-                OSError,
-                json.JSONDecodeError,
-                UnicodeDecodeError,
-            ):
+            data = _fetch_endpoint(endpoint)
+            if data is None:
                 continue
+
+            # The Tor Project API is the only one that returns IsTor.
+            if "IsTor" in data:
+                return data.get("IsTor", False), data.get("IP", "unknown")
+
+            # Fallback endpoints: we got a response, so traffic is routed
+            # through *something*. We can't confirm it's Tor, but we have an IP.
+            ip = data.get("ip") or data.get("ip_addr") or "unknown"
+            return False, ip
         time.sleep(3)
 
     return False, "unknown"

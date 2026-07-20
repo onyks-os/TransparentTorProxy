@@ -55,35 +55,31 @@ def _has_cgroup_bypass_support() -> bool:
     return False
 
 
-def apply_rules(
-    tor_user: str,
-    transport_port: int = 9041,
-    dns_port: int = 9054,
-    allow_root: bool = False,
-    lan_bypass: bool = True,
-    bypass_uids: list[int] | None = None,
-    bypass_gids: list[int] | None = None,
-    disable_ipv6: bool = False,
-) -> None:
-    """Create the 'ttp' table and inject redirection rules.
+def _build_ruleset(
+    tor_uid: int,
+    transport_port: int,
+    dns_port: int,
+    ipv6_avail: bool,
+    allow_root: bool,
+    lan_bypass: bool,
+    bypass_uids: list[int] | None,
+    bypass_gids: list[int] | None,
+    resolved_uid: int | None,
+    cgroup_bypass: bool,
+) -> str:
+    """Build and return the nftables ruleset string for the TTP session.
 
-    Orchestrates the process: Create -> Flush -> Inject.
-    If any step fails, it triggers an automatic rollback (destruction).
+    This is a **pure function**: it takes all required data as arguments
+    and returns the rendered nftables ruleset string with no side effects.
+    It never calls ``nft`` or touches the system — callers are responsible
+    for applying the result.
+
+    Invariant properties encoded in the ruleset:
+    1. Non-exempt local traffic MUST NOT leave the system in cleartext.
+    2. DNS traffic (UDP/TCP port 53) MUST be redirected to Tor DNSPort.
+    3. TCP traffic MUST be redirected to Tor TransPort.
+    4. Non-TCP, non-DNS traffic (ICMP, generic UDP) MUST be rejected.
     """
-    # Resolve numeric UID for the tor user to avoid nft resolution issues
-    try:
-        if tor_user.isdigit():
-            tor_uid = int(tor_user)
-        else:
-            tor_uid = pwd.getpwnam(tor_user).pw_uid
-    except KeyError as e:
-        raise FirewallError(f"Tor user '{tor_user}' not found on system.") from e
-
-    # Construct dynamic rules based on options
-    from ttp.tor_detect import is_ipv6_supported
-
-    ipv6_avail = is_ipv6_supported() and not disable_ipv6
-
     lan_rule = ""
     lan6_rule = ""
     if lan_bypass:
@@ -91,14 +87,12 @@ def apply_rules(
         if ipv6_avail:
             lan6_rule = "ip6 daddr { fc00::/7, fe80::/10 } accept"
 
-    root_rule = ""
-    if allow_root:
-        root_rule = "meta skuid 0 accept"
+    root_rule = "meta skuid 0 accept" if allow_root else ""
 
-    # Construct bypass rules
-    bypass_rules_nat = []
-    bypass_rules_filter = []
-    if _has_cgroup_bypass_support():
+    # Bypass rules for nat output and filter_out chains
+    bypass_rules_nat: list[str] = []
+    bypass_rules_filter: list[str] = []
+    if cgroup_bypass:
         bypass_rules_nat.append('socket cgroupv2 level 1 "ttp-bypass.slice" accept')
         bypass_rules_filter.append('socket cgroupv2 level 1 "ttp-bypass.slice" accept')
     if bypass_uids:
@@ -120,34 +114,31 @@ def apply_rules(
         "\n                ".join(bypass_rules_filter) if bypass_rules_filter else ""
     )
 
-    # Resolve systemd-resolved user UID dynamically if present
-    resolved_rules = []
-    resolved_uid = None
-    for user in ("systemd-resolve", "systemd-resolved"):
-        try:
-            resolved_uid = pwd.getpwnam(user).pw_uid
-            break
-        except KeyError:
-            continue
-
+    # systemd-resolved leak-prevention rules
+    resolved_rules: list[str] = []
     if resolved_uid is not None:
         resolved_rules.append(f"meta skuid {resolved_uid} ip daddr != 127.0.0.1 drop")
         if ipv6_avail:
             resolved_rules.append(f"meta skuid {resolved_uid} ip6 daddr != ::1 drop")
     resolved_rules_str = "\n            ".join(resolved_rules) if resolved_rules else ""
 
-    # Local loopback checks
+    # Loopback rules
     loopback_ipv4 = "ip daddr 127.0.0.0/8 accept"
     loopback_ipv6 = "ip6 daddr ::1 accept" if ipv6_avail else ""
 
-    # Redirection rules
-    dns_redirect_ipv4 = f"udp dport 53 dnat ip to 127.0.0.1:{dns_port}\n                tcp dport 53 dnat ip to 127.0.0.1:{dns_port}"
+    # DNS redirection
+    dns_redirect_ipv4 = (
+        f"udp dport 53 dnat ip to 127.0.0.1:{dns_port}\n"
+        f"                tcp dport 53 dnat ip to 127.0.0.1:{dns_port}"
+    )
     dns_redirect_ipv6 = (
-        f"\n                udp dport 53 dnat ip6 to [::1]:{dns_port}\n                tcp dport 53 dnat ip6 to [::1]:{dns_port}"
+        f"\n                udp dport 53 dnat ip6 to [::1]:{dns_port}"
+        f"\n                tcp dport 53 dnat ip6 to [::1]:{dns_port}"
         if ipv6_avail
         else ""
     )
 
+    # TCP transparent proxy redirection
     tcp_redirect_ipv4 = f"ip protocol tcp dnat ip to 127.0.0.1:{transport_port}"
     tcp_redirect_ipv6 = (
         f"\n                meta l4proto tcp dnat ip6 to [::1]:{transport_port}"
@@ -160,19 +151,12 @@ def apply_rules(
     # DoH IP blocks
     doh_ips_v4 = "{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112, 208.67.222.222, 208.67.220.220 }"
     doh_reject_ipv4 = f"ip daddr {doh_ips_v4} tcp dport 443 reject"
-
     doh_reject_ipv6 = ""
     if ipv6_avail:
         doh_ips_v6 = "{ 2606:4700:4700::1111, 2606:4700:4700::1001, 2001:4860:4860::8888, 2001:4860:4860::8844, 2620:fe::fe, 2620:fe::9, 2620:0:ccc::2, 2620:0:ccd::2 }"
         doh_reject_ipv6 = f"ip6 daddr {doh_ips_v6} tcp dport 443 reject"
 
-    # Define the ruleset using a single atomic string.
-    # Invariant properties:
-    # 1. Non-exempt local traffic (not Tor, not bypassed UIDs/GIDs) MUST NOT leave the system in cleartext.
-    # 2. DNS traffic (UDP/TCP port 53) MUST be redirected to Tor DNSPort (dns_port) or dropped.
-    # 3. TCP traffic MUST be redirected to Tor TransPort (transport_port) or dropped.
-    # 4. Non-TCP, non-DNS traffic (ICMP, generic UDP, etc.) MUST be rejected in the filter_out chain.
-    ruleset = f"""
+    return f"""
     table inet ttp {{
         # nat prerouting: Handles redirection for incoming traffic from other network namespaces/interfaces
         # (e.g., virtual interfaces for VMs or Docker containers).
@@ -269,6 +253,54 @@ def apply_rules(
         }}
     }}
     """
+
+
+def apply_rules(
+    tor_user: str,
+    transport_port: int = 9041,
+    dns_port: int = 9054,
+    allow_root: bool = False,
+    lan_bypass: bool = True,
+    bypass_uids: list[int] | None = None,
+    bypass_gids: list[int] | None = None,
+    disable_ipv6: bool = False,
+) -> None:
+    """Create the 'ttp' table and inject redirection rules.
+
+    Orchestrates the process: Create -> Flush -> Inject.
+    If any step fails, it triggers an automatic rollback (destruction).
+    """
+    # Resolve numeric UID for the tor user to avoid nft resolution issues
+    try:
+        tor_uid = int(tor_user) if tor_user.isdigit() else pwd.getpwnam(tor_user).pw_uid
+    except KeyError as e:
+        raise FirewallError(f"Tor user '{tor_user}' not found on system.") from e
+
+    from ttp.tor_detect import is_ipv6_supported
+
+    ipv6_avail = is_ipv6_supported() and not disable_ipv6
+
+    # Resolve systemd-resolved UID once, before building the ruleset
+    resolved_uid: int | None = None
+    for _user in ("systemd-resolve", "systemd-resolved"):
+        try:
+            resolved_uid = pwd.getpwnam(_user).pw_uid
+            break
+        except KeyError:
+            continue
+
+    ruleset = _build_ruleset(
+        tor_uid=tor_uid,
+        transport_port=transport_port,
+        dns_port=dns_port,
+        ipv6_avail=ipv6_avail,
+        allow_root=allow_root,
+        lan_bypass=lan_bypass,
+        bypass_uids=bypass_uids,
+        bypass_gids=bypass_gids,
+        resolved_uid=resolved_uid,
+        cgroup_bypass=_has_cgroup_bypass_support(),
+    )
 
     try:
         # 1. Create and sanitize the dedicated table

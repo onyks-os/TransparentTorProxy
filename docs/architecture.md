@@ -57,7 +57,8 @@ The project is divided into independent Python modules. Each module has a single
 | `state.py`       | **State**        | Manages volatile lock file in `/run/ttp` and recovery logic.                     |
 | `tor_control.py` | **Control**      | Encapsulates Tor interaction (Stem, Bootstrap, IP Check).                        |
 | `system_info.py` | **Diagnostic**   | Gathers system state (torrc, rules, logs) for debugging.                         |
-| `watchdog.py`    | **Watchdog**     | Manages the session background watchdog, auto-healing, and emergency killswitch. |
+| `selinux.py`     | **SELinux**      | Compiles, installs/removes custom SELinux policy, and labels/unlabels custom ports. |
+| `watchdog/`      | **Watchdog**     | Package managing session background watchdog, auto-healing (`integrity.py`, `inotify.py`), service configuration (`service.py`), and wall/desktop alerts (`alerts.py`). |
 | `cli.py` / `commands/` | **Interface**    | Typer entry point orchestrator (`cli.py`) and command modules (`start`, `stop`, etc.). |
 
 ### 2.1 Execution Flow - `start`
@@ -192,19 +193,22 @@ Pure data gathering module, decoupled from UI.
 * Captures DNS state from `/etc/resolv.conf` overlay.
 * Returns results as a flat dictionary for the CLI to render.
 
-### 3.9 `watchdog.py`
+### 3.9 `watchdog/` Package
 
-Implements continuous, proactive session monitoring and auto-healing features to ensure absolute traffic security.
+Implements continuous, proactive session monitoring and auto-healing features to ensure absolute traffic security. Refactored into a modular package structure:
 
-* **Volatile Service Daemon**: Configures and writes a dynamic systemd service unit (`/run/systemd/system/ttp-watchdog.service`) that runs the command `ttp watchdog run`. Because it resides in `/run/`, it evaporates on system reboot.
-* **Continuous Monitoring Loop**: Inspects the core subsystems every 15 seconds:
-  1. **DNS Integrity**: Confirms `/etc/resolv.conf` (or its realpath) is still a valid active `mount --bind` mountpoint. If `systemd-resolved` was active on startup, it also confirms that the volatile configuration drop-in file is present in `/run/systemd/resolved.conf.d/` and the `systemd-resolved` service is still running.
-  2. **Firewall Integrity**: Confirms that the `inet ttp` nftables table exists and contains the `filter_out` chain, as well as verifying any active bypass exceptions (users/groups) registered in the session lock.
-  3. **Tor daemon health**: Confirms the ControlSocket is open and active, falling back to checking if the systemd `ttp-tor.service` is in an active state.
-* **Auto-Healing ("First Strike")**: If an integrity check fails, the watchdog triggers a single-strike recovery attempt based on the failing component (e.g. re-running DNS overlay, regenerating firewall rules including bypass configurations, or restarting the `ttp-tor` service). It then sleeps for 3 seconds to let changes stabilize.
-* **Emergency Killswitch ("Second Strike")**: If the subsequent check still fails, the watchdog instantly activates the emergency killswitch via `firewall.apply_emergency_killswitch()`, completely isolating the physical network interfaces to prevent traffic leakage. It then alerts the user using a system-wide terminal broadcast (`wall`) and a critical desktop popup (`notify-send`).
+* **`service.py` (Volatile Service Daemon)**: Configures and writes a dynamic systemd service unit (`/run/systemd/system/ttp-watchdog.service`) that runs the command `ttp watchdog run`. Because it resides in `/run/`, it evaporates on system reboot.
+* **`inotify.py` (Continuous Monitoring Loop)**: Runs the event-driven monitoring loop using raw ctypes-based Inotify on `/etc/resolv.conf` (handling symlinks via `IN_DONT_FOLLOW` and realpath) and Netlink sockets for firewall events.
+* **`integrity.py` (Integrity Check)**: Performs modular DNS, firewall, and Tor connectivity checks.
+* **`alerts.py` (Alerts & Killswitch)**: Implements unprivileged system-wide notifications (`wall` and `notify-send`) and the emergency fail-closed killswitch.
 
-### 3.10 Architecture Graph & Module Interactions
+### 3.10 `selinux.py`
+
+Handles security policies and dynamic labeling for system integration under SELinux (active in Enforcing mode on Fedora/RHEL):
+* **Custom Tor Policy Module**: Compiles (`checkmodule` / `semodule_package`) and installs (`semodule -i`) the custom `ttp_tor_policy` to allow standard Tor processes to operate with TTP's customized features.
+* **Dynamic Port Labeling**: Dynamically maps custom user-selected TransPort and DNSPort to `tor_port_t` on startup via `semanage port -a` (or modifies existing ones using `-m`), and unregisters them on teardown via `semanage port -d` to avoid system configuration pollution.
+
+### 3.11 Architecture Graph & Module Interactions
 
 The entry point `ttp/cli.py` is a thin Typer orchestrator that delegates execution to isolated command modules in the `ttp/commands/` directory.
 
@@ -238,7 +242,8 @@ graph TD
     DNS["dns.py<br/>Routing"]:::module
     CONTROL["tor_control.py<br/>Stem / Tor API"]:::module
     SYSINFO["system_info.py<br/>Diagnostics"]:::module
-    WATCHDOG["watchdog.py<br/>Session Integrity"]:::module
+    WATCHDOG["watchdog/<br/>Session Integrity"]:::module
+    SELINUX["selinux.py<br/>SELinux Port/Policy"]:::module
 
     TOR(("Tor Daemon")):::system
     KERNEL(("Linux Kernel / OS")):::system
@@ -255,6 +260,7 @@ graph TD
 
     %% Inter-module Dependencies
     INSTALL -->|Uses to verify state| DETECT
+    INSTALL -->|Delegates SELinux calls| SELINUX
     SYSINFO -->|Reads current state| DETECT
     SYSINFO -->|Reads lock file| STATE
     SYSINFO -->|Reads DNS config| DNS
@@ -265,6 +271,7 @@ graph TD
 
     %% System Interactions
     INSTALL -->|Generates volatile torrc & unit| KERNEL
+    SELINUX -->|Compiles/Labels| KERNEL
     FIREWALL -->|Creates 'inet ttp' table| KERNEL
     DNS -->|mount --bind overlay| KERNEL
     DETECT -->|Scans processes & OS| KERNEL

@@ -12,7 +12,7 @@ from ttp.system_info import collect_diagnostics
 @patch("ttp.system_info.tor_control.get_controller")
 @patch("ttp.system_info.state.read_lock", return_value=None)
 @patch(
-    "ttp.system_info.detect_tor",
+    "ttp.tor_detect.detect_tor",
     return_value={
         "is_installed": True,
         "is_running": True,
@@ -43,7 +43,7 @@ def test_collect_diagnostics_has_all_keys(mock_detect, mock_read, mock_ctrl, moc
 @patch("ttp.system_info.tor_control.get_controller", return_value=None)
 @patch("ttp.system_info.state.read_lock", return_value=None)
 @patch(
-    "ttp.system_info.detect_tor",
+    "ttp.tor_detect.detect_tor",
     return_value={
         "is_installed": False,
         "is_running": False,
@@ -74,7 +74,7 @@ def test_collect_diagnostics_subprocess_failure_does_not_crash(
 @patch("ttp.system_info.tor_control.get_controller", return_value=None)
 @patch("ttp.system_info.state.read_lock", return_value=None)
 @patch(
-    "ttp.system_info.detect_tor",
+    "ttp.tor_detect.detect_tor",
     return_value={
         "is_installed": True,
         "is_running": True,
@@ -99,7 +99,7 @@ def test_collect_diagnostics_returns_only_strings(
 @patch("ttp.system_info.tor_control.get_controller", return_value=None)
 @patch("ttp.system_info.state.read_lock", return_value=None)
 @patch(
-    "ttp.system_info.detect_tor",
+    "ttp.tor_detect.detect_tor",
     return_value={
         "is_installed": True,
         "is_running": True,
