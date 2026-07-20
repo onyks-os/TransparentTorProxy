@@ -22,6 +22,7 @@ from ttp.watchdog import (
     inotify as inotify,
     integrity as integrity,
     alerts as alerts,
+    fsm as fsm,
 )
 
 # Re-export the public API
@@ -33,6 +34,7 @@ from ttp.watchdog.service import (
     WATCHDOG_SERVICE_PATH,
 )
 from ttp.watchdog.inotify import run_watchdog_loop
+from ttp.watchdog.fsm import WatchdogFSM
 from ttp.watchdog.integrity import (
     check_system_integrity,
     attempt_auto_healing,
@@ -51,6 +53,7 @@ __all__ = [
     "WATCHDOG_SERVICE_NAME",
     "WATCHDOG_SERVICE_PATH",
     "run_watchdog_loop",
+    "WatchdogFSM",
     "check_system_integrity",
     "attempt_auto_healing",
     "is_interface_online",

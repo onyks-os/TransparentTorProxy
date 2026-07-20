@@ -192,9 +192,9 @@ All TTP runtime state is stored in tmpfs paths that **disappear on reboot**, ens
 
 | Path                                       | Contents                                                     | Cleared On           |
 | :----------------------------------------- | :----------------------------------------------------------- | :------------------- |
-| `/run/ttp/`                                | Session root directory                                       | Reboot or `ttp stop` |
-| `/run/ttp/ttp.lock`                        | JSON session lock: PID, timestamps, interface, bypass config | `ttp stop`           |
-| `/run/ttp/ttp.log`                         | Rolling log (1 MB limit)                                     | Reboot               |
+| `/run/ttp/`                                | Session root directory (Restricted to owner/root via `0700`) | Reboot or `ttp stop` |
+| `/run/ttp/ttp.lock`                        | JSON session lock (Restricted to owner/root via `0600`)      | `ttp stop`           |
+| `/run/ttp/ttp.log`                         | Rolling log (1 MB limit, restricted via `0600` inside dir)   | Reboot               |
 | `/run/ttp/resolv.conf`                     | DNS resolver file for bind-mount overlay                     | Reboot               |
 | `/run/tor/ttp/torrc`                       | Generated Tor configuration                                  | Reboot               |
 | `/run/tor/ttp/control.sock`                | Tor control Unix socket                                      | Tor shutdown         |

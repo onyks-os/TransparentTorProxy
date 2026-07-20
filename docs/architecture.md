@@ -167,7 +167,14 @@ Implements a **stateless overlay** by bind-mounting a volatile resolver file fro
 
 ### 3.5 `state.py`
 
-Manages `/run/ttp/ttp.lock` (JSON) on a volatile `tmpfs` mount. This ensures that session state disappears on power loss, preventing stale lock issues. Contains PID, timestamps, and metadata. Detects orphaned sessions. Also handles the **tmpfs pre-flight check** (`check_tmpfs_space`) to ensure at least 5MB of RAM is free before starting, preventing `ENOSPC` crashes mid-setup. Persistent configurations (like UX flags) are delegated to `ux.py`.
+Manages `/run/ttp/ttp.lock` (JSON) on a volatile `tmpfs` mount. This ensures that session state disappears on power loss, preventing stale lock issues. Contains PID, timestamps, and metadata. Detects orphaned sessions.
+
+**Security Hardening**:
+* **Directory Permissions**: The `/run/ttp` directory is created with `0700` permissions (restricted to owner/root) to prevent unprivileged local enumeration.
+* **Lock File Permissions**: The `ttp.lock` file is written with `0600` permissions, securing sensitive bridge credentials and configuration parameters from local information disclosure.
+* **PID Recycling Protection**: When checking for orphaned processes, `state.py` parses `/proc/{pid}/cmdline` to verify that the active PID still corresponds to a `ttp` process, mitigating TOCTOU issues.
+
+Also handles the **tmpfs pre-flight check** (`check_tmpfs_space`) to ensure at least 5MB of RAM is free before starting, preventing `ENOSPC` crashes mid-setup. Persistent configurations (like UX flags) are delegated to `ux.py`.
 
 ### 3.6 `cli.py` & `ttp/commands/` (CLI Architecture)
 
@@ -210,12 +217,33 @@ Pure data gathering module, decoupled from UI.
 
 ### 3.9 `watchdog/` Package
 
-Implements continuous, proactive session monitoring and auto-healing features to ensure absolute traffic security. Refactored into a modular package structure:
+Implements continuous, proactive session monitoring and auto-healing features to ensure absolute traffic security. Organized as a formal Finite State Machine (FSM):
 
+* **`fsm.py` (Watchdog FSM)**: Houses the `WatchdogFSM` class which defines the state machine graph using the `transitions` library. It contains FSM state variables and executes transition triggers (`initialize`, `disconnect`, `reconnect`, `integrity_fail`, `heal_success`, `heal_fail`, `tamper`, `shutdown`) and their corresponding callback handlers.
 * **`service.py` (Volatile Service Daemon)**: Configures and writes a dynamic systemd service unit (`/run/systemd/system/ttp-watchdog.service`) that runs the command `ttp watchdog run`. Because it resides in `/run/`, it evaporates on system reboot.
-* **`inotify.py` (Continuous Monitoring Loop)**: Runs the event-driven monitoring loop using raw ctypes-based Inotify on `/etc/resolv.conf` (handling symlinks via `IN_DONT_FOLLOW` and realpath) and Netlink sockets for firewall events.
+* **`inotify.py` (Continuous Monitoring Loop)**: Runs the event-driven monitoring loop using raw ctypes-based Inotify on `/etc/resolv.conf` (monitoring both realpath and symlink target swapping using `IN_DONT_FOLLOW`) and Netlink sockets for firewall events. It delegates all state changes and resource lifecycle actions directly to the FSM.
 * **`integrity.py` (Integrity Check)**: Performs modular DNS, firewall, and Tor connectivity checks.
-* **`alerts.py` (Alerts & Killswitch)**: Implements unprivileged system-wide notifications (`wall` and `notify-send`) and the emergency fail-closed killswitch.
+* **`alerts.py` (Alerts & Killswitch)**: Implements unprivileged system-wide notifications (`wall` and `notify-send`) and the emergency fail-closed killswitch. Sanitizes messages to prevent terminal escape injections.
+
+#### Watchdog FSM State Transitions
+
+The FSM models the watchdog lifecycle deterministically to prevent race conditions during recovery or network disconnect events:
+
+```mermaid
+stateDiagram-v2
+    [*] --> stopped
+    stopped --> healthy : initialize()
+    healthy --> suspended : disconnect()
+    suspended --> healthy : reconnect()
+    healthy --> healing : integrity_fail()
+    healing --> healthy : heal_success()
+    healing --> killswitch : heal_fail()
+    healthy --> killswitch : tamper()
+    healthy --> stopped : shutdown()
+    suspended --> stopped : shutdown()
+    healing --> stopped : shutdown()
+    killswitch --> stopped : shutdown()
+```
 
 ### 3.10 `selinux.py`
 
@@ -435,6 +463,7 @@ TTP employs a `Makefile` in the root directory to provide a unified entry point 
 * **`test_firewall.py`**: Asserts DNS redirect appears BEFORE LAN bypass (critical - gateway DNS leak prevention), BEFORE loopback accept, BEFORE TCP redirect. Verifies IPv6 drop (when unsupported) or redirection (when supported), DoT rejection, DoH IP-level blocking, bypass user/group (split tunneling) rule injection, emergency killswitch table application, and teardown lockdown rule construction/execution.
 * **`test_dns.py`**: Asserts correct mount --bind overlay, stale mount cleanup, and lazy umount.
 * **`test_state.py`**: Asserts lock creation, reading, and orphan detection.
+* **`test_fsm.py`**: Verifies WatchdogFSM state machine transitions, triggers, and callback handlers under mock conditions.
 * **`test_cli.py`**: Verifies command orchestration, option injection, UI flow, non-root OSError safety, stop command execution order (lockdown -> shutdown -> conntrack flush -> destroy), and conntrack handling when utility is missing.
 * **`test_tor_control.py`**: Verifies Tor daemon interaction, IP checking logic, and circuit bootstrap/rotation.
 * **`test_tor_install.py`**: Asserts correct PM selection, torrc generation (including DoH blocking mapping), and service management.

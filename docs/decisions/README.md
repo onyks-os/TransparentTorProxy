@@ -26,3 +26,5 @@ Each ADR is formatted using the Markdown standard and named using a sequential I
 7. [0007-ruleset-testing-with-nse.md](file:///home/onyks/Documents/GitHub/TransparentTorProxy/docs/decisions/0007-ruleset-testing-with-nse.md) — Programmatic testing using Network Sandbox Engine (NSE) and Scapy sniffer.
 8. [0008-byod-architecture.md](docs/decisions/0008-byod-architecture.md) — Support for custom external Tor instances via Bring Your Own Daemon (BYOD) on systemd hosts.
 9. [0009-systemd-resolved-bypass.md](docs/decisions/0009-systemd-resolved-bypass.md) — systemd-resolved DNS bypass and fail-closed firewall kernel drop.
+10. [0010-watchdog-finite-state-machine.md](docs/decisions/0010-watchdog-finite-state-machine.md) — Watchdog FSM (Finite State Machine) using the transitions library.
+

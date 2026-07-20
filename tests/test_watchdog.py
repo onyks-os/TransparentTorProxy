@@ -309,7 +309,7 @@ def test_run_watchdog_loop_no_lock(mock_sleep, mock_read):
 
 @patch("ttp.state.read_lock")
 @patch("ttp.watchdog.inotify.check_system_integrity")
-@patch("ttp.watchdog.inotify.attempt_auto_healing", return_value=True)
+@patch("ttp.watchdog.fsm.attempt_auto_healing", return_value=True)
 @patch("ttp.watchdog.inotify.is_interface_online", return_value=True)
 @patch("ttp.watchdog.inotify.has_default_route", return_value=True)
 @patch("time.sleep")
@@ -339,10 +339,10 @@ def test_run_watchdog_loop_first_strike_healed(
 
 @patch("ttp.state.read_lock", return_value={"pid": 123})
 @patch("ttp.watchdog.inotify.check_system_integrity")
-@patch("ttp.watchdog.inotify.attempt_auto_healing", return_value=True)
+@patch("ttp.watchdog.fsm.attempt_auto_healing", return_value=True)
 @patch("ttp.watchdog.inotify.is_interface_online", return_value=True)
 @patch("ttp.watchdog.inotify.has_default_route", return_value=True)
-@patch("ttp.watchdog.inotify.trigger_emergency_killswitch")
+@patch("ttp.watchdog.fsm.trigger_emergency_killswitch")
 @patch("time.sleep")
 def test_run_watchdog_loop_second_strike_killswitch(
     mock_sleep, mock_ks, mock_has_route, mock_online, mock_heal, mock_check, mock_read
@@ -363,10 +363,10 @@ def test_run_watchdog_loop_second_strike_killswitch(
 
 @patch("ttp.state.read_lock", return_value={"pid": 123})
 @patch("ttp.watchdog.inotify.check_system_integrity")
-@patch("ttp.watchdog.inotify.attempt_auto_healing", return_value=False)
+@patch("ttp.watchdog.fsm.attempt_auto_healing", return_value=False)
 @patch("ttp.watchdog.inotify.is_interface_online", return_value=True)
 @patch("ttp.watchdog.inotify.has_default_route", return_value=True)
-@patch("ttp.watchdog.inotify.trigger_emergency_killswitch")
+@patch("ttp.watchdog.fsm.trigger_emergency_killswitch")
 @patch("time.sleep")
 def test_run_watchdog_loop_healing_command_fails_immediate_killswitch(
     mock_sleep, mock_ks, mock_has_route, mock_online, mock_heal, mock_check, mock_read
