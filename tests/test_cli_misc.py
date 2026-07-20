@@ -119,16 +119,9 @@ def test_check_failure(mock_verify_tor):
 
 @patch("subprocess.run")
 @patch("shutil.which", return_value="/usr/bin/dig")
-@patch("urllib.request.urlopen")
+@patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
-def test_check_leak_success(mock_read, mock_urlopen, mock_which, mock_run):
-    import json
-
-    mock_response = mock_urlopen.return_value.__enter__.return_value
-    mock_response.read.return_value = json.dumps(
-        {"IsTor": True, "IP": "1.1.1.1"}
-    ).encode()
-
+def test_check_leak_success(mock_read, mock_verify, mock_which, mock_run):
     def side_effect(cmd, *args, **kwargs):
         mock_result = MagicMock()
         tokens = _mock_cmd_tokens(cmd)
@@ -149,18 +142,12 @@ def test_check_leak_success(mock_read, mock_urlopen, mock_which, mock_run):
 
 @patch("subprocess.run")
 @patch("shutil.which", return_value="/usr/bin/dig")
-@patch("urllib.request.urlopen")
+@patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_akahelp_txt_ip_not_a_leak(
-    mock_read, mock_urlopen, mock_which, mock_run
+    mock_read, mock_verify, mock_which, mock_run
 ):
     """Resolver IP from Akamai TXT must not set has_leaks (regression for false positives)."""
-    import json
-
-    mock_response = mock_urlopen.return_value.__enter__.return_value
-    mock_response.read.return_value = json.dumps(
-        {"IsTor": True, "IP": "1.1.1.1"}
-    ).encode()
 
     def side_effect(cmd, *args, **kwargs):
         mock_result = MagicMock()
@@ -180,16 +167,9 @@ def test_check_leak_akahelp_txt_ip_not_a_leak(
     assert "No leaks detected" in result.output
 
 
-@patch("urllib.request.urlopen")
+@patch("ttp.tor_control.verify_tor", return_value=(False, "8.8.8.8"))
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
-def test_check_leak_detected_istor_false(mock_read, mock_urlopen):
-    import json
-
-    mock_response = mock_urlopen.return_value.__enter__.return_value
-    mock_response.read.return_value = json.dumps(
-        {"IsTor": False, "IP": "8.8.8.8"}
-    ).encode()
-
+def test_check_leak_detected_istor_false(mock_read, mock_verify):
     with (
         patch("shutil.which", return_value="/usr/bin/dig"),
         patch("subprocess.run") as mock_run,
@@ -213,11 +193,11 @@ def test_check_leak_detected_istor_false(mock_read, mock_urlopen):
     assert "Leaks detected!" in result.output
 
 
-@patch("urllib.request.urlopen", side_effect=OSError("network down"))
+@patch("ttp.tor_control.verify_tor", return_value=(False, "unknown"))
 @patch("shutil.which", return_value="/usr/bin/dig")
 @patch("subprocess.run")
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
-def test_check_leak_tor_api_error(mock_read, mock_run, mock_which, mock_urlopen):
+def test_check_leak_tor_api_error(mock_read, mock_run, mock_which, mock_verify):
     def side_effect(cmd, *args, **kwargs):
         m = MagicMock()
         m.stdout = "1.2.3.4\n"
@@ -229,30 +209,20 @@ def test_check_leak_tor_api_error(mock_read, mock_run, mock_which, mock_urlopen)
     assert "Leaks detected!" in result.output
 
 
-@patch("urllib.request.urlopen")
+@patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
 @patch("shutil.which", return_value=None)
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
-def test_check_leak_no_dig_binary(mock_read, mock_which, mock_urlopen):
-    import json
-
-    mock_response = mock_urlopen.return_value.__enter__.return_value
-    mock_response.read.return_value = json.dumps({"IsTor": True}).encode()
-
+def test_check_leak_no_dig_binary(mock_read, mock_which, mock_verify):
     result = runner.invoke(app, ["check-leak"])
     assert result.exit_code == 1
     assert "Leaks detected!" in result.output
 
 
-@patch("urllib.request.urlopen")
+@patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
 @patch("shutil.which", return_value="/usr/bin/dig")
 @patch("subprocess.run")
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
-def test_check_leak_empty_dig_a(mock_read, mock_run, mock_which, mock_urlopen):
-    import json
-
-    mock_response = mock_urlopen.return_value.__enter__.return_value
-    mock_response.read.return_value = json.dumps({"IsTor": True}).encode()
-
+def test_check_leak_empty_dig_a(mock_read, mock_run, mock_which, mock_verify):
     def side_effect(cmd, *args, **kwargs):
         m = MagicMock()
         tokens = _mock_cmd_tokens(cmd)

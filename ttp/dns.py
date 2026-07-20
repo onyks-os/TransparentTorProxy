@@ -96,65 +96,19 @@ def apply_dns(
     """Apply Tor DNS settings using a Kernel-level overlay (mount --bind).
 
     If systemd-resolved is active, also writes a volatile drop-in configuration
-    and restarts it.
+    and restarts it via the ttp.dns_resolved module.
 
     Returns a dictionary containing backup data for restoration.
     """
     resolved_active = False
-    resolved_config_file = Path("/run/systemd/resolved.conf.d/ttp.conf")
     try:
-        from ttp.tor_detect import is_ipv6_supported
+        from ttp import dns_resolved
+        from ttp.system_info import is_ipv6_supported
 
-        # Check systemd-resolved active state
-        try:
-            res = subprocess.run(
-                ["systemctl", "is-active", "systemd-resolved"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=10,
-            )
-            resolved_active = res.stdout.strip() == "active"
-        except Exception:
-            resolved_active = False
-
-        if resolved_active:
-            # Create volatile drop-in config
-            dns_servers = f"127.0.0.1:{dns_port}"
-            if is_ipv6_supported() and not disable_ipv6:
-                dns_servers += f" [::1]:{dns_port}"
-
-            config_content = (
-                "[Resolve]\n"
-                f"DNS={dns_servers}\n"
-                "FallbackDNS=\n"
-                "Domains=~.\n"
-                "DNSOverTLS=no\n"
-                "MulticastDNS=no\n"
-                "LLMNR=no\n"
-                "Cache=no-negative\n"
-            )
-
-            resolved_config_file.parent.mkdir(parents=True, exist_ok=True)
-            resolved_config_file.write_text(config_content, encoding="utf-8")
-
-            # Reload/restart resolved
-            subprocess.run(
-                ["systemctl", "restart", "systemd-resolved"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=10,
-            )
-
-            # Flush system cache
-            subprocess.run(
-                ["resolvectl", "flush-caches"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=10,
-            )
+        # Configure systemd-resolved if active
+        resolved_active = dns_resolved.apply_resolved(
+            dns_port=dns_port, disable_ipv6=disable_ipv6
+        )
 
         nameservers = "nameserver 127.0.0.1\n"
         if is_ipv6_supported() and not disable_ipv6:
@@ -192,22 +146,9 @@ def apply_dns(
         # Clean up any systemd-resolved drop-in if we failed during overlay setup
         if resolved_active:
             try:
-                if resolved_config_file.exists():
-                    resolved_config_file.unlink()
-                subprocess.run(
-                    ["systemctl", "restart", "systemd-resolved"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=10,
-                )
-                subprocess.run(
-                    ["resolvectl", "flush-caches"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=10,
-                )
+                from ttp import dns_resolved
+
+                dns_resolved.restore_resolved()
             except Exception:
                 pass
 
@@ -249,41 +190,12 @@ def restore_dns(backup: dict[str, Any] | None) -> None:
 
     # 2. Handle systemd-resolved teardown second (so it reads the restored base resolv.conf)
     if backup.get("systemd_resolved"):
-        resolved_config_file = Path("/run/systemd/resolved.conf.d/ttp.conf")
         try:
-            if resolved_config_file.exists():
-                resolved_config_file.unlink()
-        except OSError as e:
-            logger.warning("Failed to remove systemd-resolved drop-in: %s", e)
+            from ttp import dns_resolved
 
-        try:
-            subprocess.run(
-                ["systemctl", "restart", "systemd-resolved"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=10,
-            )
-        except subprocess.CalledProcessError as e:
-            logger.warning(
-                "Failed to reload/restart systemd-resolved during teardown: %s",
-                e.stderr.strip() if e.stderr else str(e),
-            )
+            dns_resolved.restore_resolved()
         except Exception as e:
-            logger.warning(
-                "Failed to reload/restart systemd-resolved during teardown: %s", e
-            )
-
-        try:
-            subprocess.run(
-                ["resolvectl", "flush-caches"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=10,
-            )
-        except Exception as e:
-            logger.debug("Failed to flush systemd-resolved caches: %s", e)
+            logger.warning("Failed to restore systemd-resolved: %s", e)
 
     # 3. Cleanup the ephemeral file to free tmpfs space
     try:

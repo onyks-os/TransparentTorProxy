@@ -54,9 +54,11 @@ The project is divided into independent Python modules. Each module has a single
 | `tor_install.py` | **Installation** | Installs Tor via PM, manages SELinux policies, configures `torrc`.               |
 | `firewall.py`    | **Firewall**     | Generates and applies `nftables` rules in isolated `inet ttp` table (Stateless). |
 | `dns.py`         | **DNS**          | Manages DNS via Kernel-level `mount --bind` overlay.                             |
-| `state.py`       | **State**        | Manages volatile lock file in `/run/ttp` and recovery logic.                     |
+| `dns_resolved.py`| **DNS**          | Manages systemd-resolved DNS redirection and caching drop-in configs.            |
+| `state.py`       | **State**        | Manages volatile lock file in `/run/ttp` and recovery logic (volatile).          |
+| `ux.py`          | **UX**           | Manages one-time user engagement flags and persistent sentinels (persistent).    |
 | `tor_control.py` | **Control**      | Encapsulates Tor interaction (Stem, Bootstrap, IP Check).                        |
-| `system_info.py` | **Diagnostic**   | Gathers system state (torrc, rules, logs) for debugging.                         |
+| `system_info.py` | **Diagnostic**   | Gathers system state (torrc, rules, logs, OS detection) for debugging.           |
 | `selinux.py`     | **SELinux**      | Compiles, installs/removes custom SELinux policy, and labels/unlabels custom ports. |
 | `watchdog/`      | **Watchdog**     | Package managing session background watchdog, auto-healing (`integrity.py`, `inotify.py`), service configuration (`service.py`), and wall/desktop alerts (`alerts.py`). |
 | `cli.py` / `commands/` | **Interface**    | Typer entry point orchestrator (`cli.py`) and command modules (`start`, `stop`, etc.). |
@@ -159,16 +161,29 @@ Implements a **stateless overlay** by bind-mounting a volatile resolver file fro
 * **Idempotency guard**: Before applying, `/proc/mounts` is scanned to remove any stale layers from prior unclean exits, ensuring multiple invocations are safe.
 * **Symlink safety**: The real path of `/etc/resolv.conf` is resolved before mounting (common issue on systemd-managed systems where it is a symlink to `systemd-resolved`).
 * **DoH/DoT mitigation**: DoT is blocked at the firewall layer (`firewall.py`); well-known DoH resolver IPs are blocked on port 443 to trigger system fallback; other unlisted DoH is routed through Tor; and DoH canary domains are mapped to `0.0.0.0` in the generated `torrc` to disable browser-level DoH where supported.
+* **Resolved Delegation**: Relies on `dns_resolved.py` to transparently manage configurations when `systemd-resolved` is active, keeping bind-mount and service-configuration layers decoupled.
 
 > For mount source/target paths, teardown behavior, and the full attribute table see [`interfaces.md § 3.2`](interfaces.md#32-dns-subsystem).
 
 ### 3.5 `state.py`
 
-Manages `/run/ttp/ttp.lock` (JSON) on a volatile `tmpfs` mount. This ensures that session state disappears on power loss, preventing stale lock issues. Contains PID, timestamps, and metadata. Detects orphaned sessions. Also handles the **tmpfs pre-flight check** (`check_tmpfs_space`) to ensure at least 5MB of RAM is free before starting, preventing `ENOSPC` crashes mid-setup.
+Manages `/run/ttp/ttp.lock` (JSON) on a volatile `tmpfs` mount. This ensures that session state disappears on power loss, preventing stale lock issues. Contains PID, timestamps, and metadata. Detects orphaned sessions. Also handles the **tmpfs pre-flight check** (`check_tmpfs_space`) to ensure at least 5MB of RAM is free before starting, preventing `ENOSPC` crashes mid-setup. Persistent configurations (like UX flags) are delegated to `ux.py`.
 
 ### 3.6 `cli.py` & `ttp/commands/` (CLI Architecture)
 
 Typer CLI acting as the primary orchestrator. It manages the **TTP Tor service lifecycle** via a dedicated `ttp-tor.service` unit, handling signals (`SIGINT`/`SIGTERM`) to ensure clean network restoration.
+
+The command handlers are modularized within `ttp/commands/`:
+* `start.py`: Orchestrates start steps, delegating to helper parsers (`_parse_bypass_users_groups`, `_parse_bridges`, `_resolve_external_tor_uid`).
+* `stop_restart.py`: Handles session teardown (`stop`) and session regeneration (`restart`).
+* `session.py`: Coordinates passive diagnostic checking (`status`, `check`, `check-leak`, `refresh`).
+* `admin.py`: Handles logs extraction (`logs`), uninstallation (`uninstall`), and manual process bypass (`bypass`).
+
+Helper functions are split into internal submodules:
+* `_ports.py`: Port-probing and socket ownership check utilities.
+* `_logging.py`: Structured logging and formatting setup.
+* `_validation.py`: Input validators, system pre-flight checks, and Tor routing verifiers.
+* `_common.py`: Holds shared state singletons and backward-compatible re-exports.
 
 > For the full command reference, options, exit codes, and root-privilege requirements see [`interfaces.md § 1`](interfaces.md#1-command-line-interface-cli).
 
@@ -208,7 +223,20 @@ Handles security policies and dynamic labeling for system integration under SELi
 * **Custom Tor Policy Module**: Compiles (`checkmodule` / `semodule_package`) and installs (`semodule -i`) the custom `ttp_tor_policy` to allow standard Tor processes to operate with TTP's customized features.
 * **Dynamic Port Labeling**: Dynamically maps custom user-selected TransPort and DNSPort to `tor_port_t` on startup via `semanage port -a` (or modifies existing ones using `-m`), and unregisters them on teardown via `semanage port -d` to avoid system configuration pollution.
 
-### 3.11 Architecture Graph & Module Interactions
+### 3.11 `ux.py`
+
+Manages persistent user engagement features that must survive system reboots (unlike volatile locks in `state.py`). It is the owner of:
+* Persistent sentinels in `/var/lib/ttp/` (e.g. `.starred_notified`).
+* Dynamic CLI star solicitation prompts.
+
+### 3.12 `dns_resolved.py`
+
+Manages configurations specific to systemd-resolved:
+* Checks service status actively via systemctl commands.
+* Writes a volatile systemd-resolved drop-in resolver mapping (`/run/systemd/resolved.conf.d/ttp.conf`) containing local DNSPort mappings (IPv4 and IPv6).
+* Restarts the systemd-resolved service and flushes the system DNS cache on both initialization and teardown.
+
+### 3.13 Architecture Graph & Module Interactions
 
 The entry point `ttp/cli.py` is a thin Typer orchestrator that delegates execution to isolated command modules in the `ttp/commands/` directory.
 

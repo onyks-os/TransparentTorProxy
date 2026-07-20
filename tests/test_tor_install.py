@@ -321,3 +321,106 @@ def test_ensure_pluggable_transports_unsupported_pt(mock_which):
     """ensure_pluggable_transports raises TorError for unsupported transports."""
     with pytest.raises(TorError, match="Unsupported pluggable transport"):
         tor_install.ensure_pluggable_transports(["shadow"])
+
+
+# ---------------------------------------------------------------------------
+# Pure string builders — Unit Tests (no filesystem/IO mock needed)
+# ---------------------------------------------------------------------------
+
+
+from ttp.tor_install import _build_torrc_content, _build_service_unit_content  # noqa: E402
+
+
+def test_build_torrc_content_ipv4_only():
+    content = _build_torrc_content(
+        tor_user="debian-tor",
+        transport_port=9041,
+        dns_port=9054,
+        block_doh=False,
+        use_bridges=False,
+        bridges=None,
+        ipv6_avail=False,
+    )
+    assert "User debian-tor" in content
+    assert "TransPort 9041" in content
+    assert "DNSPort 9054" in content
+    assert "ClientUseIPv6 0" in content
+    assert "[::1]" not in content
+    assert "MapAddress" not in content
+    assert "UseBridges" not in content
+
+
+def test_build_torrc_content_ipv6_enabled():
+    content = _build_torrc_content(
+        tor_user="debian-tor",
+        transport_port=9041,
+        dns_port=9054,
+        block_doh=False,
+        use_bridges=False,
+        bridges=None,
+        ipv6_avail=True,
+    )
+    assert "TransPort [::1]:9041" in content
+    assert "DNSPort [::1]:9054" in content
+    assert "ClientUseIPv6 1" in content
+
+
+def test_build_torrc_content_block_doh():
+    content = _build_torrc_content(
+        tor_user="debian-tor",
+        transport_port=9041,
+        dns_port=9054,
+        block_doh=True,
+        use_bridges=False,
+        bridges=None,
+        ipv6_avail=False,
+    )
+    assert "MapAddress use-application-dns.net 0.0.0.0" in content
+    assert "MapAddress dns.google 0.0.0.0" in content
+
+
+@patch("ttp.tor_install.shutil.which")
+def test_build_torrc_content_with_bridges(mock_which):
+    mock_which.side_effect = lambda binary: (
+        f"/usr/bin/{binary}" if "obfs4" in binary or "snowflake" in binary else None
+    )
+    content = _build_torrc_content(
+        tor_user="debian-tor",
+        transport_port=9041,
+        dns_port=9054,
+        block_doh=False,
+        use_bridges=True,
+        bridges=[
+            "obfs4 192.0.2.1:1234 FINGERPRINT",
+            "snowflake 192.0.2.2:4321 FP2",
+        ],
+        ipv6_avail=False,
+    )
+    assert "UseBridges 1" in content
+    assert "ClientTransportPlugin obfs4 exec /usr/bin/obfs4proxy" in content
+    assert "ClientTransportPlugin snowflake exec /usr/bin/snowflake-client" in content
+    assert "Bridge obfs4 192.0.2.1:1234 FINGERPRINT" in content
+    assert "Bridge snowflake 192.0.2.2:4321 FP2" in content
+
+
+def test_build_torrc_content_root_user_excludes_user_directive():
+    content = _build_torrc_content(
+        tor_user="root",
+        transport_port=9041,
+        dns_port=9054,
+        block_doh=False,
+        use_bridges=False,
+        bridges=None,
+        ipv6_avail=False,
+    )
+    assert "User root" not in content
+
+
+def test_build_service_unit_content():
+    content = _build_service_unit_content(
+        tor_user="debian-tor", tor_bin="/usr/sbin/tor"
+    )
+    assert "Description=TTP Managed Tor Instance" in content
+    assert "ExecStartPre=+/bin/mkdir -p" in content
+    assert "ExecStart=/usr/sbin/tor -f" in content
+    assert "LimitNOFILE=32768" in content

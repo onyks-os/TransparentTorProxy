@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
-import urllib.error
-import urllib.request
 
 import typer
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -61,6 +58,8 @@ def refresh_command() -> None:
 
 def status_command() -> None:
     """Show current TTP session status."""
+    import urllib.request
+
     try:
         with urllib.request.urlopen("https://api.ipify.org", timeout=3) as response:
             current_ip = response.read().decode("utf-8").strip()
@@ -177,29 +176,14 @@ def check_leak_command() -> None:
     has_leaks = False
     console.print(f"{_PREFIX} Running leak tests...")
 
-    # 1. Authoritative Tor exit check (stdlib only - no curl).
-    try:
-        req = urllib.request.Request(
-            "https://check.torproject.org/api/ip",
-            headers={"User-Agent": "ttp"},
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode())
-        if not data.get("IsTor", False):
-            has_leaks = True
-            if cli_state.verbose:
-                logger.debug(
-                    "check.torproject.org reports IsTor=False (payload keys: %s)",
-                    list(data.keys()),
-                )
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
+    # 1. Authoritative Tor exit check using resilient verify_tor()
+    from ttp import tor_control
+
+    is_tor, ip = tor_control.verify_tor()
+    if not is_tor or ip == "unknown":
         has_leaks = True
         if cli_state.verbose:
-            logger.debug("Tor API check failed: %s", e, exc_info=True)
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        has_leaks = True
-        if cli_state.verbose:
-            logger.debug("Tor API returned invalid JSON: %s", e, exc_info=True)
+            logger.debug("Tor verification failed: is_tor=%s, ip=%s", is_tor, ip)
 
     dig_bin = shutil.which("dig")
     if not dig_bin:
