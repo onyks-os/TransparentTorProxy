@@ -938,7 +938,7 @@ def test_start_no_ipv6_supported(
 # ---------------------------------------------------------------------------
 
 
-import click  # noqa: E402
+import typer  # noqa: E402
 from ttp.commands.start import (  # noqa: E402
     _parse_bypass_users_groups,
     _parse_bridges,
@@ -976,12 +976,12 @@ class TestParseBypassUsersGroups:
 
     @patch("pwd.getpwnam", side_effect=KeyError)
     def test_invalid_user_raises_exit(self, mock_pwnam):
-        with pytest.raises(click.exceptions.Exit):
+        with pytest.raises(typer.Exit):
             _parse_bypass_users_groups(["nonexistent"], None)
 
     @patch("grp.getgrnam", side_effect=KeyError)
     def test_invalid_group_raises_exit(self, mock_grpnam):
-        with pytest.raises(click.exceptions.Exit):
+        with pytest.raises(typer.Exit):
             _parse_bypass_users_groups(None, ["nosuchgroup"])
 
     def test_none_inputs_returns_empty_lists(self):
@@ -1012,11 +1012,11 @@ class TestParseBridges:
         assert use_bridges is True
 
     def test_use_bridges_without_lines_raises_exit(self):
-        with pytest.raises(click.exceptions.Exit):
+        with pytest.raises(typer.Exit):
             _parse_bridges(None, None, True)
 
     def test_invalid_bridge_format_raises_exit(self):
-        with pytest.raises(click.exceptions.Exit):
+        with pytest.raises(typer.Exit):
             _parse_bridges(None, ["notabridgeline"], False)
 
     def test_bridge_file_parsed_correctly(self, tmp_path):
@@ -1033,7 +1033,7 @@ class TestParseBridges:
 
     def test_missing_bridge_file_raises_exit(self, tmp_path):
         missing = tmp_path / "missing.txt"
-        with pytest.raises(click.exceptions.Exit):
+        with pytest.raises(typer.Exit):
             _parse_bridges(missing, None, False)
 
     def test_no_bridges_no_use_bridges_returns_empty(self):
@@ -1057,7 +1057,7 @@ class TestResolveExternalTorUid:
 
     @patch("pwd.getpwnam", side_effect=KeyError)
     def test_manual_override_nonexistent_user_raises_exit(self, mock_pwnam):
-        with pytest.raises(click.exceptions.Exit):
+        with pytest.raises(typer.Exit):
             _resolve_external_tor_uid(9041, "nosuchuser")
 
     @patch("pwd.getpwuid")
@@ -1092,5 +1092,5 @@ class TestResolveExternalTorUid:
     @patch("ttp.commands.start._get_uid_from_port", return_value=None)
     @patch("pwd.getpwnam", side_effect=KeyError)
     def test_all_steps_fail_raises_exit(self, mock_pwnam, mock_port):
-        with pytest.raises(click.exceptions.Exit):
+        with pytest.raises(typer.Exit):
             _resolve_external_tor_uid(9041, None)
