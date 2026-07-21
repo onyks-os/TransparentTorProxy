@@ -16,6 +16,6 @@ TTP uses Dependabot to monitor vulnerabilities in Python dependencies.
 Dependencies must have licenses compatible with the MIT license (TTP's license). Any conflicts must be resolved before merging.
 
 ## Before Each Release
-- Run `pip-audit` or `safety check` to verify that there are no unresolved vulnerabilities.
+- Run `pip-audit` to verify that there are no unresolved vulnerabilities.
 - Manually check Dependabot reports.
 - If there are unresolved critical or high vulnerabilities, **the release is blocked** until remediation.
