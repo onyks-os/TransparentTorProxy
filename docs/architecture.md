@@ -51,8 +51,10 @@ The project is divided into independent Python modules. Each module has a single
 | Module           | Area             | Responsibility                                                                   |
 | :--------------- | :--------------- | :------------------------------------------------------------------------------- |
 | `tor_detect.py`  | **Detection**    | Checks Tor presence, status, config, user, and SELinux state.                    |
-| `tor_install.py` | **Installation** | Installs Tor via PM, manages SELinux policies, configures `torrc`.               |
-| `firewall.py`    | **Firewall**     | Generates and applies `nftables` rules in isolated `inet ttp` table (Stateless). |
+| `tor_config.py`  | **Configuration**| Generates volatile `torrc` and manages Pluggable Transport mapping constants.     |
+| `tor_service.py` | **Service**      | Manages volatile `systemd` ttp-tor service unit generation and lifecycle control. |
+| `tor_install.py` | **Readiness**    | Verifies Tor readiness, enforces strict No Auto-Install policy, re-exports API. |
+| `firewall/`      | **Firewall**     | Package generating and applying `nftables` rules (`builder`, `runner`, `emergency`). |
 | `dns.py`         | **DNS**          | Manages DNS via Kernel-level `mount --bind` overlay.                             |
 | `dns_resolved.py`| **DNS**          | Manages systemd-resolved DNS redirection and caching drop-in configs.            |
 | `state.py`       | **State**        | Manages volatile lock file in `/run/ttp` and recovery logic (volatile).          |
@@ -68,8 +70,8 @@ The project is divided into independent Python modules. Each module has a single
 1. **cli**: Verifies root execution.
 2. **state**: Checks for existing/orphaned locks and verifies `tmpfs` free space (**pre-flight check**).
 3. **detect**: Verifies Tor installation and config.
-4. **install**: Installs/configures Tor if missing. Performs **SELinux optimization** on Fedora.
-5. **firewall**: Generates and atomically applies rules in isolated `inet ttp` table.
+4. **install**: Checks Tor readiness via `tor_install.py`. Enforces strict **No Auto-Install policy** (if Tor or required Pluggable Transports are missing, displays distro package guidance and official doc URLs, then exits with code 0). Performs **SELinux optimization** on Fedora.
+5. **firewall**: Generates and atomically applies rules in isolated `inet ttp` table via `ttp/firewall/`.
 6. **dns**: Clears any stale overlays (idempotency guard), then modifies active interface DNS using `mount --bind` overlay on `/etc/resolv.conf`.
 7. **state**: Initializes volatile runtime in `/run/ttp` and writes lock file.
 8. **cli**: Waits for Tor bootstrap via ControlSocket, verifies IP.
@@ -85,7 +87,7 @@ When started in Bring Your Own Daemon (BYOD) mode, TTP delegates Tor lifecycle m
    * Override via `--tor-uid`.
    * Parsing `/proc/net/tcp` and `/proc/net/tcp6` for socket owner of `transport_port` with state `0A` (TCP_LISTEN).
    * Checking for system users `tor` or `debian-tor` in `/etc/passwd`.
-4. **firewall**: Generates and atomically applies rules using the resolved Tor UID.
+4. **firewall**: Generates and atomically applies rules using the resolved Tor UID via `ttp/firewall/`.
 5. **dns**: Clears any stale overlays, then modifies active interface DNS using `mount --bind` overlay on `/etc/resolv.conf`.
 6. **state**: Writes lock file storing `external_daemon=True`.
 7. **cli**: Verifies Tor routing using local endpoints.
@@ -123,21 +125,21 @@ Module functionality:
 * SELinux? (Checks if OS is Fedora-family and if SELinux is `Enforcing`)
 * **Firewalld?** (Detects if `firewalld` is active to warn about potential `nftables` conflicts).
 
-### 3.2 `tor_install.py`
+### 3.2 `tor_install.py` / `tor_config.py` / `tor_service.py`
 
-Intervenes if detection fails or system needs optimization.
+Orchestrates Tor readiness and native systemd service configuration. Enforces a strict **No Auto-Install policy**: TTP will never attempt or suggest automated package installation.
 
-1. Detects package manager (`apt-get`, `pacman`, `dnf`, `zypper`).
-2. Installs `tor`.
-3. **SELinux Optimization**: If on Fedora and enforcing, compiles the custom SELinux policy on-the-fly. The policy source (`.te`) is stored as an internal package resource and accessed via `importlib.resources`.
-4. **Tor Bridges & Pluggable Transports**: If bridges are enabled, verifies the presence of Pluggable Transport binaries (`obfs4proxy`, `snowflake-client`) in the system `PATH`. If missing, automatically installs them via the detected system package manager.
-5. Generates a volatile `torrc` in `/run/tor/ttp/torrc`, appending `UseBridges 1`, `ClientTransportPlugin` executable paths, and target `Bridge` lines if configured.
-6. Writes a dedicated `ttp-tor.service` unit to `/run/systemd/system/` (volatile, evaporates on reboot).
-7. Starts the TTP Tor instance via `systemctl start ttp-tor`.
+1. **`tor_install.py`**: Verifies Tor presence and required Pluggable Transport binaries. If missing, displays distro package guidance (`apt`, `dnf`, `pacman`, `zypper`), official Tor Project documentation links, and exits with status code `0`.
+2. **SELinux Optimization**: If on Fedora and enforcing, compiles the custom SELinux policy on-the-fly via `selinux.py`. The policy source (`.te`) is stored as an internal package resource and accessed via `importlib.resources`.
+3. **`tor_config.py`**: Generates a volatile `torrc` in `/run/tor/ttp/torrc`, appending `UseBridges 1`, `ClientTransportPlugin` executable paths, and target `Bridge` lines if configured.
+4. **`tor_service.py`**: Writes a dedicated `ttp-tor.service` unit to `/run/systemd/system/` (volatile, evaporates on reboot) and manages start/stop/reload calls via `systemctl`.
 
-### 3.3 `firewall.py`
+### 3.3 `firewall/` Package
 
-Generates rules applied atomically via `nft -f` into the dedicated `inet ttp` table.
+Generates rules applied atomically via `nft -f` into the dedicated `inet ttp` table. Structured into a specialized package:
+* `builder.py`: Pure ruleset string generator (`_build_ruleset`, `_has_cgroup_bypass_support`).
+* `runner.py`: Low-level `nft` execution engine (`apply_rules`, `destroy_rules`, temporary ruleset file management).
+* `emergency.py`: Lockdown and killswitch mechanisms (`apply_teardown_lockdown`, `apply_active_socket_slaughter`, `apply_emergency_killswitch`).
 
 **Design principles:**
 

@@ -4,7 +4,7 @@ This document outlines the **realistic, near-term** development plan for Transpa
 
 ---
 
-## Current Status (v0.4.6)
+## Current Status (v0.4.7)
 
 Delivered:
 - Volatile core, stateless nftables, DNS overlay + systemd-resolved bypass

@@ -17,17 +17,20 @@ from ttp.exceptions import FirewallError
 
 @pytest.fixture(autouse=True)
 def mock_cgroup_support():
-    with patch("ttp.firewall._has_cgroup_bypass_support", return_value=True):
+    with (
+        patch("ttp.firewall.runner._has_cgroup_bypass_support", return_value=True),
+        patch("ttp.firewall.builder._has_cgroup_bypass_support", return_value=True),
+    ):
         yield
 
 
 # apply_rules
 
 
-@patch("ttp.firewall.RULES_TEMP_PATH")
-@patch("ttp.firewall.LOCK_DIR")
-@patch("ttp.firewall.pwd.getpwnam")
-@patch("ttp.firewall.subprocess.run")
+@patch("ttp.firewall.runner.RULES_TEMP_PATH")
+@patch("ttp.firewall.runner.LOCK_DIR")
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner.subprocess.run")
 def test_apply_rules_orchestration(mock_run, mock_pwd, mock_lock_dir, mock_rules_path):
     """apply_rules must create, flush and then inject the ruleset."""
     mock_run.return_value = MagicMock(returncode=0)
@@ -47,10 +50,10 @@ def test_apply_rules_orchestration(mock_run, mock_pwd, mock_lock_dir, mock_rules
     assert nft_f_call[0][1] == "-f"
 
 
-@patch("ttp.firewall.RULES_TEMP_PATH")
-@patch("ttp.firewall.LOCK_DIR")
-@patch("ttp.firewall.pwd.getpwnam")
-@patch("ttp.firewall.subprocess.run")
+@patch("ttp.firewall.runner.RULES_TEMP_PATH")
+@patch("ttp.firewall.runner.LOCK_DIR")
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner.subprocess.run")
 def test_apply_rules_failure_triggers_destroy(
     mock_run, mock_pwd, mock_lock_dir, mock_rules_path
 ):
@@ -74,9 +77,9 @@ def test_apply_rules_failure_triggers_destroy(
     assert any("destroy" in str(c) for c in mock_run.call_args_list)
 
 
-@patch("ttp.firewall.pwd.getpwnam")
-@patch("ttp.firewall._run_nft_string")
-@patch("ttp.firewall._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=False)
 def test_ruleset_logic_content(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd):
     """Verify the generated ruleset string contains critical safety rules in order."""
@@ -148,9 +151,9 @@ def test_ruleset_logic_content(mock_ipv6, mock_run_nft, mock_run_string, mock_pw
     assert clean_filter.endswith("reject")
 
 
-@patch("ttp.firewall.pwd.getpwnam")
-@patch("ttp.firewall._run_nft_string")
-@patch("ttp.firewall._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
 def test_ruleset_logic_content_ipv6(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd):
     """Verify the generated ruleset string contains IPv6 redirection rules."""
@@ -180,9 +183,9 @@ def test_ruleset_logic_content_ipv6(mock_ipv6, mock_run_nft, mock_run_string, mo
     )
 
 
-@patch("ttp.firewall.pwd.getpwnam")
-@patch("ttp.firewall._run_nft_string")
-@patch("ttp.firewall._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=False)
 def test_ruleset_allow_root(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd):
     """Verify that allow_root=True injects meta skuid 0 accept in filter_out."""
@@ -194,9 +197,9 @@ def test_ruleset_allow_root(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd):
     assert "meta skuid 0 accept" in filter_block
 
 
-@patch("ttp.firewall.pwd.getpwnam")
-@patch("ttp.firewall._run_nft_string")
-@patch("ttp.firewall._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=False)
 def test_ruleset_no_lan_bypass(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd):
     """Verify that lan_bypass=False removes local subnet exemptions."""
@@ -210,9 +213,9 @@ def test_ruleset_no_lan_bypass(mock_ipv6, mock_run_nft, mock_run_string, mock_pw
     assert lan_bypass_rule not in ruleset
 
 
-@patch("ttp.firewall.pwd.getpwnam")
-@patch("ttp.firewall._run_nft_string")
-@patch("ttp.firewall._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=False)
 def test_ruleset_custom_ports(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd):
     """Verify that custom ports are correctly injected in the ruleset."""
@@ -232,8 +235,8 @@ def test_ruleset_custom_ports(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd
 # destroy_rules
 
 
-@patch("ttp.firewall.RULES_TEMP_PATH")
-@patch("ttp.firewall.subprocess.run")
+@patch("ttp.firewall.runner.RULES_TEMP_PATH")
+@patch("ttp.firewall.runner.subprocess.run")
 def test_destroy_rules(mock_run, mock_rules_path):
     """destroy_rules calls 'nft flush' and then 'nft destroy table inet ttp'."""
     mock_run.return_value = MagicMock(returncode=0)
@@ -247,7 +250,7 @@ def test_destroy_rules(mock_run, mock_rules_path):
     mock_rules_path.unlink.assert_called_once_with(missing_ok=True)
 
 
-@patch("ttp.firewall.subprocess.run")
+@patch("ttp.firewall.runner.subprocess.run")
 def test_destroy_rules_idempotent(mock_run):
     """destroy_rules does not raise if nft returns non-zero (table missing)."""
     mock_run.return_value = MagicMock(returncode=1, stderr="Error: No such file")
@@ -257,9 +260,9 @@ def test_destroy_rules_idempotent(mock_run):
     assert mock_run.called
 
 
-@patch("ttp.firewall.pwd.getpwnam")
-@patch("ttp.firewall._run_nft_string")
-@patch("ttp.firewall._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=False)
 def test_ruleset_bypass_rules(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd):
     """Verify that generating rules with bypass_uids and bypass_gids adds skuid/skgid rules."""
@@ -285,9 +288,9 @@ def test_ruleset_bypass_rules(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd
     assert "meta skgid 2001 accept" in filter_block
 
 
-@patch("ttp.firewall.pwd.getpwnam")
-@patch("ttp.firewall._run_nft_string")
-@patch("ttp.firewall._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
 def test_ruleset_logic_disable_ipv6(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd):
     """Verify that disable_ipv6=True drops all IPv6 and avoids IPv6 redirects even if system supports it."""
@@ -306,7 +309,7 @@ def test_ruleset_logic_disable_ipv6(mock_ipv6, mock_run_nft, mock_run_string, mo
     assert "ip6 daddr { fc00::/7, fe80::/10 } accept" not in ruleset
 
 
-@patch("ttp.firewall._run_nft")
+@patch("ttp.firewall.emergency._run_nft")
 def test_apply_teardown_lockdown(mock_run_nft):
     """Verify that apply_teardown_lockdown constructs and executes the correct nft command."""
     from ttp.firewall import apply_teardown_lockdown
@@ -350,7 +353,7 @@ def test_apply_teardown_lockdown(mock_run_nft):
     )
 
 
-@patch("ttp.firewall._run_nft")
+@patch("ttp.firewall.emergency._run_nft")
 def test_apply_active_socket_slaughter(mock_run_nft):
     """Verify that apply_active_socket_slaughter constructs and executes the correct nft reject rules."""
     from ttp.firewall import apply_active_socket_slaughter
@@ -388,9 +391,9 @@ def test_apply_active_socket_slaughter(mock_run_nft):
     ]
 
 
-@patch("ttp.firewall.pwd.getpwnam")
-@patch("ttp.firewall._run_nft_string")
-@patch("ttp.firewall._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
 def test_ruleset_systemd_resolved_rules(
     mock_ipv6, mock_run_nft, mock_run_string, mock_pwd
@@ -424,9 +427,9 @@ def test_ruleset_systemd_resolved_rules(
     assert "meta skuid 105 ip6 daddr != ::1 drop" not in ruleset_no_ipv6
 
 
-@patch("ttp.firewall.pwd.getpwnam")
-@patch("ttp.firewall._run_nft_string")
-@patch("ttp.firewall._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
 def test_ruleset_systemd_resolved_rules_missing_user(
     mock_ipv6, mock_run_nft, mock_run_string, mock_pwd

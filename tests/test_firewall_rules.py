@@ -10,16 +10,19 @@ from ttp.firewall import apply_rules
 
 @pytest.fixture(autouse=True)
 def mock_cgroup_support():
-    with patch("ttp.firewall._has_cgroup_bypass_support", return_value=True):
+    with (
+        patch("ttp.firewall.runner._has_cgroup_bypass_support", return_value=True),
+        patch("ttp.firewall.builder._has_cgroup_bypass_support", return_value=True),
+    ):
         yield
 
 
 @pytest.fixture
 def mocked_firewall():
     with (
-        patch("ttp.firewall.pwd.getpwnam") as mock_pwd,
-        patch("ttp.firewall._run_nft_string") as mock_run_string,
-        patch("ttp.firewall._run_nft") as mock_run_nft,
+        patch("ttp.firewall.runner.pwd.getpwnam") as mock_pwd,
+        patch("ttp.firewall.runner._run_nft_string") as mock_run_string,
+        patch("ttp.firewall.runner._run_nft") as mock_run_nft,
         patch("ttp.tor_detect.is_ipv6_supported", return_value=False),
     ):
         mock_pwd.return_value = MagicMock(pw_uid=110)
@@ -90,9 +93,9 @@ def test_prerouting_chain_exists(mocked_firewall):
 def test_filter_out_chain_ipv6_supported():
     """Verify that filter chain includes loopback and LAN bypass IPv6 and drops IPv6-only block when supported."""
     with (
-        patch("ttp.firewall.pwd.getpwnam") as mock_pwd,
-        patch("ttp.firewall._run_nft_string") as mock_run_string,
-        patch("ttp.firewall._run_nft") as _mock_run_nft,
+        patch("ttp.firewall.runner.pwd.getpwnam") as mock_pwd,
+        patch("ttp.firewall.runner._run_nft_string") as mock_run_string,
+        patch("ttp.firewall.runner._run_nft") as _mock_run_nft,
         patch("ttp.tor_detect.is_ipv6_supported", return_value=True),
     ):
         mock_pwd.return_value = MagicMock(pw_uid=110)

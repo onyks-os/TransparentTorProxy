@@ -65,9 +65,9 @@ By participating in this project, you agree to maintain a professional and respe
    ```
 
    > [!NOTE]
-   > To run the firewall ruleset validation tests (`tests/test_nse_rules.py`), you must also install:
+   > To run the firewall ruleset validation tests (`tests/test_nse_rules.py`), you must also install the `nse` extras:
    > ```bash
-   > pip install network-sandbox-engine>=1.1.0 pyroute2
+   > pip install -e ".[nse]"
    > ```
    > `network-sandbox-engine` provides the namespace/nftables orchestration API. `pyroute2` enables netlink-based route setup inside namespaces without requiring `/sys` mount permissions (needed for Docker compatibility).
 
@@ -94,7 +94,7 @@ All contributions must conform to the following standards before being submitted
 When writing code for TTP, please adhere to these core principles:
 
 1. **Single Responsibility Principle (SRP)**: Each module should do one thing. Keep UI logic (`rich`/`typer`) in `cli.py` and system logic in dedicated modules.
-2. **No UI Coupling**: Modules like `tor_control.py` or `firewall.py` should NOT import `rich` or `typer`. Use callbacks or return raw data.
+2. **No UI Coupling**: Modules like `tor_control.py` or `ttp/firewall/` should NOT import `rich` or `typer`. Use callbacks or return raw data.
 3. **Atomic Operations**: System changes (like firewall rules) must be atomic. We use `nft -f` to ensure the firewall is never in a half-configured state.
 4. **Crash-Safety**: Always consider what happens if the power goes out mid-operation. Use the lock file system in `state.py` to track changes that need rolling back.
 5. **TDD (Test Driven Development)**: Every new feature or bug fix should include a corresponding unit test in `tests/`.

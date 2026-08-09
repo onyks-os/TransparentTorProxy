@@ -85,7 +85,7 @@ TTP is designed to achieve the following security properties, in order of priori
 
 ## 3. Threat Model (STRIDE)
 
-### 3.1 `firewall.py` — nftables Rules
+### 3.1 `ttp/firewall/` Package — nftables Rules
 
 | Threat                                            | STRIDE Category        | Description                                                                                    | Mitigation                                                                                                                              | Residual Risk                                                   |
 | :------------------------------------------------ | :--------------------- | :--------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------- |
@@ -235,7 +235,7 @@ Dependency CVE scanning, Dependabot configuration, and the remediation SLA are d
 ### 5.3 Trusted Code Paths
 
 - All commits to `main` require a Pull Request with maintainer review.
-- Security-critical files (`firewall.py`, `dns.py`, `tor_control.py`, `selinux.py`, `watchdog/`, `.github/workflows/`) require explicit sign-off from the Project Lead (see [MAINTAINERS.md](../MAINTAINERS.md)).
+- Security-critical files (`ttp/firewall/`, `dns.py`, `tor_control.py`, `selinux.py`, `watchdog/`, `.github/workflows/`) require explicit sign-off from the Project Lead (see [MAINTAINERS.md](../MAINTAINERS.md)).
 - All commits must include a `Signed-off-by` header (DCO) — see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ---

@@ -1,28 +1,39 @@
 # Copyright (c) 2026 onyks-os
 # SPDX-License-Identifier: MIT
 
-"""Tor installation and native service management.
+"""Tor readiness checking and orchestration module.
 
-This module handles Tor binary detection, package installation,
-runtime torrc generation, and service lifecycle management.
-Tor is managed via the OS native service manager (systemctl),
-not as a direct subprocess.
-
-OS-specific optimizations such as SELinux policy management are also
-handled here.
+This module enforces a strict NO AUTO-INSTALL policy. TTP will never attempt
+to install system packages automatically. If Tor or required pluggable transport
+helpers are missing, TTP displays distro-specific package guidance and official
+documentation links, then exits gracefully with status code 0.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import shutil
-import subprocess
-from pathlib import Path
 from typing import Any, Optional
 
-from ttp.exceptions import TorError
+import typer
+from rich.panel import Panel
+
+from ttp.tor_config import (
+    PT_MAP as PT_MAP,
+    TOR_CACHE_DIR as TOR_CACHE_DIR,
+    TOR_RUNTIME_DIR as TOR_RUNTIME_DIR,
+    _build_torrc_content as _build_torrc_content,
+    generate_torrc as generate_torrc,
+)
 from ttp.tor_detect import detect_tor
+from ttp.tor_service import (
+    TTP_SERVICE_NAME as TTP_SERVICE_NAME,
+    TTP_SERVICE_PATH as TTP_SERVICE_PATH,
+    _build_service_unit_content as _build_service_unit_content,
+    _write_service_unit as _write_service_unit,
+    start_tor_service as start_tor_service,
+    stop_tor_service as stop_tor_service,
+)
 from ttp.selinux import (
     setup_selinux_if_needed as setup_selinux_if_needed,
     label_ports_selinux as label_ports_selinux,
@@ -30,354 +41,73 @@ from ttp.selinux import (
     remove_selinux_module as remove_selinux_module,
 )
 
-# Runtime paths (volatile, stored on tmpfs)
-TOR_RUNTIME_DIR = Path("/run/tor/ttp")
-
-# Persistent cache for Tor Entry Guards. This is the only path
-# that survives reboots, reducing bootstrap from ~30s to ~3s.
-TOR_CACHE_DIR = Path("/var/lib/tor/ttp")
-
-# Volatile systemd unit for TTP's dedicated Tor instance.
-# Lives in /run/ so it disappears on reboot.
-TTP_SERVICE_NAME = "ttp-tor"
-TTP_SERVICE_PATH = Path(f"/run/systemd/system/{TTP_SERVICE_NAME}.service")
-
-_PKG_COMMANDS = ["apt-get", "dnf", "pacman", "zypper"]
-
 logger = logging.getLogger("ttp")
 
-PT_MAP = {
-    "obfs4": {
-        "binary": "obfs4proxy",
-        "apt-get": "obfs4proxy",
-        "dnf": "obfs4",
-        "pacman": "obfs4proxy",
-        "zypper": "obfs4proxy",
-    },
-    "meek_lite": {
-        "binary": "obfs4proxy",
-        "apt-get": "obfs4proxy",
-        "dnf": "obfs4",
-        "pacman": "obfs4proxy",
-        "zypper": "obfs4proxy",
-    },
-    "snowflake": {
-        "binary": "snowflake-client",
-        "apt-get": "snowflake-client",
-        "dnf": "snowflake-client",
-        "pacman": "snowflake-client",
-        "zypper": "snowflake-client",
-    },
-}
+
+def _get_distro_install_command(
+    pkg_debian: str,
+    pkg_fedora: str,
+    pkg_arch: str = "",
+    pkg_suse: str = "",
+) -> str:
+    """Return the recommended package installation command for the current system."""
+    if shutil.which("apt-get") or shutil.which("apt"):
+        return f"sudo apt install {pkg_debian}"
+    elif shutil.which("dnf"):
+        return f"sudo dnf install {pkg_fedora}"
+    elif shutil.which("pacman"):
+        arch_pkg = pkg_arch or pkg_debian
+        return f"sudo pacman -S {arch_pkg}"
+    elif shutil.which("zypper"):
+        suse_pkg = pkg_suse or pkg_debian
+        return f"sudo zypper install {suse_pkg}"
+    return f"sudo apt install {pkg_debian}   # or: sudo dnf install {pkg_fedora}"
 
 
 def ensure_pluggable_transports(required_transports: list[str]) -> None:
     """Verify that required pluggable transport helper binaries are installed.
 
-    If any binary is missing, raise a TorError instructing the user to install
-    it manually.
+    If any binary is missing, display distro package guidance and official
+    documentation links, then exit gracefully with status code 0.
     """
     for pt in required_transports:
         pt = pt.lower()
         if pt not in PT_MAP:
-            raise TorError(f"Unsupported pluggable transport: '{pt}'")
+            logger.error("Unsupported pluggable transport: '%s'", pt)
+            from ttp.commands._common import console, _PREFIX
+
+            console.print(
+                f"{_PREFIX} [bold red]Unsupported pluggable transport: '{pt}'[/bold red]"
+            )
+            raise typer.Exit(code=0)
 
         pt_info = PT_MAP[pt]
         binary = pt_info["binary"]
 
-        # Check if binary is in PATH
         if not shutil.which(binary):
-            raise TorError(
-                f"Pluggable transport helper binary '{binary}' (required for '{pt}') is missing. "
-                f"Please install the appropriate package (e.g. '{binary}') manually."
+            cmd = _get_distro_install_command(
+                pkg_debian=pt_info["apt-get"],
+                pkg_fedora=pt_info["dnf"],
+                pkg_arch=pt_info["pacman"],
+                pkg_suse=pt_info["zypper"],
             )
+            doc_url = "https://tb-manual.torproject.org/bridges/"
 
+            msg = (
+                f"[bold red]Pluggable transport helper binary '{binary}' (required for '{pt}') is missing.[/bold red]\n\n"
+                f"[bold cyan]Recommended installation command:[/bold cyan]\n"
+                f"  [bold yellow]{cmd}[/bold yellow]\n\n"
+                f"[bold cyan]Official Tor Bridges Documentation:[/bold cyan]\n"
+                f"  {doc_url}"
+            )
+            from ttp.commands._common import console
 
-# Torrc generation
-
-
-def _build_torrc_content(
-    tor_user: str,
-    transport_port: int,
-    dns_port: int,
-    block_doh: bool,
-    use_bridges: bool,
-    bridges: list[str] | None,
-    ipv6_avail: bool,
-) -> str:
-    """Build and return the string content for the volatile torrc file.
-
-    This is a **pure function** with no side-effects, used to generate
-    the torrc configuration dynamically based on the input options.
-    """
-    lines = [
-        "# Generated by TTP: runtime volatile config",
-        "VirtualAddrNetworkIPv4 10.192.0.0/10",
-        "AutomapHostsOnResolve 1",
-        f"TransPort {transport_port}",
-        f"DNSPort {dns_port}",
-        "SocksPort 0",
-        "ControlSocket /run/tor/ttp/control.sock",
-        "ControlSocketsGroupWritable 1",
-        "CookieAuthentication 1",
-        f"CookieAuthFile {TOR_RUNTIME_DIR / 'auth_cookie'}",
-        "CookieAuthFileGroupReadable 1",
-        "ClientUseIPv4 1",
-    ]
-
-    if ipv6_avail:
-        lines.extend(
-            [
-                f"TransPort [::1]:{transport_port}",
-                f"DNSPort [::1]:{dns_port}",
-                "ClientUseIPv6 1",
-                "VirtualAddrNetworkIPv6 fc00::/7",
-            ]
-        )
-    else:
-        lines.append("ClientUseIPv6 0")
-
-    lines.extend(
-        [
-            f"DataDirectory {TOR_CACHE_DIR}",
-        ]
-    )
-    if block_doh:
-        doh_domains = [
-            "use-application-dns.net",  # Firefox canary
-            "cloudflare-dns.com",
-            "dns.google",
-            "dns.quad9.net",
-            "doh.opendns.com",
-            "dns.adguard.com",
-        ]
-        for domain in doh_domains:
-            lines.append(f"MapAddress {domain} 0.0.0.0")
-
-    if use_bridges and bridges:
-        lines.append("UseBridges 1")
-        required_transports = []
-        for b in bridges:
-            parts = b.split()
-            if parts:
-                first_word = parts[0].lower()
-                if first_word in PT_MAP:
-                    if first_word not in required_transports:
-                        required_transports.append(first_word)
-
-        for pt in required_transports:
-            binary = PT_MAP[pt]["binary"]
-            binary_path = shutil.which(binary)
-            if binary_path:
-                lines.append(f"ClientTransportPlugin {pt} exec {binary_path}")
-            else:
-                lines.append(f"ClientTransportPlugin {pt} exec /usr/bin/{binary}")
-
-        for b in bridges:
-            lines.append(f"Bridge {b}")
-
-    if tor_user != "root":
-        lines.append(f"User {tor_user}")
-
-    return "\n".join(lines) + "\n"
-
-
-def generate_torrc(
-    tor_user: str,
-    transport_port: int = 9041,
-    dns_port: int = 9054,
-    block_doh: bool = True,
-    use_bridges: bool = False,
-    bridges: Optional[list[str]] = None,
-    disable_ipv6: bool = False,
-) -> Path:
-    """Generate a volatile ``torrc`` in ``/run/tor/ttp/torrc``.
-
-    The ``DataDirectory`` points to the persistent cache so that
-    Entry Guards are preserved across runs for fast bootstrap.
-    """
-    TOR_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        shutil.chown(TOR_RUNTIME_DIR, user=tor_user, group=tor_user)
-    except (KeyError, ValueError, OSError):
-        pass
-    os.chmod(TOR_RUNTIME_DIR, 0o700)
-
-    # Ensure parent directory of cache is owned by the Tor user and has correct permissions
-    parent_dir = TOR_CACHE_DIR.parent
-    if parent_dir.exists():
-        try:
-            shutil.chown(parent_dir, user=tor_user, group=tor_user)
-            os.chmod(parent_dir, 0o700)
-        except (KeyError, ValueError, OSError):
-            pass
-
-    # Persistent cache directory must be fixed on every run
-    data_dir = str(TOR_CACHE_DIR)
-    os.makedirs(data_dir, exist_ok=True)
-    try:
-        shutil.chown(data_dir, user=tor_user)
-    except (KeyError, ValueError, OSError):
-        pass
-    os.chmod(data_dir, 0o700)
-
-    from ttp.tor_detect import is_ipv6_supported
-
-    ipv6_avail = is_ipv6_supported() and not disable_ipv6
-
-    torrc_content = _build_torrc_content(
-        tor_user=tor_user,
-        transport_port=transport_port,
-        dns_port=dns_port,
-        block_doh=block_doh,
-        use_bridges=use_bridges,
-        bridges=bridges,
-        ipv6_avail=ipv6_avail,
-    )
-
-    torrc_path = TOR_RUNTIME_DIR / "torrc"
-    torrc_path.write_text(torrc_content, encoding="utf-8")
-    try:
-        os.chmod(torrc_path, 0o600)
-    except OSError:
-        pass
-    logger.info("Generated runtime torrc at %s", torrc_path)
-    return torrc_path
-
-
-# Dedicated ttp-tor systemd service
-
-
-def _build_service_unit_content(tor_user: str, tor_bin: str) -> str:
-    """Build and return the volatile systemd ttp-tor.service unit content.
-
-    This is a **pure function** with no side-effects.
-    """
-    return f"""\
-[Unit]
-Description=TTP Managed Tor Instance
-After=network.target
-
-[Service]
-Type=simple
-# Ensure directories exist and have correct permissions via privileged ExecStartPre
-ExecStartPre=+/bin/mkdir -p {TOR_CACHE_DIR} {TOR_RUNTIME_DIR}
-ExecStartPre=+/bin/chown -R {tor_user}:{tor_user} {TOR_CACHE_DIR} {TOR_RUNTIME_DIR}
-ExecStartPre=+/bin/chown {tor_user}:{tor_user} {TOR_CACHE_DIR.parent}
-ExecStartPre=+/bin/chmod 0700 {TOR_CACHE_DIR.parent}
-
-ExecStart={tor_bin} -f {TOR_RUNTIME_DIR / "torrc"} --RunAsDaemon 0
-Restart=no
-TimeoutStartSec=120
-LimitNOFILE=32768
-"""
-
-
-def _write_service_unit(tor_user: str) -> None:
-    """Write a volatile ``ttp-tor.service`` unit to ``/run/systemd/system/``.
-
-    This creates a dedicated Tor instance for TTP.
-    """
-    tor_bin = shutil.which("tor") or "/usr/bin/tor"
-    unit = _build_service_unit_content(tor_user, tor_bin)
-    TTP_SERVICE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TTP_SERVICE_PATH.write_text(unit, encoding="utf-8")
-    logger.debug("Wrote volatile service unit to %s", TTP_SERVICE_PATH)
-
-
-def start_tor_service(
-    tor_user: str,
-    transport_port: int = 9041,
-    dns_port: int = 9054,
-    block_doh: bool = True,
-    use_bridges: bool = False,
-    bridges: Optional[list[str]] = None,
-    disable_ipv6: bool = False,
-) -> None:
-    """Generate the runtime torrc and start a dedicated TTP Tor service.
-
-    1. Generate volatile torrc in ``/run/tor/ttp/torrc``.
-    2. Write a volatile ``ttp-tor.service`` unit to ``/run/systemd/system/``.
-    3. Reload systemd and start the service.
-
-    This approach avoids hijacking the system's ``tor.service`` (which
-    may have restrictive sandboxing via ``ProtectSystem``/``ReadWritePaths``
-    that blocks access to TTP paths).
-
-    Parameters
-    ----------
-    tor_user:
-        System user Tor should run as.
-    transport_port:
-        The customized or default TransPort port.
-    dns_port:
-        The customized or default DNSPort port.
-    block_doh:
-        If True, block DNS-over-HTTPS via canary mapping.
-    use_bridges:
-        True to globally enable Tor bridges.
-    bridges:
-        List of bridge lines to append.
-    """
-    generate_torrc(
-        tor_user,
-        transport_port=transport_port,
-        dns_port=dns_port,
-        block_doh=block_doh,
-        use_bridges=use_bridges,
-        bridges=bridges,
-        disable_ipv6=disable_ipv6,
-    )
-    label_ports_selinux(transport_port, dns_port)
-    _write_service_unit(tor_user)
-
-    try:
-        subprocess.run(
-            ["systemctl", "daemon-reload"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        subprocess.run(
-            ["systemctl", "restart", TTP_SERVICE_NAME],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as e:
-        raise TorError(
-            f"Failed to start '{TTP_SERVICE_NAME}': {e.stderr.strip()}"
-        ) from e
-    logger.info("TTP Tor service started with dedicated config.")
-
-
-def stop_tor_service() -> None:
-    """Stop the dedicated TTP Tor service and remove the volatile unit.
-
-    Uses ``check=False`` since the service may already be stopped
-    (idempotent).
-    """
-    subprocess.run(
-        ["systemctl", "stop", TTP_SERVICE_NAME],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    # Clean up the volatile unit
-    TTP_SERVICE_PATH.unlink(missing_ok=True)
-    subprocess.run(
-        ["systemctl", "daemon-reload"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    logger.info("TTP Tor service stopped and unit removed.")
-
-
-# SELinux policy management
-
-
-# Main entry point
+            console.print(
+                Panel(
+                    msg, title="[bold red]Missing Dependency[/bold red]", expand=False
+                )
+            )
+            raise typer.Exit(code=0)
 
 
 def ensure_tor_ready(
@@ -390,15 +120,30 @@ def ensure_tor_ready(
 ) -> dict[str, Any]:
     """Ensure Tor is installed and start it via the OS native service.
 
-    Returns a dictionary with detection info. The Tor service is
-    managed by systemd and survives the exit of the TTP process.
+    Enforces strict NO AUTO-INSTALL policy. If Tor or required helpers are missing,
+    displays installation guidance and exits gracefully with status code 0.
     """
     info = detect_tor(transport_port=transport_port, dns_port=dns_port)
 
     if not info["is_installed"]:
-        raise TorError(
-            "Tor is not installed. Please install the Tor daemon manually (e.g. 'apt install tor' or 'dnf install tor')."
+        cmd = _get_distro_install_command(pkg_debian="tor", pkg_fedora="tor")
+        doc_url = "https://community.torproject.org/onion-services/setup/install/"
+
+        msg = (
+            "[bold red]Tor daemon ('tor') is not installed on this system.[/bold red]\n\n"
+            "[bold cyan]Recommended installation command:[/bold cyan]\n"
+            f"  [bold yellow]{cmd}[/bold yellow]\n\n"
+            "[bold cyan]Official Tor Project Installation Guide:[/bold cyan]\n"
+            f"  {doc_url}"
         )
+        from ttp.commands._common import console
+
+        console.print(
+            Panel(
+                msg, title="[bold red]Missing Tor Dependency[/bold red]", expand=False
+            )
+        )
+        raise typer.Exit(code=0)
 
     tor_user = info.get("tor_user", "debian-tor")
 

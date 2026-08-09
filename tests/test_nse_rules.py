@@ -144,9 +144,9 @@ def _exec_in_ns(
 def ttp_ruleset() -> str:
     """Generates TTP's standard ruleset by capturing it from apply_rules mock."""
     with (
-        patch("ttp.firewall._run_nft"),
-        patch("ttp.firewall._run_nft_string") as mock_run_nft_string,
-        patch("ttp.firewall.pwd.getpwnam") as mock_getpwnam,
+        patch("ttp.firewall.runner._run_nft"),
+        patch("ttp.firewall.runner._run_nft_string") as mock_run_nft_string,
+        patch("ttp.firewall.runner.pwd.getpwnam") as mock_getpwnam,
     ):
         # Mock Tor user UID to be 110
         mock_getpwnam.return_value = MagicMock(pw_uid=110)

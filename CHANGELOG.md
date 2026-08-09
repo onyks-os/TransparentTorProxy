@@ -10,6 +10,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.7] - 2026-08-05
+
+### Added
+
+- **Strict No Auto-Install Policy**: Project-wide policy enforcement prohibiting automatic package installations. If required binaries (`tor`, `obfs4proxy`, `snowflake-client`) are missing, TTP displays distro-aware package installation guidance (`apt`, `dnf`, `pacman`, `zypper`), official Tor Project documentation URLs, and gracefully exits with status code `0`.
+- **`tor_config` & `tor_service` Submodules**: Refactored `tor_install.py` by extracting pure `torrc` configuration generation into `ttp/tor_config.py` and volatile `systemd` service lifecycle management into `ttp/tor_service.py`.
+- **`ttp/firewall/` Package Architecture**: Converted `firewall.py` into a specialized package `ttp/firewall/` composed of `builder.py` (pure ruleset string generator), `runner.py` (`nft` execution engine & atomic cleanup), and `emergency.py` (lockdown, socket slaughter, emergency killswitch).
+
 ## [0.4.6] - 2026-06-25
 
 ### Added
