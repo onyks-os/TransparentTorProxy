@@ -20,6 +20,7 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.1.0",
+    "mypy>=1.10.0",
     "build>=1.0.0",
     "twine>=6.2.0",
     "bump-my-version>=1.4.1",
@@ -98,3 +99,59 @@ replace = "transparent-tor-proxy_{new_version}_all.deb"
 filename = "README.md"
 search = "transparent-tor-proxy-{current_version}-1"
 replace = "transparent-tor-proxy-{new_version}-1"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "F",     # pyflakes
+    "W",     # pycodestyle warnings
+    "I",     # isort (import sorting)
+    "B",     # flake8-bugbear (bug-prone patterns)
+    "UP",    # pyupgrade (modern Python syntax)
+    "SIM",   # flake8-simplify
+    "G",     # flake8-logging-format
+    "PIE",   # misc lints
+    "RUF",   # ruff-specific rules
+    "PERF",  # performance anti-patterns
+]
+ignore = [
+    "E501",    # line-too-long (handled by formatter)
+    "B008",    # function-call-in-default-argument (typer pattern)
+    "B904",    # raise-without-from-inside-except (CLI exit pattern)
+    "UP045",   # non-pep604-annotation-optional (wait for type annotation pass)
+    "SIM105",  # suppressible-exception (readability tradeoff)
+    "SIM117",  # multiple-with-statements (nested with in tests)
+    "RUF012",  # mutable-class-default (CLIState is intentional)
+    "PERF203", # try-except in loop (zero-cost in Python 3.11+)
+    "PERF401", # list-extend-in-loop (readability in string builders)
+    "G004",    # logging f-strings (readability preference)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ttp"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "ttp.firewall.*"
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "ttp.state"
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "ttp.tor_config"
+disallow_untyped_defs = true
+

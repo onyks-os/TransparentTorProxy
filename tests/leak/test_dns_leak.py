@@ -10,6 +10,7 @@ are either transparently intercepted by TTP (via Tor's DNSPort) or completely bl
 from __future__ import annotations
 
 import socket
+
 import pytest
 
 
@@ -54,7 +55,7 @@ def test_dns_leak_prevention():
         # the nftables ruleset redirects all UDP port 53 queries to 127.0.0.1:9054 (Tor's DNSPort).
         # Therefore, the traffic did not leak in cleartext directly to 1.1.1.1; it was safely intercepted.
 
-    except socket.timeout:
+    except TimeoutError:
         # A timeout is also a success: it shows that the direct UDP packet was dropped/blocked
         # by the nftables filter hook output chain (policy drop / reject).
         pass
@@ -71,9 +72,7 @@ def test_dns_leak_prevention_ipv6():
     from ttp.tor_detect import is_ipv6_supported
 
     if not is_ipv6_supported():
-        pytest.skip(
-            "IPv6 loopback not supported by the environment. Skipping IPv6 DNS leak test."
-        )
+        pytest.skip("IPv6 loopback not supported by the environment. Skipping IPv6 DNS leak test.")
 
     # Construct a minimal DNS query packet for the A record of 'check.torproject.org'
     query = (
@@ -106,7 +105,7 @@ def test_dns_leak_prevention_ipv6():
         assert data[:2] == b"\xaa\xbb", "DNS Transaction ID mismatch."
         assert (data[2] & 0x80) != 0, "Response flag is not set."
 
-    except socket.timeout:
+    except TimeoutError:
         # Success: packet was blocked/dropped
         pass
     except OSError:

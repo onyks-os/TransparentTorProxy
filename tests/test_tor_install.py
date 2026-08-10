@@ -16,18 +16,17 @@ import pytest
 import typer
 
 from ttp import tor_config, tor_install, tor_service
+from ttp.exceptions import TorError
+from ttp.tor_detect import is_selinux_module_installed
 from ttp.tor_install import (
+    TTP_SERVICE_NAME,
+    _write_service_unit,
+    generate_torrc,
     remove_selinux_module,
     setup_selinux_if_needed,
-    generate_torrc,
     start_tor_service,
     stop_tor_service,
-    _write_service_unit,
-    TTP_SERVICE_NAME,
 )
-from ttp.tor_detect import is_selinux_module_installed
-from ttp.exceptions import TorError
-
 
 # Volatile Service Unit
 
@@ -95,9 +94,7 @@ def test_start_tor_service(mock_generate, mock_write_unit, mock_label, mock_run)
 @patch("ttp.tor_config.os.makedirs")
 @patch("ttp.tor_config.shutil.chown")
 @patch("ttp.tor_config.os.chmod")
-def test_generate_torrc_doh_mitigation(
-    mock_chmod, mock_chown, mock_makedirs, tmp_path: Path
-):
+def test_generate_torrc_doh_mitigation(mock_chmod, mock_chown, mock_makedirs, tmp_path: Path):
     """generate_torrc writes MapAddress use-application-dns.net 0.0.0.0 if block_doh is True."""
     runtime_dir = tmp_path / "run/tor"
     cache_dir = tmp_path / "lib/cache"
@@ -124,9 +121,7 @@ def test_generate_torrc_doh_mitigation(
 @patch("ttp.tor_config.os.makedirs")
 @patch("ttp.tor_config.shutil.chown")
 @patch("ttp.tor_config.os.chmod")
-def test_generate_torrc_creates_file(
-    mock_chmod, mock_chown, mock_makedirs, tmp_path: Path
-):
+def test_generate_torrc_creates_file(mock_chmod, mock_chown, mock_makedirs, tmp_path: Path):
     """generate_torrc generates a valid torrc file with target ports."""
     runtime_dir = tmp_path / "run/tor"
     cache_dir = tmp_path / "lib/cache"
@@ -153,17 +148,15 @@ def test_generate_torrc_creates_file(
 @patch("ttp.tor_service.subprocess.run")
 def test_start_tor_service_failure(mock_run):
     """start_tor_service raises TorError if systemctl fails."""
-    mock_run.side_effect = subprocess.CalledProcessError(
-        1, "systemctl", stderr="Failed to restart"
-    )
+    mock_run.side_effect = subprocess.CalledProcessError(1, "systemctl", stderr="Failed to restart")
 
     with (
         patch("ttp.tor_service._write_service_unit"),
         patch("ttp.tor_service.generate_torrc"),
         patch("ttp.tor_service.label_ports_selinux"),
+        pytest.raises(TorError, match="Failed to start 'ttp-tor'"),
     ):
-        with pytest.raises(TorError, match="Failed to start 'ttp-tor'"):
-            start_tor_service("tor")
+        start_tor_service("tor")
 
 
 @patch("ttp.tor_service.subprocess.run")
@@ -206,9 +199,7 @@ def test_is_selinux_module_installed_true():
         patch("ttp.tor_detect.shutil.which", return_value="/usr/sbin/semodule"),
         patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout="ttp_tor_policy  1.1\nother_mod 2.1"
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout="ttp_tor_policy  1.1\nother_mod 2.1")
         assert is_selinux_module_installed() is True
 
 
@@ -251,9 +242,7 @@ def test_setup_selinux_if_needed_installs(
 @patch("ttp.tor_detect.is_selinux_module_installed", return_value=True)
 @patch("ttp.tor_detect.is_selinux_enforcing", return_value=True)
 @patch("ttp.tor_detect.is_fedora_family", return_value=True)
-def test_setup_selinux_if_needed_skips_if_installed(
-    mock_fedora, mock_enforcing, mock_installed
-):
+def test_setup_selinux_if_needed_skips_if_installed(mock_fedora, mock_enforcing, mock_installed):
     """setup_selinux_if_needed does nothing if module is already installed."""
     with patch("ttp.selinux.subprocess.run") as mock_run:
         setup_selinux_if_needed()
@@ -284,9 +273,7 @@ def test_remove_selinux_module_skips(mock_installed):
 @patch("ttp.tor_config.os.makedirs")
 @patch("ttp.tor_config.shutil.chown")
 @patch("ttp.tor_config.os.chmod")
-def test_generate_torrc_with_bridges(
-    mock_chmod, mock_chown, mock_makedirs, tmp_path: Path
-):
+def test_generate_torrc_with_bridges(mock_chmod, mock_chown, mock_makedirs, tmp_path: Path):
     """generate_torrc writes correct bridge options and ClientTransportPlugins."""
     runtime_dir = tmp_path / "run/tor"
     cache_dir = tmp_path / "lib/cache"
@@ -309,9 +296,7 @@ def test_generate_torrc_with_bridges(
         content = torrc_path.read_text()
         assert "UseBridges 1" in content
         assert "ClientTransportPlugin obfs4 exec /usr/bin/obfs4proxy" in content
-        assert (
-            "ClientTransportPlugin snowflake exec /usr/bin/snowflake-client" in content
-        )
+        assert "ClientTransportPlugin snowflake exec /usr/bin/snowflake-client" in content
         assert "Bridge obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0" in content
         assert "Bridge snowflake 192.0.2.2:4321 601234567890ABCDEF" in content
 
@@ -347,7 +332,7 @@ def test_ensure_pluggable_transports_unsupported_pt(mock_which):
 # ---------------------------------------------------------------------------
 
 
-from ttp.tor_install import _build_torrc_content, _build_service_unit_content  # noqa: E402
+from ttp.tor_install import _build_service_unit_content, _build_torrc_content  # noqa: E402
 
 
 def test_build_torrc_content_ipv4_only():
@@ -400,9 +385,7 @@ def test_build_torrc_content_block_doh():
 
 @patch("ttp.tor_install.shutil.which")
 def test_build_torrc_content_with_bridges(mock_which):
-    mock_which.side_effect = lambda binary: (
-        f"/usr/bin/{binary}" if "obfs4" in binary or "snowflake" in binary else None
-    )
+    mock_which.side_effect = lambda binary: f"/usr/bin/{binary}" if "obfs4" in binary or "snowflake" in binary else None
     content = _build_torrc_content(
         tor_user="debian-tor",
         transport_port=9041,
@@ -436,9 +419,7 @@ def test_build_torrc_content_root_user_excludes_user_directive():
 
 
 def test_build_service_unit_content():
-    content = _build_service_unit_content(
-        tor_user="debian-tor", tor_bin="/usr/sbin/tor"
-    )
+    content = _build_service_unit_content(tor_user="debian-tor", tor_bin="/usr/sbin/tor")
     assert "Description=TTP Managed Tor Instance" in content
     assert "ExecStartPre=+/bin/mkdir -p" in content
     assert "ExecStart=/usr/sbin/tor -f" in content

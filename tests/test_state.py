@@ -202,7 +202,7 @@ def test_check_tmpfs_space_os_error():
 
 def test_write_lock_with_bridges(_use_tmp_lock):
     """write_lock saves bridge metadata and read_lock returns it correctly."""
-    lock_path, _ = _use_tmp_lock
+    _lock_path, _ = _use_tmp_lock
     state.write_lock(
         pid=100,
         use_bridges=True,

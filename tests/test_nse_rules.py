@@ -17,8 +17,9 @@ import asyncio
 import os
 import subprocess
 import time
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 # Import NSE core components conditionally to avoid import errors on hosts without the package
 try:
@@ -61,17 +62,11 @@ _original_subprocess_run = subprocess.run
 
 def _patched_subprocess_run(*args, **kwargs):  # type: ignore[override]
     cmd = args[0] if args else kwargs.get("args")
-    if (
-        isinstance(cmd, list)
-        and len(cmd) >= 4
-        and cmd[0] == "ip"
-        and cmd[1] == "netns"
-        and cmd[2] == "exec"
-    ):
+    if isinstance(cmd, list) and len(cmd) >= 4 and cmd[0] == "ip" and cmd[1] == "netns" and cmd[2] == "exec":
         netns_name = cmd[3]
-        new_cmd = ["nsenter", f"--net=/var/run/netns/{netns_name}"] + cmd[4:]
+        new_cmd = ["nsenter", f"--net=/var/run/netns/{netns_name}", *cmd[4:]]
         if args:
-            args = (new_cmd,) + args[1:]
+            args = (new_cmd, *args[1:])
         else:
             kwargs["args"] = new_cmd
     return _original_subprocess_run(*args, **kwargs)
@@ -84,15 +79,9 @@ _original_popen = subprocess.Popen
 
 class _PatchedPopen(_original_popen):  # type: ignore[misc]
     def __init__(self, cmd, *popen_args, **kwargs):
-        if (
-            isinstance(cmd, list)
-            and len(cmd) >= 4
-            and cmd[0] == "ip"
-            and cmd[1] == "netns"
-            and cmd[2] == "exec"
-        ):
+        if isinstance(cmd, list) and len(cmd) >= 4 and cmd[0] == "ip" and cmd[1] == "netns" and cmd[2] == "exec":
             netns_name = cmd[3]
-            cmd = ["nsenter", f"--net=/var/run/netns/{netns_name}"] + cmd[4:]
+            cmd = ["nsenter", f"--net=/var/run/netns/{netns_name}", *cmd[4:]]
         super().__init__(cmd, *popen_args, **kwargs)
 
 
@@ -111,14 +100,10 @@ try:
         print(f"DEBUG set_promisc: s={s!r}, iff={iff!r}, val={val!r}")
         try:
             _iff = scapy.arch.linux.resolve_iface(iff)
-            print(
-                f"DEBUG set_promisc: resolved index={_iff.index!r}, name={_iff.name!r}"
-            )
+            print(f"DEBUG set_promisc: resolved index={_iff.index!r}, name={_iff.name!r}")
         except Exception as e:
             print(f"DEBUG set_promisc: resolve failed: {e}")
-        print(
-            "DEBUG set_promisc: current netns:", os.readlink("/proc/thread-self/ns/net")
-        )
+        print("DEBUG set_promisc: current netns:", os.readlink("/proc/thread-self/ns/net"))
         return _original_set_promisc(s, iff, val)
 
     scapy.arch.linux.set_promisc = _patched_set_promisc
@@ -132,11 +117,9 @@ except Exception as e:
 # Arguments are passed as a proper list, avoiding any shell quoting issues.
 
 
-def _exec_in_ns(
-    ns_name: str, *args: str, check: bool = False
-) -> subprocess.CompletedProcess:
+def _exec_in_ns(ns_name: str, *args: str, check: bool = False) -> subprocess.CompletedProcess:
     """Execute a command inside a network namespace using nsenter (Docker-safe)."""
-    cmd = ["nsenter", f"--net=/var/run/netns/{ns_name}"] + list(args)
+    cmd = ["nsenter", f"--net=/var/run/netns/{ns_name}", *list(args)]
     return subprocess.run(cmd, capture_output=True, text=True, check=check)
 
 
@@ -216,9 +199,7 @@ def ns_sandbox():
                 text=True,
             )
             if r.returncode != 0:
-                raise RuntimeError(
-                    f"Route setup failed (pyroute2 unavailable): {r.stderr!r}"
-                )
+                raise RuntimeError(f"Route setup failed (pyroute2 unavailable): {r.stderr!r}")
 
         # Reload Scapy's interfaces cache and routes list so it detects the new veth interface
         try:
@@ -246,7 +227,7 @@ def is_cleartext_leak(pkt) -> bool:
     if pkt.haslayer(IP):
         dst = pkt[IP].dst
         # Loopback and the local veth subnet are not leaks
-        if dst.startswith("127.") or dst.startswith("10.0.1."):
+        if dst.startswith(("127.", "10.0.1.")):
             return False
         # Ignore IPv4 multicast (224.0.0.0/4)
         try:
@@ -259,14 +240,7 @@ def is_cleartext_leak(pkt) -> bool:
     elif pkt.haslayer(IPv6):
         dst = pkt[IPv6].dst
         # Loopback, local subnet, link-local, and multicast are not leaks
-        if (
-            dst == "::1"
-            or dst.startswith("fd00:1::")
-            or dst.startswith("fe80:")
-            or dst.startswith("ff")
-        ):
-            return False
-        return True
+        return not (dst == "::1" or dst.startswith(("fd00:1::", "fe80:", "ff")))
     return False
 
 
@@ -378,8 +352,22 @@ def test_bypassed_user_escape(ns_sandbox, ttp_ruleset):
     ns, loop = ns_sandbox
     RuleEngine().load(ttp_ruleset, ns.name)
 
+    # Warm up ARP cache from inside namespace before arming sniffer
+    _exec_in_ns(
+        ns.name,
+        "python3",
+        "-c",
+        (
+            "import socket; "
+            "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); "
+            "s.sendto(b'arp-warmup', ('10.0.1.1', 9998))"
+        ),
+    )
+    loop.run_until_complete(asyncio.sleep(0.3))
+
     asserter = PCAPAsserter(iface=ns.ext_iface)
     loop.run_until_complete(asserter.start())
+    loop.run_until_complete(asyncio.sleep(0.2))
 
     # Run under bypassed UID 1000 — destination is the host veth IP (LAN bypass),
     # so nftables should not redirect it and the packet should appear on ext_iface.
@@ -391,18 +379,18 @@ def test_bypassed_user_escape(ns_sandbox, ttp_ruleset):
             "import os, socket; "
             "os.setuid(1000); "
             "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); "
-            "s.sendto(b'bypassed-traffic', ('10.0.1.1', 9999))"
+            "s.sendto(b'bypassed-traffic-1', ('10.0.1.1', 9999)); "
+            "s.sendto(b'bypassed-traffic-2', ('10.0.1.1', 9999)); "
+            "s.sendto(b'bypassed-traffic-3', ('10.0.1.1', 9999))"
         ),
     )
 
-    loop.run_until_complete(asyncio.sleep(0.2))
+    loop.run_until_complete(asyncio.sleep(0.5))
 
     captured = loop.run_until_complete(asserter.stop())
 
     # The bypassed packet should appear on the host-side veth interface
     from scapy.layers.inet import IP
 
-    bypassed_packets = [
-        p for p in captured if p.haslayer(IP) and p[IP].dst == "10.0.1.1"
-    ]
+    bypassed_packets = [p for p in captured if p.haslayer(IP) and p[IP].dst == "10.0.1.1"]
     assert len(bypassed_packets) >= 1, "Bypassed user traffic was blocked!"

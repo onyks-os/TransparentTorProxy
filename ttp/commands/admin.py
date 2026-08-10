@@ -13,9 +13,13 @@ from ttp.commands._common import (
     _LOG_PATH,
     _PREFIX,
     console,
-    print_error as _print_error,
-    require_root as _require_root,
     require_systemd,
+)
+from ttp.commands._common import (
+    print_error as _print_error,
+)
+from ttp.commands._common import (
+    require_root as _require_root,
 )
 from ttp.commands.lifecycle import do_stop as _do_stop
 
@@ -29,9 +33,7 @@ def diagnose_command() -> None:
 
     data = collect_diagnostics()
 
-    console.print(
-        Panel(Text(data["os"]), title="[bold cyan]1. System[/]", border_style="cyan")
-    )
+    console.print(Panel(Text(data["os"]), title="[bold cyan]1. System[/]", border_style="cyan"))
 
     console.print(
         Panel(
@@ -106,9 +108,7 @@ def uninstall_command() -> None:
     state.delete_star_sentinel()
 
     console.print(f"{_PREFIX} [bold green]Uninstallation complete.[/]")
-    console.print(
-        f"{_PREFIX} Note: To remove application files, run the provided 'scripts/uninstall.sh'."
-    )
+    console.print(f"{_PREFIX} Note: To remove application files, run the provided 'scripts/uninstall.sh'.")
 
 
 def logs_command() -> None:
@@ -176,7 +176,8 @@ def bypass_command(
         "--slice=ttp-bypass",
         "--scope",
         "--",
-    ] + command
+        *command,
+    ]
 
     try:
         # Run systemd-run, passing through stdin, stdout, and stderr

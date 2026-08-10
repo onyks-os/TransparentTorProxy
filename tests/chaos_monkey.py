@@ -47,9 +47,7 @@ TEST_USER = "ttp-chaos-test"
 def get_real_public_ip() -> str | None:
     """Detect host's real unproxied public IP before starting TTP."""
     try:
-        req = urllib.request.Request(
-            "https://api.ipify.org", headers={"User-Agent": "ttp-chaos-monkey"}
-        )
+        req = urllib.request.Request("https://api.ipify.org", headers={"User-Agent": "ttp-chaos-monkey"})
         with urllib.request.urlopen(req, timeout=5) as resp:
             ip = resp.read().decode().strip()
             print(f"[INFO] Real public IP detected: {ip}")
@@ -114,9 +112,7 @@ def run_connectivity_audit(real_ip: str | None) -> bool:
             current_ip = res.stdout.strip()
             print(f"[AUDIT] Connectivity check succeeded. External IP: {current_ip}")
             if real_ip and current_ip == real_ip:
-                print(
-                    "[ALERT] CRITICAL NET LEAK DETECTED! Traffic bypassed Tor and reached WAN in cleartext!"
-                )
+                print("[ALERT] CRITICAL NET LEAK DETECTED! Traffic bypassed Tor and reached WAN in cleartext!")
                 return False
             else:
                 print("[AUDIT] Traffic is successfully proxied through Tor.")
@@ -155,9 +151,7 @@ def inject_unmount_dns():
 
 
 def inject_link_flap(interface: str):
-    print(
-        f"[CHAOS] Injecting Failure: Flapping default routing interface '{interface}'..."
-    )
+    print(f"[CHAOS] Injecting Failure: Flapping default routing interface '{interface}'...")
     # Shuts down interface for 2 seconds then brings it back up to avoid permanent disconnection
     subprocess.run(["ip", "link", "set", interface, "down"], check=True)
     time.sleep(2)
@@ -166,9 +160,7 @@ def inject_link_flap(interface: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Chaos Monkey Watchdog stress test")
-    parser.add_argument(
-        "--duration", type=int, default=60, help="Total execution duration in seconds"
-    )
+    parser.add_argument("--duration", type=int, default=60, help="Total execution duration in seconds")
     parser.add_argument(
         "--interval",
         type=int,

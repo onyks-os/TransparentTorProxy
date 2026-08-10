@@ -56,18 +56,18 @@ sudo ttp start --use-bridges --bridge-file /home/user/my_bridges.txt
 
 ---
 
-## 4. Under the Hood: Pluggable Transports Auto-Installation
+## 4. Under the Hood: Pluggable Transports Verification
 
-If a bridge requires a **Pluggable Transport** helper binary (such as `obfs4proxy` or `snowflake-client`), TTP handles the dependencies automatically:
+If a bridge requires a **Pluggable Transport** helper binary (such as `obfs4proxy` or `snowflake-client`), TTP verifies dependencies before startup:
 
 1. **Detection**: TTP parses the bridge lines and identifies the required transports.
 2. **Path Verification**: It checks if the helper binary is available in the system `$PATH`.
-3. **Auto-Installation**: If a binary is missing, TTP automatically invokes the system's package manager to install it:
-   * **Debian/Ubuntu**: `apt-get install -y obfs4proxy` or `snowflake-client`
-   * **Fedora/RHEL**: `dnf install -y obfs4` or `snowflake-client`
-   * **Arch Linux**: `pacman -Sy --noconfirm obfs4proxy` or `snowflake-client`
-   * **openSUSE**: `zypper install -y obfs4proxy` or `snowflake-client`
-4. **Configuration**: TTP generates the volatile `torrc` and registers the transport plugins:
+3. **Guidance on Missing Binary**: If a binary is missing, TTP displays distro-specific package installation commands and exits cleanly:
+   * **Debian/Ubuntu**: `sudo apt install obfs4proxy` or `snowflake-client`
+   * **Fedora/RHEL**: `sudo dnf install obfs4` or `snowflake-client`
+   * **Arch Linux**: `sudo pacman -S obfs4proxy` or `snowflake-client`
+   * **openSUSE**: `sudo zypper install obfs4proxy` or `snowflake-client`
+4. **Configuration**: Once verified, TTP generates the volatile `torrc` and registers the transport plugins:
    ```text
    UseBridges 1
    ClientTransportPlugin obfs4 exec /usr/bin/obfs4proxy

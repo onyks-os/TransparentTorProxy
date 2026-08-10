@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sys
-
 import typer
 
 from ttp import state
@@ -9,7 +7,11 @@ from ttp.commands._common import (
     _PREFIX,
     console,
     logger,
+)
+from ttp.commands._common import (
     print_error as _print_error,
+)
+from ttp.commands._common import (
     require_root as _require_root,
 )
 
@@ -73,4 +75,4 @@ def watchdog_run(
         wd.run_watchdog_loop(interval_seconds=interval)
     except Exception as e:
         logger.critical("Watchdog loop crashed: %s", e)
-        sys.exit(1)
+        raise typer.Exit(code=1)

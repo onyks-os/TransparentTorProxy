@@ -12,8 +12,14 @@ from ttp.commands._common import (
     cli_state,
     console,
     logger,
+)
+from ttp.commands._common import (
     parse_txt_dig_ipv4 as _parse_txt_dig_ipv4,
+)
+from ttp.commands._common import (
     print_error as _print_error,
+)
+from ttp.commands._common import (
     require_root as _require_root,
 )
 from ttp.exceptions import TorError
@@ -50,10 +56,7 @@ def refresh_command() -> None:
     if ip_changed:
         console.print(f"{_PREFIX} [bold green]New exit IP: {new_ip}[/]")
     else:
-        console.print(
-            f"{_PREFIX} [yellow]Circuit rotated but IP may not have changed yet. "
-            f"Current IP: {new_ip}[/]"
-        )
+        console.print(f"{_PREFIX} [yellow]Circuit rotated but IP may not have changed yet. Current IP: {new_ip}[/]")
 
 
 def status_command() -> None:
@@ -82,9 +85,7 @@ def status_command() -> None:
     console.print(
         f"{_PREFIX} LAN Bypass: {'[green]Enabled[/]' if lock.get('lan_bypass', True) else '[red]Disabled[/]'}"
     )
-    console.print(
-        f"{_PREFIX} Allow Root: {'[red]Yes[/]' if lock.get('allow_root', False) else '[green]No[/]'}"
-    )
+    console.print(f"{_PREFIX} Allow Root: {'[red]Yes[/]' if lock.get('allow_root', False) else '[green]No[/]'}")
     from ttp.tor_detect import is_ipv6_supported
 
     ipv6_supported = is_ipv6_supported()
@@ -98,9 +99,7 @@ def status_command() -> None:
 
     wd_active = lock.get("watchdog_active", False)
     wd_pid = lock.get("watchdog_pid")
-    wd_status_str = (
-        f"[green]Active (PID {wd_pid})[/]" if wd_active else "[red]Inactive[/]"
-    )
+    wd_status_str = f"[green]Active (PID {wd_pid})[/]" if wd_active else "[red]Inactive[/]"
     console.print(f"{_PREFIX} Watchdog: {wd_status_str}")
 
     console.print(f"{_PREFIX} Exit IP: {exit_ip}")
@@ -111,6 +110,7 @@ def status_command() -> None:
 def check_command() -> None:
     """Quickly verify Tor network connection and circuit state."""
     import time
+
     from ttp import tor_control
 
     console.print(f"{_PREFIX} Checking Tor network connection...")
@@ -194,9 +194,7 @@ def check_leak_command() -> None:
         # 2. Basic DNS resolution through the tunnel (must resolve check.torproject.org).
         cmd_a = [dig_bin, "+short", "A", "check.torproject.org"]
         try:
-            res_a = subprocess.run(
-                cmd_a, capture_output=True, text=True, timeout=10, check=False
-            )
+            res_a = subprocess.run(cmd_a, capture_output=True, text=True, timeout=10, check=False)
             out_a = res_a.stdout.strip()
             if cli_state.verbose:
                 console.print(f"[dim]> {' '.join(cmd_a)}\n{out_a}[/dim]")
@@ -215,28 +213,20 @@ def check_leak_command() -> None:
         # 3. Akamai TXT: resolver identity (exit-side resolver) - presence of an IP is NOT a leak.
         cmd_txt = [dig_bin, "+short", "TXT", "whoami.ipv4.akahelp.net"]
         try:
-            res_txt = subprocess.run(
-                cmd_txt, capture_output=True, text=True, timeout=10, check=False
-            )
+            res_txt = subprocess.run(cmd_txt, capture_output=True, text=True, timeout=10, check=False)
             out_txt = res_txt.stdout.strip()
             if cli_state.verbose:
                 console.print(f"[dim]> {' '.join(cmd_txt)}\n{out_txt}[/dim]")
             resolver_ip = _parse_txt_dig_ipv4(out_txt) if out_txt else None
             if cli_state.verbose and resolver_ip:
-                console.print(
-                    f"{_PREFIX} [dim]Akamai resolver probe (informational): {resolver_ip}[/dim]"
-                )
+                console.print(f"{_PREFIX} [dim]Akamai resolver probe (informational): {resolver_ip}[/dim]")
         except Exception as e:
             has_leaks = True
             if cli_state.verbose:
-                logger.debug(
-                    "dig TXT whoami.ipv4.akahelp.net failed: %s", e, exc_info=True
-                )
+                logger.debug("dig TXT whoami.ipv4.akahelp.net failed: %s", e, exc_info=True)
 
     if has_leaks:
-        console.print(
-            f"{_PREFIX} [bold red]Leaks detected![/bold red] Use -v for details."
-        )
+        console.print(f"{_PREFIX} [bold red]Leaks detected![/bold red] Use -v for details.")
         raise typer.Exit(code=1)
 
     console.print(f"{_PREFIX} [bold green]No leaks detected.[/bold green]")

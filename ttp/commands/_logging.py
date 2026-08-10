@@ -15,7 +15,6 @@ import logging
 import os
 from pathlib import Path
 
-
 # Re-imported here to avoid circular imports for callers that import from _logging
 _LOG_PATH = Path("/run/ttp/ttp.log")
 
@@ -78,9 +77,7 @@ def setup_logging() -> None:
         if cli_state.log_format == "json":
             handler.setFormatter(JSONFormatter())
         else:
-            handler.setFormatter(
-                logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-            )
+            handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         logger.addHandler(handler)
         logger.setLevel(logging.DEBUG if cli_state.verbose else logging.INFO)
     except OSError:
@@ -90,9 +87,7 @@ def setup_logging() -> None:
         if cli_state.log_format == "json":
             console_handler = logging.StreamHandler()
             console_handler.setFormatter(JSONFormatter())
-            console_handler.setLevel(
-                logging.DEBUG if cli_state.verbose else logging.INFO
-            )
+            console_handler.setLevel(logging.DEBUG if cli_state.verbose else logging.INFO)
             logger.addHandler(console_handler)
             logger.setLevel(logging.DEBUG if cli_state.verbose else logging.INFO)
         elif cli_state.verbose:

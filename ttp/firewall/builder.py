@@ -7,7 +7,11 @@ import subprocess
 
 
 def _has_cgroup_bypass_support() -> bool:
-    """Check if the system supports cgroupv2 socket bypass by trying to load a test rule."""
+    """Check if the kernel supports cgroupv2 socket bypass by testing a dummy rule.
+
+    Returns:
+        bool: True if ``nft --check`` succeeds for cgroupv2 matching rules, False otherwise.
+    """
     from pathlib import Path
 
     cgroup_path = Path("/sys/fs/cgroup/ttp-bypass.slice")
@@ -54,16 +58,30 @@ def _build_ruleset(
 ) -> str:
     """Build and return the nftables ruleset string for the TTP session.
 
-    This is a **pure function**: it takes all required data as arguments
-    and returns the rendered nftables ruleset string with no side effects.
-    It never calls ``nft`` or touches the system — callers are responsible
-    for applying the result.
+    This is a **pure function**: it takes all required configuration data as arguments
+    and renders the complete nftables ruleset string with no side effects.
+    It never calls ``nft`` directly or touches system state.
 
     Invariant properties encoded in the ruleset:
-    1. Non-exempt local traffic MUST NOT leave the system in cleartext.
-    2. DNS traffic (UDP/TCP port 53) MUST be redirected to Tor DNSPort.
-    3. TCP traffic MUST be redirected to Tor TransPort.
-    4. Non-TCP, non-DNS traffic (ICMP, generic UDP) MUST be rejected.
+        1. Non-exempt local traffic MUST NOT leave the system in cleartext.
+        2. DNS traffic (UDP/TCP port 53) MUST be redirected to Tor DNSPort.
+        3. TCP traffic MUST be redirected to Tor TransPort.
+        4. Non-TCP, non-DNS traffic (ICMP, generic UDP) MUST be rejected.
+
+    Args:
+        tor_uid: System UID of the Tor daemon process to exempt from transparent proxying.
+        transport_port: Local TCP port where Tor is listening for transparent proxying.
+        dns_port: Local UDP/TCP port where Tor is listening for DNS resolution.
+        ipv6_avail: Whether IPv6 routing is active and supported on the host loopback.
+        allow_root: If True, allows root (UID 0) processes to bypass proxying.
+        lan_bypass: If True, excludes RFC 1918 and Link-Local subnets from redirection.
+        bypass_uids: Optional list of UIDs exempted from transparent proxying.
+        bypass_gids: Optional list of GIDs exempted from transparent proxying.
+        resolved_uid: Optional UID of ``systemd-resolved`` to enforce fail-closed DNS drops.
+        cgroup_bypass: If True, enables cgroupv2 socket bypass for ``ttp-bypass.slice``.
+
+    Returns:
+        str: Rendered nftables ruleset string ready for ``nft -f``.
     """
     lan_rule = ""
     lan6_rule = ""
@@ -92,12 +110,8 @@ def _build_ruleset(
             if ipv6_avail:
                 bypass_rules_nat.append(f"meta skgid {gid} ip6 daddr != ::1 accept")
             bypass_rules_filter.append(f"meta skgid {gid} accept")
-    bypass_rules_nat_str = (
-        "\n                ".join(bypass_rules_nat) if bypass_rules_nat else ""
-    )
-    bypass_rules_filter_str = (
-        "\n                ".join(bypass_rules_filter) if bypass_rules_filter else ""
-    )
+    bypass_rules_nat_str = "\n                ".join(bypass_rules_nat) if bypass_rules_nat else ""
+    bypass_rules_filter_str = "\n                ".join(bypass_rules_filter) if bypass_rules_filter else ""
 
     # systemd-resolved leak-prevention rules
     resolved_rules: list[str] = []
@@ -113,8 +127,7 @@ def _build_ruleset(
 
     # DNS redirection
     dns_redirect_ipv4 = (
-        f"udp dport 53 dnat ip to 127.0.0.1:{dns_port}\n"
-        f"                tcp dport 53 dnat ip to 127.0.0.1:{dns_port}"
+        f"udp dport 53 dnat ip to 127.0.0.1:{dns_port}\n                tcp dport 53 dnat ip to 127.0.0.1:{dns_port}"
     )
     dns_redirect_ipv6 = (
         f"\n                udp dport 53 dnat ip6 to [::1]:{dns_port}"
@@ -125,21 +138,20 @@ def _build_ruleset(
 
     # TCP transparent proxy redirection
     tcp_redirect_ipv4 = f"ip protocol tcp dnat ip to 127.0.0.1:{transport_port}"
-    tcp_redirect_ipv6 = (
-        f"\n                meta l4proto tcp dnat ip6 to [::1]:{transport_port}"
-        if ipv6_avail
-        else ""
-    )
+    tcp_redirect_ipv6 = f"\n                meta l4proto tcp dnat ip6 to [::1]:{transport_port}" if ipv6_avail else ""
 
     ipv6_leak_prevention = "" if ipv6_avail else "meta nfproto ipv6 drop"
 
-    # DoH IP blocks
+    # DoH IP blocks (TCP & QUIC/UDP 443)
     doh_ips_v4 = "{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112, 208.67.222.222, 208.67.220.220 }"
     doh_reject_ipv4 = f"ip daddr {doh_ips_v4} tcp dport 443 reject"
+    quic_doh_reject_ipv4 = f"ip daddr {doh_ips_v4} udp dport 443 reject"
     doh_reject_ipv6 = ""
+    quic_doh_reject_ipv6 = ""
     if ipv6_avail:
         doh_ips_v6 = "{ 2606:4700:4700::1111, 2606:4700:4700::1001, 2001:4860:4860::8888, 2001:4860:4860::8844, 2620:fe::fe, 2620:fe::9, 2620:0:ccc::2, 2620:0:ccd::2 }"
         doh_reject_ipv6 = f"ip6 daddr {doh_ips_v6} tcp dport 443 reject"
+        quic_doh_reject_ipv6 = f"ip6 daddr {doh_ips_v6} udp dport 443 reject"
 
     return f"""
     table inet ttp {{
@@ -219,9 +231,14 @@ def _build_ruleset(
             # 5. DoT (DNS-over-TLS) Leak Prevention: Block direct connections to port 853.
             tcp dport 853 reject
 
-            # 6. DoH (DNS-over-HTTPS) Leak Prevention: Block common public DoH resolvers on port 443.
+            # 6. DoH (DNS-over-HTTPS) & QUIC Leak Prevention: Block common public DoH resolvers on port 443.
+            # Note: For non-bypassed TCP, NAT output (priority -150) redirects TCP/443 to Tor TransPort
+            # before filter_out runs. These TCP reject rules serve as a safety net if NAT fails and
+            # apply to bypassed users. The UDP rules block HTTP/3 (QUIC) DoH queries which NAT does not redirect.
             {doh_reject_ipv4}
             {doh_reject_ipv6}
+            {quic_doh_reject_ipv4}
+            {quic_doh_reject_ipv6}
 
             # 7. IPv6 Leak Prevention: Drop all IPv6 traffic if disabled or unrouteable.
             {ipv6_leak_prevention}

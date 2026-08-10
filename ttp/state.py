@@ -22,9 +22,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
 from ttp.exceptions import StateError
 
 LOCK_DIR = Path("/run/ttp")
@@ -98,7 +100,6 @@ def check_tmpfs_space(min_bytes: int = MIN_TMPFS_BYTES) -> None:
         if isinstance(e, StateError):
             raise
         # Cannot stat /run - non-fatal, proceed with best effort
-        pass
 
 
 def write_lock(
@@ -217,7 +218,10 @@ def read_lock() -> dict[str, Any] | None:
     if not LOCK_PATH.exists():
         return None
     try:
-        return json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+        data = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+        return None
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -261,8 +265,8 @@ def is_orphan() -> bool:
 
 
 def attempt_recovery(
-    destroy_firewall: callable,
-    restore_dns: callable,
+    destroy_firewall: Callable[[], Any],
+    restore_dns: Callable[[Any], Any],
 ) -> bool:
     """Attempt automatic recovery from an orphaned lock.
 

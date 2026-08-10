@@ -14,9 +14,8 @@ Usage:
 import json
 import re
 
-from hypothesis import given, settings, HealthCheck
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-
 
 # 1. JSON lock file parsing (state.py)
 

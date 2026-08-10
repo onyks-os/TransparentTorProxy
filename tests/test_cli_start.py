@@ -9,7 +9,7 @@ Tests verify command orchestration logic, not system interactions.
 
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -307,9 +307,7 @@ def test_start_custom_ports_success(
     mock_in_use,
 ):
     """start with custom valid ports -> propagates them down correctly."""
-    result = runner.invoke(
-        app, ["start", "--transport-port", "9080", "--dns-port", "9090"]
-    )
+    result = runner.invoke(app, ["start", "--transport-port", "9080", "--dns-port", "9090"])
     assert result.exit_code == 0
     assert "Session active" in result.output
 
@@ -484,14 +482,10 @@ def test_start_with_bypass_user_and_group(
     mock_verify,
 ):
     """Test start command with valid bypass users and groups."""
-    mock_pwd_nam.side_effect = lambda name: (
-        MagicMock(pw_uid=1001) if name == "user1" else MagicMock(pw_uid=1002)
-    )
+    mock_pwd_nam.side_effect = lambda name: MagicMock(pw_uid=1001) if name == "user1" else MagicMock(pw_uid=1002)
     mock_grp_nam.return_value = MagicMock(gr_gid=2001)
 
-    result = runner.invoke(
-        app, ["start", "--bypass-user", "user1,user2", "--bypass-group", "group1"]
-    )
+    result = runner.invoke(app, ["start", "--bypass-user", "user1,user2", "--bypass-group", "group1"])
     assert result.exit_code == 0
     assert "Session active" in result.output
 
@@ -682,9 +676,7 @@ def test_start_external_daemon_happy_path_manual_uid(
     mock_user.pw_uid = 101
     mock_pwnam.return_value = mock_user
 
-    result = runner.invoke(
-        app, ["start", "--external-daemon", "--tor-uid", "debian-tor"]
-    )
+    result = runner.invoke(app, ["start", "--external-daemon", "--tor-uid", "debian-tor"])
     assert result.exit_code == 0
     assert "Tor daemon detected operating under UID: 101" in result.output
 
@@ -939,9 +931,10 @@ def test_start_no_ipv6_supported(
 
 
 import typer  # noqa: E402
+
 from ttp.commands.start import (  # noqa: E402
-    _parse_bypass_users_groups,
     _parse_bridges,
+    _parse_bypass_users_groups,
     _resolve_external_tor_uid,
 )
 
@@ -971,7 +964,7 @@ class TestParseBypassUsersGroups:
     @patch("pwd.getpwuid")
     def test_numeric_uid_accepted(self, mock_pwuid):
         mock_pwuid.return_value = MagicMock()
-        users, _, uids, _ = _parse_bypass_users_groups(["1234"], None)
+        _users, _, uids, _ = _parse_bypass_users_groups(["1234"], None)
         assert uids == [1234]
 
     @patch("pwd.getpwnam", side_effect=KeyError)
@@ -996,9 +989,7 @@ class TestParseBridges:
     """Unit tests for _parse_bridges()."""
 
     def test_valid_direct_bridge(self):
-        lines, use_bridges = _parse_bridges(
-            None, ["obfs4 192.0.2.1:1234 FINGERPRINT iat-mode=0"], False
-        )
+        lines, use_bridges = _parse_bridges(None, ["obfs4 192.0.2.1:1234 FINGERPRINT iat-mode=0"], False)
         assert lines == ["obfs4 192.0.2.1:1234 FINGERPRINT iat-mode=0"]
         assert use_bridges is True
 
@@ -1021,9 +1012,7 @@ class TestParseBridges:
 
     def test_bridge_file_parsed_correctly(self, tmp_path):
         bf = tmp_path / "bridges.txt"
-        bf.write_text(
-            "# comment\n\nobfs4 192.0.2.1:1234 FP iat-mode=0\n   \nsnowflake 192.0.2.2:4321 FP2\n"
-        )
+        bf.write_text("# comment\n\nobfs4 192.0.2.1:1234 FP iat-mode=0\n   \nsnowflake 192.0.2.2:4321 FP2\n")
         lines, use_bridges = _parse_bridges(bf, None, False)
         assert lines == [
             "obfs4 192.0.2.1:1234 FP iat-mode=0",
@@ -1082,9 +1071,7 @@ class TestResolveExternalTorUid:
     @patch("pwd.getpwnam")
     def test_fallback_to_debian_tor(self, mock_pwnam, mock_port):
         mock_pwnam.side_effect = lambda u: (
-            (_ for _ in ()).throw(KeyError("not found"))
-            if u == "tor"
-            else MagicMock(pw_uid=110)
+            (_ for _ in ()).throw(KeyError("not found")) if u == "tor" else MagicMock(pw_uid=110)
         )
         result = _resolve_external_tor_uid(9041, None)
         assert result == "110"

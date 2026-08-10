@@ -10,18 +10,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.7] - 2026-08-05
+## [0.4.7] - 2026-08-09
 
 ### Added
 
 - **Strict No Auto-Install Policy**: Project-wide policy enforcement prohibiting automatic package installations. If required binaries (`tor`, `obfs4proxy`, `snowflake-client`) are missing, TTP displays distro-aware package installation guidance (`apt`, `dnf`, `pacman`, `zypper`), official Tor Project documentation URLs, and gracefully exits with status code `0`.
 - **`tor_config` & `tor_service` Submodules**: Refactored `tor_install.py` by extracting pure `torrc` configuration generation into `ttp/tor_config.py` and volatile `systemd` service lifecycle management into `ttp/tor_service.py`.
 - **`ttp/firewall/` Package Architecture**: Converted `firewall.py` into a specialized package `ttp/firewall/` composed of `builder.py` (pure ruleset string generator), `runner.py` (`nft` execution engine & atomic cleanup), and `emergency.py` (lockdown, socket slaughter, emergency killswitch).
-
-## [0.4.6] - 2026-06-25
-
-### Added
-
+- **HTTP/3 (QUIC) Anti-DoH Prevention**: Added explicit `udp dport 443 reject` rules for public DoH IPv4/IPv6 resolver IP sets to prevent browser HTTP/3 QUIC DoH bypasses.
+- **Explicit Ruff Code Quality Rules**: Added `pyproject.toml` configuration enforcing `isort`, `flake8-bugbear`, `pyupgrade`, `flake8-simplify`, `flake8-logging-format`, and performance lints (`E`, `F`, `W`, `I`, `B`, `UP`, `SIM`, `G`, `PIE`, `RUF`, `PERF`). Added `make format` target for automated formatting and lint fixing.
+- **Start Command Submodule Extraction**: Refactored `ttp/commands/start.py` by extracting pre-flight checks into `ttp/commands/_preflight.py` and Tor setup into `ttp/commands/_tor_setup.py`.
 - **Application Exclusion via cgroups v2 Bypass (`ttp bypass`)**: Added the new `ttp bypass <command>` CLI command. This command de-escalates privileges securely to the invoking user and runs the target application inside a systemd transient scope under `ttp-bypass.slice` using `systemd-run`.
 - **cgroups v2 Firewall Rules**: Configured `apply_rules()` to inject `socket cgroupv2 level 1 "ttp-bypass.slice" accept` into the `output` NAT and `filter_out` filter chains, allowing any processes running inside the slice to bypass Tor transparent proxying atomically.
 - **Privilege-Separated Watchdog User**: Added system user and group `ttp-watchdog` configuration to run the background watchdog daemon with only `CAP_NET_ADMIN` capabilities instead of root (`CAP_SYS_ADMIN`).
@@ -34,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Standardized Error Handling**: Unified CLI error handling across `_validation.py` and `watchdog.py` to consistently raise `typer.Exit(code=1)` with Rich formatted error panels.
+- **Flaky NSE Test Resolution**: Hardened `test_bypassed_user_escape` in `tests/test_nse_rules.py` with ARP cache warmup, Scapy sniffer initialization delays, and multi-packet transmissions.
 - **Systemd Hard Requirement**: Declared systemd as strictly required for TTP. Start, restart, and bypass CLI commands check for systemd on startup and fail immediately with a descriptive error message if missing. Removed references to systemd-less environments, Alpine Linux, or Void Linux in documents, ADRs, and help strings.
 - **Bypass Command Sudo Check**: Improved the `ttp bypass` CLI command to fail early with a clean, descriptive error message ("This command must be run with sudo to safely delegate privileges via systemd-run.") if executed without `sudo` or outside a `sudo` environment.
 

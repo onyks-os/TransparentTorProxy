@@ -31,7 +31,7 @@ When adding, modifying, or deleting command-line commands, groups, options, flag
 * **README.md**: Update only if the change affects the core Quick Start commands or if it is a major user-facing feature.
 
 ### 2. Modifying Core Network or System Logic
-When altering the firewall (`ttp/firewall/`), DNS routing (`dns.py`), watchdog daemon (`watchdog/` package), SELinux management (`selinux.py`), state management (`state.py`), or Tor lifecycle logic (`tor_install.py` / `tor_control.py`):
+When altering the firewall (`ttp/firewall/`), DNS routing (`dns.py`), watchdog daemon (`watchdog/` package), SELinux management (`selinux.py`), state management (`state.py`), or Tor lifecycle logic (`tor_config.py` / `tor_service.py` / `tor_install.py` / `tor_control.py`):
 * **Tests**: 
   * Add unit tests in the corresponding `tests/test_*.py` file (e.g. `tests/test_firewall.py`).
   * Run the isolated ruleset validation tests via `tests/test_nse_rules.py`.

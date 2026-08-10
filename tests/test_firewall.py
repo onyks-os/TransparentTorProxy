@@ -8,11 +8,13 @@ All tests mock subprocess.run so no real firewall rules are ever touched.
 
 from __future__ import annotations
 
-import pytest
 import subprocess
-from unittest.mock import patch, MagicMock
-from ttp.firewall import apply_rules, destroy_rules
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from ttp.exceptions import FirewallError
+from ttp.firewall import apply_rules, destroy_rules
 
 
 @pytest.fixture(autouse=True)
@@ -54,9 +56,7 @@ def test_apply_rules_orchestration(mock_run, mock_pwd, mock_lock_dir, mock_rules
 @patch("ttp.firewall.runner.LOCK_DIR")
 @patch("ttp.firewall.runner.pwd.getpwnam")
 @patch("ttp.firewall.runner.subprocess.run")
-def test_apply_rules_failure_triggers_destroy(
-    mock_run, mock_pwd, mock_lock_dir, mock_rules_path
-):
+def test_apply_rules_failure_triggers_destroy(mock_run, mock_pwd, mock_lock_dir, mock_rules_path):
     """If rule injection fails, it must attempt to destroy the table."""
     mock_pwd.return_value = MagicMock(pw_uid=123)
     # First two calls (add/flush) succeed, third call (inject) fails
@@ -110,9 +110,7 @@ def test_ruleset_logic_content(mock_ipv6, mock_run_nft, mock_run_string, mock_pw
     assert "ip daddr 127.0.0.0/8 accept" in filter_block
 
     # Default LAN bypass should be present
-    lan_bypass_rule = (
-        "ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } accept"
-    )
+    lan_bypass_rule = "ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } accept"
     assert lan_bypass_rule in output_block
     assert lan_bypass_rule in filter_block
 
@@ -207,9 +205,7 @@ def test_ruleset_no_lan_bypass(mock_ipv6, mock_run_nft, mock_run_string, mock_pw
     apply_rules(tor_user="debian-tor", lan_bypass=False)
 
     ruleset = mock_run_string.call_args[0][0]
-    lan_bypass_rule = (
-        "ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } accept"
-    )
+    lan_bypass_rule = "ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } accept"
     assert lan_bypass_rule not in ruleset
 
 
@@ -395,9 +391,7 @@ def test_apply_active_socket_slaughter(mock_run_nft):
 @patch("ttp.firewall.runner._run_nft_string")
 @patch("ttp.firewall.runner._run_nft")
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
-def test_ruleset_systemd_resolved_rules(
-    mock_ipv6, mock_run_nft, mock_run_string, mock_pwd
-):
+def test_ruleset_systemd_resolved_rules(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd):
     """Verify that systemd-resolved drop rules are injected when the system user exists."""
 
     def mock_getpwnam(name):
@@ -431,9 +425,7 @@ def test_ruleset_systemd_resolved_rules(
 @patch("ttp.firewall.runner._run_nft_string")
 @patch("ttp.firewall.runner._run_nft")
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
-def test_ruleset_systemd_resolved_rules_missing_user(
-    mock_ipv6, mock_run_nft, mock_run_string, mock_pwd
-):
+def test_ruleset_systemd_resolved_rules_missing_user(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd):
     """Verify that systemd-resolved drop rules are NOT injected if the user does not exist on the system."""
 
     def mock_getpwnam(name):
@@ -616,7 +608,5 @@ class TestBuildRuleset:
 
     def test_pure_function_idempotent(self):
         """Same inputs must always produce identical output."""
-        kwargs = _base_kwargs(
-            tor_uid=42, bypass_uids=[100], bypass_gids=[200], ipv6_avail=True
-        )
+        kwargs = _base_kwargs(tor_uid=42, bypass_uids=[100], bypass_gids=[200], ipv6_avail=True)
         assert _build_ruleset(**kwargs) == _build_ruleset(**kwargs)

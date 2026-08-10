@@ -100,15 +100,14 @@ def get_uid_from_port(target_port: int) -> int | None:
     hex_port = f"{target_port:04X}"
     for proc_file in ("/proc/net/tcp", "/proc/net/tcp6"):
         try:
-            with open(proc_file, "r") as f:
+            with open(proc_file) as f:
                 next(f)
                 for line in f:
                     parts = line.split()
                     if len(parts) >= 8:
                         local_address = parts[1]
-                        if local_address.endswith(f":{hex_port}"):
-                            if parts[3] == "0A":
-                                return int(parts[7])
+                        if local_address.endswith(f":{hex_port}") and parts[3] == "0A":
+                            return int(parts[7])
         except (FileNotFoundError, PermissionError):
             continue
     return None

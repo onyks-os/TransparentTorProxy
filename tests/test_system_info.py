@@ -51,9 +51,7 @@ def test_collect_diagnostics_has_all_keys(mock_detect, mock_read, mock_ctrl, moc
         "tor_user": "unknown",
     },
 )
-def test_collect_diagnostics_subprocess_failure_does_not_crash(
-    mock_detect, mock_read, mock_ctrl, mock_run
-):
+def test_collect_diagnostics_subprocess_failure_does_not_crash(mock_detect, mock_read, mock_ctrl, mock_run):
     """It should not crash if subprocesses raise exceptions.
     Instead, it should store the error message in the dictionary.
     """
@@ -82,9 +80,7 @@ def test_collect_diagnostics_subprocess_failure_does_not_crash(
         "tor_user": "debian-tor",
     },
 )
-def test_collect_diagnostics_returns_only_strings(
-    mock_detect, mock_read, mock_ctrl, mock_run
-):
+def test_collect_diagnostics_returns_only_strings(mock_detect, mock_read, mock_ctrl, mock_run):
     """It should return only strings, no Rich objects or other complex types."""
     mock_run.return_value = MagicMock(stdout="standard output", returncode=0)
 
@@ -110,9 +106,7 @@ def test_collect_diagnostics_returns_only_strings(
         "selinux_module": True,
     },
 )
-def test_collect_diagnostics_includes_selinux_info(
-    mock_detect, mock_read, mock_ctrl, mock_run
-):
+def test_collect_diagnostics_includes_selinux_info(mock_detect, mock_read, mock_ctrl, mock_run):
     """It should include SELinux module status in the diagnostic output."""
     mock_run.return_value = MagicMock(stdout="standard output", returncode=0)
 

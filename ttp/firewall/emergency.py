@@ -4,6 +4,7 @@
 """Stateless Firewall Module - Emergency lockdown, killswitch, and socket slaughter mechanisms."""
 
 import logging
+
 from ttp.exceptions import FirewallError
 from ttp.firewall.runner import _run_nft, _run_nft_string
 
@@ -13,8 +14,11 @@ logger = logging.getLogger("ttp")
 def apply_teardown_lockdown(tor_uid: int | None = None) -> None:
     """Insert a lockdown drop rule at the top of the filter_out chain in table inet ttp.
 
-    This ensures that all outbound traffic is dropped (exempting loopback and the Tor daemon UID)
-    during the graceful shutdown.
+    Ensures all non-loopback outbound traffic is dropped during graceful session teardown,
+    while permitting the Tor daemon UID to close control connections cleanly.
+
+    Args:
+        tor_uid: Optional numeric UID of the Tor daemon process to exempt from lockdown.
     """
     rule = ["insert", "rule", "inet", "ttp", "filter_out"]
     if tor_uid is not None:
@@ -26,13 +30,15 @@ def apply_teardown_lockdown(tor_uid: int | None = None) -> None:
         logger.warning("Teardown lockdown applied: outbound traffic locked.")
     except Exception as e:
         # Gracefully handle cases where the table or chain does not exist (e.g., already stopped)
-        logger.debug(
-            "Could not apply teardown lockdown (table/chain may not exist): %s", e
-        )
+        logger.debug("Could not apply teardown lockdown (table/chain may not exist): %s", e)
 
 
 def apply_active_socket_slaughter() -> None:
-    """Inject temporary reject rules at the top of the filter_out chain to actively terminate pending local connections."""
+    """Inject temporary reject rules at the top of the filter_out chain.
+
+    Actively terminates pending local connections by sending immediate ICMP Port Unreachable
+    for UDP sockets and TCP RST packets for open TCP streams.
+    """
     try:
         # 1. Uccide le connessioni UDP pendenti (invia ICMP Port Unreachable al processo locale)
         _run_nft(
@@ -67,20 +73,21 @@ def apply_active_socket_slaughter() -> None:
                 "reset",
             ]
         )
-        logger.warning(
-            "Active socket slaughter rules applied: resetting pending connections."
-        )
+        logger.warning("Active socket slaughter rules applied: resetting pending connections.")
     except Exception as e:
         # Gracefully handle cases where the table or chain does not exist (e.g., already stopped)
         logger.debug("Could not apply active socket slaughter: %s", e)
 
 
 def apply_emergency_killswitch() -> None:
-    """Apply an emergency lock/killswitch on the network.
+    """Apply an emergency network killswitch.
 
-    This replaces the 'inet ttp' table with a minimal, ultra-restrictive ruleset
-    that drops all inbound, outbound, and forwarded network traffic on physical
-    interfaces, allowing only local loopback communication.
+    Replaces the 'inet ttp' table with an ultra-restrictive ruleset that drops
+    all inbound, outbound, and forwarded network traffic on physical interfaces,
+    permitting only local loopback communication.
+
+    Raises:
+        FirewallError: If table creation or killswitch ruleset injection fails.
     """
     ruleset = """
     table inet ttp {

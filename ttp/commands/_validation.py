@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 import time
 
 import typer
@@ -42,9 +41,7 @@ def validate_bridge_line(line: str) -> None:
             return
         raise ValueError(f"Unsupported pluggable transport: '{parts[0]}'")
 
-    raise ValueError(
-        "Invalid bridge format. Expected '<ip>:<port>' or '<transport> <ip>:<port>'"
-    )
+    raise ValueError("Invalid bridge format. Expected '<ip>:<port>' or '<transport> <ip>:<port>'")
 
 
 def require_root() -> None:
@@ -58,8 +55,11 @@ def require_root() -> None:
 
 def require_systemd() -> None:
     """Exit if systemd runtime directory is not present."""
+    from ttp.commands._common import print_error
+
     if not os.path.exists("/run/systemd/system"):
-        sys.exit("TTP explicitly requires systemd.")
+        print_error("Systemd Required", "TTP explicitly requires systemd.")
+        raise typer.Exit(code=1)
 
 
 def verify_tor(timeout: int = 180) -> tuple[bool, str]:
@@ -75,9 +75,7 @@ def verify_tor(timeout: int = 180) -> tuple[bool, str]:
         console=console,
         transient=True,
     ) as progress:
-        task_id = progress.add_task(
-            f"{_PREFIX} Waiting for Tor to bootstrap...", total=100
-        )
+        task_id = progress.add_task(f"{_PREFIX} Waiting for Tor to bootstrap...", total=100)
 
         try:
             tor_control.wait_for_bootstrap(

@@ -20,12 +20,11 @@ re-exported here for backward compatibility.
 
 from __future__ import annotations
 
-from typing import Any
-
 import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 # Volatile runtime config path
 TORRC_PATH = Path("/run/tor/ttp/torrc")
@@ -94,9 +93,7 @@ def _check_config(
             if dns_port is None:
                 dns_port = 9054
 
-    has_transport = bool(
-        re.search(rf"^\s*TransPort\s+{transport_port}\b", content, re.MULTILINE)
-    )
+    has_transport = bool(re.search(rf"^\s*TransPort\s+{transport_port}\b", content, re.MULTILINE))
     has_dnsport = bool(re.search(rf"^\s*DNSPort\s+{dns_port}\b", content, re.MULTILINE))
     has_control = bool(re.search(r"^\s*ControlSocket\s+", content, re.MULTILINE))
     return has_transport and has_dnsport and has_control
@@ -153,9 +150,9 @@ def _detect_tor_user() -> str:
 # backward compatibility with any code that imports from tor_detect directly.
 # ---------------------------------------------------------------------------
 
-from ttp.system_info import (  # noqa: E402, F401
-    is_firewalld_active,
+from ttp.system_info import (  # noqa: E402
     is_fedora_family,
+    is_firewalld_active,
     is_ipv6_supported,
     is_selinux_enforcing,
     is_selinux_module_installed,
@@ -184,9 +181,7 @@ def detect_tor(
     return {
         "is_installed": installed,
         "is_running": _check_running() if installed else False,
-        "is_configured": _check_config(transport_port=transport_port, dns_port=dns_port)
-        if installed
-        else False,
+        "is_configured": _check_config(transport_port=transport_port, dns_port=dns_port) if installed else False,
         "tor_user": _detect_tor_user(),
         "version": _get_version() if installed else "",
         "is_fedora": is_fedora_family(),

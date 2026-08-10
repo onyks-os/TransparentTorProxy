@@ -19,13 +19,14 @@ KEY RESPONSIBILITIES:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
-import socket
 import time
-import logging
 import urllib.request  # noqa: F401
-from typing import Callable, Optional
+from collections.abc import Callable
+from typing import Optional
+
 from ttp.exceptions import TorError
 
 logger = logging.getLogger("ttp")
@@ -40,8 +41,8 @@ VERIFY_ENDPOINTS = [
 ]
 
 try:
-    from stem.control import Controller
     from stem import Signal
+    from stem.control import Controller
 except ImportError:
     Controller = None
     Signal = None
@@ -109,7 +110,7 @@ def get_controller():
         ctrl = Controller.from_socket_file(_TTP_CONTROL_SOCKET)
         ctrl.authenticate()
         return ctrl
-    except (socket.error, stem.SocketError) as e:
+    except (OSError, stem.SocketError) as e:
         logger.debug("Tor control socket not reachable: %s", e)
         return None
     except stem.connection.AuthenticationFailure as e:
@@ -120,9 +121,7 @@ def get_controller():
         return None
 
 
-def wait_for_bootstrap(
-    progress_callback: Optional[Callable[[int], None]] = None, timeout: int = 180
-) -> bool:
+def wait_for_bootstrap(progress_callback: Optional[Callable[[int], None]] = None, timeout: int = 180) -> bool:
     """Wait for Tor to reach 100% bootstrap status via ControlPort.
 
     Parameters
@@ -141,9 +140,7 @@ def wait_for_bootstrap(
         time.sleep(2)
 
     if not controller:
-        raise TorError(
-            f"Could not connect to Tor control interface after {bootstrap_conn_timeout}s."
-        )
+        raise TorError(f"Could not connect to Tor control interface after {bootstrap_conn_timeout}s.")
 
     # 2. Monitor bootstrap progress.
     import stem
@@ -164,10 +161,8 @@ def wait_for_bootstrap(
                 time.sleep(1)
 
             raise TorError("Tor bootstrap timed out.")
-    except (stem.ControllerError, socket.error) as e:
-        raise TorError(
-            f"Tor control socket communication failed during bootstrap: {e}"
-        ) from e
+    except (OSError, stem.ControllerError) as e:
+        raise TorError(f"Tor control socket communication failed during bootstrap: {e}") from e
 
 
 def verify_tor() -> tuple[bool, str]:
@@ -183,7 +178,7 @@ def verify_tor() -> tuple[bool, str]:
         ``(is_tor, exit_ip)`` - whether we confirmed Tor routing,
         and the exit IP address.
     """
-    for attempt in range(1, 6):  # 5 attempts
+    for _attempt in range(1, 6):  # 5 attempts
         for endpoint in VERIFY_ENDPOINTS:
             data = _fetch_endpoint(endpoint)
             if data is None:
@@ -214,16 +209,14 @@ def request_new_circuit() -> tuple[bool, str]:
 
     ctrl = get_controller()
     if ctrl is None:
-        raise TorError(
-            "Cannot connect to Tor control interface. Check that Tor is running."
-        )
+        raise TorError("Cannot connect to Tor control interface. Check that Tor is running.")
 
     import stem
 
     try:
         with ctrl:
             ctrl.signal(Signal.NEWNYM)
-    except (stem.ControllerError, socket.error) as e:
+    except (OSError, stem.ControllerError) as e:
         raise TorError(f"Failed to request new circuit from Tor controller: {e}") from e
 
     new_ip = old_ip
@@ -275,9 +268,9 @@ def graceful_shutdown(timeout: int = 10) -> bool:
                 return True
             try:
                 ctrl_check.close()
-            except (stem.ControllerError, socket.error):
+            except (OSError, stem.ControllerError):
                 pass
             time.sleep(1)
         return True
-    except (stem.ControllerError, socket.error):
+    except (OSError, stem.ControllerError):
         return False

@@ -146,18 +146,14 @@ def test_apply_dns_failure():
 def test_is_mount_point_found():
     """_is_mount_point returns True when target is listed in /proc/mounts."""
     proc_mounts = "tmpfs /run tmpfs rw 0 0\n/dev/sda1 /etc/resolv.conf ext4 rw 0 0\n"
-    with patch(
-        "builtins.open", MagicMock(return_value=__import__("io").StringIO(proc_mounts))
-    ):
+    with patch("builtins.open", MagicMock(return_value=__import__("io").StringIO(proc_mounts))):
         assert dns._is_mount_point("/etc/resolv.conf") is True
 
 
 def test_is_mount_point_not_found():
     """_is_mount_point returns False when target is not in /proc/mounts."""
     proc_mounts = "tmpfs /run tmpfs rw 0 0\n"
-    with patch(
-        "builtins.open", MagicMock(return_value=__import__("io").StringIO(proc_mounts))
-    ):
+    with patch("builtins.open", MagicMock(return_value=__import__("io").StringIO(proc_mounts))):
         assert dns._is_mount_point("/etc/resolv.conf") is False
 
 
@@ -198,7 +194,7 @@ def test_clear_stale_mounts_noop_when_clean():
 
 def test_apply_dns_clears_stale_before_mount(_mock_resolv_conf):
     """apply_dns calls _clear_stale_mounts before mount --bind."""
-    fake_resolv, fake_runtime = _mock_resolv_conf
+    fake_resolv, _fake_runtime = _mock_resolv_conf
     call_order = []
 
     def track_clear(target):
@@ -296,9 +292,7 @@ class TestDnsResolved:
     @patch("ttp.dns_resolved.RESOLVED_CONF_DIR")
     @patch("ttp.dns_resolved.subprocess.run")
     @patch("ttp.system_info.is_ipv6_supported", return_value=True)
-    def test_apply_resolved_active_success(
-        self, mock_ipv6, mock_run, mock_dir, mock_file, mock_active
-    ):
+    def test_apply_resolved_active_success(self, mock_ipv6, mock_run, mock_dir, mock_file, mock_active):
         mock_run.return_value = MagicMock(returncode=0)
 
         res = dns_resolved.apply_resolved(dns_port=9054, disable_ipv6=False)
@@ -312,9 +306,7 @@ class TestDnsResolved:
 
         # Check restart and flush commands
         calls = mock_run.call_args_list
-        assert ["systemctl", "restart", "systemd-resolved"] in [
-            c.args[0] for c in calls
-        ]
+        assert ["systemctl", "restart", "systemd-resolved"] in [c.args[0] for c in calls]
         assert ["resolvectl", "flush-caches"] in [c.args[0] for c in calls]
 
     @patch("ttp.dns_resolved.is_resolved_active", return_value=True)
@@ -322,9 +314,7 @@ class TestDnsResolved:
     @patch("ttp.dns_resolved.RESOLVED_CONF_DIR")
     @patch("ttp.dns_resolved.subprocess.run")
     @patch("ttp.system_info.is_ipv6_supported", return_value=True)
-    def test_apply_resolved_active_success_no_ipv6(
-        self, mock_ipv6, mock_run, mock_dir, mock_file, mock_active
-    ):
+    def test_apply_resolved_active_success_no_ipv6(self, mock_ipv6, mock_run, mock_dir, mock_file, mock_active):
         mock_run.return_value = MagicMock(returncode=0)
 
         res = dns_resolved.apply_resolved(dns_port=9054, disable_ipv6=True)
@@ -339,9 +329,7 @@ class TestDnsResolved:
     @patch("ttp.dns_resolved.RESOLVED_CONF_DIR")
     @patch("ttp.dns_resolved.restore_resolved")
     @patch("ttp.dns_resolved.subprocess.run", side_effect=Exception("restart failed"))
-    def test_apply_resolved_failure_restores(
-        self, mock_run, mock_restore, mock_dir, mock_file, mock_active
-    ):
+    def test_apply_resolved_failure_restores(self, mock_run, mock_restore, mock_dir, mock_file, mock_active):
         with pytest.raises(Exception, match="restart failed"):
             dns_resolved.apply_resolved(9054)
         mock_restore.assert_called_once()
@@ -356,7 +344,5 @@ class TestDnsResolved:
 
         mock_file.unlink.assert_called_once()
         calls = mock_run.call_args_list
-        assert ["systemctl", "restart", "systemd-resolved"] in [
-            c.args[0] for c in calls
-        ]
+        assert ["systemctl", "restart", "systemd-resolved"] in [c.args[0] for c in calls]
         assert ["resolvectl", "flush-caches"] in [c.args[0] for c in calls]

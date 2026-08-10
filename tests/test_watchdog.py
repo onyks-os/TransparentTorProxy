@@ -9,7 +9,7 @@ All system interactions (systemctl, nft, state lock, dns, firewall) are fully mo
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
@@ -125,9 +125,7 @@ def test_stop_watchdog(mock_update, mock_run, temp_watchdog_path):
 def test_check_system_integrity_healthy(mock_get_ctrl, mock_run, mock_is_mount):
     """check_system_integrity returns (None, None) when all systems are healthy."""
     # Mock nftables ruleset to contain filter_out
-    mock_run.return_value = MagicMock(
-        stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0
-    )
+    mock_run.return_value = MagicMock(stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0)
 
     # Mock Tor controller: supports context manager protocol for the 'with ctrl:' block
     mock_ctrl = MagicMock()
@@ -170,9 +168,7 @@ def test_check_system_integrity_firewall_missing_table(mock_run, mock_is_mount):
 @patch("subprocess.run")
 def test_check_system_integrity_firewall_incomplete_table(mock_run, mock_is_mount):
     """check_system_integrity detects when 'inet ttp' table is present but incomplete."""
-    mock_run.return_value = MagicMock(
-        stdout="table inet ttp {\n  chain something_else {}\n}\n", returncode=0
-    )
+    mock_run.return_value = MagicMock(stdout="table inet ttp {\n  chain something_else {}\n}\n", returncode=0)
 
     comp, err = wd.check_system_integrity()
     assert comp == "firewall"
@@ -183,18 +179,14 @@ def test_check_system_integrity_firewall_incomplete_table(mock_run, mock_is_moun
 @patch("ttp.dns._is_mount_point", return_value=True)
 @patch("subprocess.run")
 @patch("ttp.tor_control.get_controller", return_value=None)
-def test_check_system_integrity_tor_socket_inactive_service(
-    mock_get_ctrl, mock_run, mock_is_mount
-):
+def test_check_system_integrity_tor_socket_inactive_service(mock_get_ctrl, mock_run, mock_is_mount):
     """check_system_integrity detects when Tor socket is closed and systemd service is inactive."""
 
     # nftables: OK
     # Tor service: inactive
     def run_side_effect(args, **kwargs):
         if args[0] == "nft":
-            return MagicMock(
-                stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0
-            )
+            return MagicMock(stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0)
         elif args[0] == "systemctl" and "is-active" in args:
             return MagicMock(stdout="inactive\n", returncode=0)
         return MagicMock(returncode=0)
@@ -210,13 +202,9 @@ def test_check_system_integrity_tor_socket_inactive_service(
 @patch("ttp.dns._is_mount_point", return_value=True)
 @patch("subprocess.run")
 @patch("ttp.tor_control.get_controller")
-def test_check_system_integrity_tor_unresponsive(
-    mock_get_ctrl, mock_run, mock_is_mount
-):
+def test_check_system_integrity_tor_unresponsive(mock_get_ctrl, mock_run, mock_is_mount):
     """check_system_integrity detects when Tor socket exists but get_info fails (stale/dead Tor)."""
-    mock_run.return_value = MagicMock(
-        stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0
-    )
+    mock_run.return_value = MagicMock(stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0)
 
     # Simulate a stale socket: get_info raises an exception inside the 'with' block
     mock_ctrl = MagicMock()
@@ -450,9 +438,7 @@ def test_has_default_route_false(mock_exists):
 @patch("ttp.watchdog.inotify.has_default_route")
 @patch("time.sleep")
 @patch("ttp.watchdog.inotify.check_system_integrity")
-def test_run_watchdog_loop_suspends_and_resumes(
-    mock_check, mock_sleep, mock_has_route, mock_online, mock_read
-):
+def test_run_watchdog_loop_suspends_and_resumes(mock_check, mock_sleep, mock_has_route, mock_online, mock_read):
     """run_watchdog_loop enters suspended state when network is offline, and resumes once online."""
     mock_read.side_effect = [
         {"interface": "eth0"},  # First iteration start
@@ -491,9 +477,7 @@ def test_check_system_integrity_systemd_resolved_healthy(
     # 2. systemctl is-active systemd-resolved
     def mock_run_cmd(args, **kwargs):
         if "nft" in args:
-            return MagicMock(
-                stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0
-            )
+            return MagicMock(stdout="table inet ttp {\n  chain filter_out {}\n}\n", returncode=0)
         if "systemd-resolved" in args:
             return MagicMock(stdout="active\n", returncode=0)
         return MagicMock(returncode=0)
@@ -514,9 +498,7 @@ def test_check_system_integrity_systemd_resolved_healthy(
 @patch("ttp.dns._is_mount_point", return_value=True)
 @patch("ttp.state.read_lock")
 @patch("pathlib.Path.exists", return_value=False)
-def test_check_system_integrity_systemd_resolved_missing_config(
-    mock_exists, mock_read_lock, mock_is_mount
-):
+def test_check_system_integrity_systemd_resolved_missing_config(mock_exists, mock_read_lock, mock_is_mount):
     """check_system_integrity returns error if systemd-resolved was active on startup but config file is missing."""
     mock_read_lock.return_value = {"dns_backup": {"systemd_resolved": True}}
 
@@ -530,9 +512,7 @@ def test_check_system_integrity_systemd_resolved_missing_config(
 @patch("ttp.state.read_lock")
 @patch("subprocess.run")
 @patch("pathlib.Path.exists")
-def test_check_system_integrity_systemd_resolved_inactive_service(
-    mock_exists, mock_run, mock_read_lock, mock_is_mount
-):
+def test_check_system_integrity_systemd_resolved_inactive_service(mock_exists, mock_run, mock_read_lock, mock_is_mount):
     """check_system_integrity returns error if systemd-resolved service is inactive/stopped."""
     mock_read_lock.return_value = {"dns_backup": {"systemd_resolved": True}}
     mock_exists.return_value = True
@@ -559,13 +539,9 @@ def test_sanitize_alert_text():
 @patch("ttp.firewall.apply_emergency_killswitch")
 @patch("subprocess.run")
 @patch("shutil.which", return_value="notify-send")
-def test_trigger_emergency_killswitch_sanitization(
-    mock_which, mock_run, mock_killswitch
-):
+def test_trigger_emergency_killswitch_sanitization(mock_which, mock_run, mock_killswitch):
     """trigger_emergency_killswitch sanitizes failed_component and err_msg before using them in shell commands."""
-    wd.trigger_emergency_killswitch(
-        failed_component="dns\x1b[31m", err_msg="unmounted\r\n"
-    )
+    wd.trigger_emergency_killswitch(failed_component="dns\x1b[31m", err_msg="unmounted\r\n")
 
     # Verify firewall killswitch called
     mock_killswitch.assert_called_once()

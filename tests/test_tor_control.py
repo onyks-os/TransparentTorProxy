@@ -65,9 +65,7 @@ def test_get_controller_unix_socket(mock_controller_cls, mock_exists):
 
     ctrl = tor_control.get_controller()
     assert ctrl is mock_ctrl
-    mock_controller_cls.from_socket_file.assert_called_once_with(
-        "/run/tor/ttp/control.sock"
-    )
+    mock_controller_cls.from_socket_file.assert_called_once_with("/run/tor/ttp/control.sock")
     mock_ctrl.authenticate.assert_called_once()
     mock_controller_cls.from_port.assert_not_called()
 
@@ -83,16 +81,12 @@ def test_get_controller_no_socket_returns_none(mock_controller_cls, mock_exists)
 
 @patch("ttp.tor_control.os.path.exists", return_value=True)
 @patch("ttp.tor_control.Controller")
-def test_get_controller_socket_auth_fails_returns_none(
-    mock_controller_cls, mock_exists
-):
+def test_get_controller_socket_auth_fails_returns_none(mock_controller_cls, mock_exists):
     """If TTP socket auth fails, get_controller returns None (no system Tor fallback)."""
     import stem.connection
 
     mock_socket_ctrl = MagicMock()
-    mock_socket_ctrl.authenticate.side_effect = stem.connection.AuthenticationFailure(
-        "Auth failed"
-    )
+    mock_socket_ctrl.authenticate.side_effect = stem.connection.AuthenticationFailure("Auth failed")
     mock_controller_cls.from_socket_file.return_value = mock_socket_ctrl
 
     ctrl = tor_control.get_controller()
@@ -118,9 +112,7 @@ def test_wait_for_bootstrap_success(mock_get_ctrl, mock_sleep):
     # Using a list to capture progress values
     progress_values = []
 
-    result = tor_control.wait_for_bootstrap(
-        progress_callback=lambda x: progress_values.append(x)
-    )
+    result = tor_control.wait_for_bootstrap(progress_callback=lambda x: progress_values.append(x))
 
     assert result is True
     assert progress_values == [80, 100]

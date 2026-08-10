@@ -12,28 +12,18 @@ types of system failures and decide on the appropriate recovery strategy
 class TTPError(Exception):
     """Base class for all Transparent Tor Proxy exceptions."""
 
-    pass
-
 
 class FirewallError(TTPError):
     """Raised when nftables operations (backup, apply, restore) fail."""
-
-    pass
 
 
 class DNSError(TTPError):
     """Raised when DNS configuration (mount --bind overlay) fails."""
 
-    pass
-
 
 class StateError(TTPError):
     """Raised when session lock or state management fails."""
 
-    pass
-
 
 class TorError(TTPError):
     """Raised when Tor detection, installation, or control fails."""
-
-    pass

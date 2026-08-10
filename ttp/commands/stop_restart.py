@@ -10,8 +10,10 @@ from ttp import dns, firewall, state, tor_install
 from ttp.commands._common import (
     _PREFIX,
     console,
-    require_root as _require_root,
     require_systemd,
+)
+from ttp.commands._common import (
+    require_root as _require_root,
 )
 from ttp.commands.lifecycle import do_stop as _do_stop
 from ttp.commands.start import start_command

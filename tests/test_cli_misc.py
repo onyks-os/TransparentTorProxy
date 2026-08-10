@@ -9,7 +9,7 @@ Tests verify command orchestration logic, not system interactions.
 
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -79,9 +79,7 @@ def test_status_inactive(mock_read):
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 @patch("ttp.state.delete_star_sentinel")
 @patch("os.geteuid", return_value=0)
-def test_uninstall_calls_cleanup(
-    mock_euid, mock_del_star, mock_read, mock_is_sel, mock_rem_sel, mock_stop
-):
+def test_uninstall_calls_cleanup(mock_euid, mock_del_star, mock_read, mock_is_sel, mock_rem_sel, mock_stop):
     """uninstall -> stops session, removes SELinux."""
     result = runner.invoke(app, ["uninstall"])
     assert result.exit_code == 0
@@ -125,9 +123,7 @@ def test_check_leak_success(mock_read, mock_verify, mock_which, mock_run):
     def side_effect(cmd, *args, **kwargs):
         mock_result = MagicMock()
         tokens = _mock_cmd_tokens(cmd)
-        if any(t == "check.torproject.org" for t in tokens) and not any(
-            t == "TXT" for t in tokens
-        ):
+        if any(t == "check.torproject.org" for t in tokens) and not any(t == "TXT" for t in tokens):
             mock_result.stdout = "2.2.2.2\n"
         elif any(t == "whoami.ipv4.akahelp.net" for t in tokens):
             mock_result.stdout = '"9.9.9.9"\n'
@@ -144,17 +140,13 @@ def test_check_leak_success(mock_read, mock_verify, mock_which, mock_run):
 @patch("shutil.which", return_value="/usr/bin/dig")
 @patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
-def test_check_leak_akahelp_txt_ip_not_a_leak(
-    mock_read, mock_verify, mock_which, mock_run
-):
+def test_check_leak_akahelp_txt_ip_not_a_leak(mock_read, mock_verify, mock_which, mock_run):
     """Resolver IP from Akamai TXT must not set has_leaks (regression for false positives)."""
 
     def side_effect(cmd, *args, **kwargs):
         mock_result = MagicMock()
         tokens = _mock_cmd_tokens(cmd)
-        if any(t == "check.torproject.org" for t in tokens) and not any(
-            t == "TXT" for t in tokens
-        ):
+        if any(t == "check.torproject.org" for t in tokens) and not any(t == "TXT" for t in tokens):
             mock_result.stdout = "2.2.2.2\n"
         elif any(t == "whoami.ipv4.akahelp.net" for t in tokens):
             mock_result.stdout = "192.168.50.1\n"
@@ -178,9 +170,7 @@ def test_check_leak_detected_istor_false(mock_read, mock_verify):
         def side_effect(cmd, *args, **kwargs):
             mock_result = MagicMock()
             tokens = _mock_cmd_tokens(cmd)
-            if any(t == "check.torproject.org" for t in tokens) and not any(
-                t == "TXT" for t in tokens
-            ):
+            if any(t == "check.torproject.org" for t in tokens) and not any(t == "TXT" for t in tokens):
                 mock_result.stdout = "2.2.2.2\n"
             elif any(t == "whoami.ipv4.akahelp.net" for t in tokens):
                 mock_result.stdout = ""
@@ -226,9 +216,7 @@ def test_check_leak_empty_dig_a(mock_read, mock_run, mock_which, mock_verify):
     def side_effect(cmd, *args, **kwargs):
         m = MagicMock()
         tokens = _mock_cmd_tokens(cmd)
-        if any(t == "check.torproject.org" for t in tokens) and not any(
-            t == "TXT" for t in tokens
-        ):
+        if any(t == "check.torproject.org" for t in tokens) and not any(t == "TXT" for t in tokens):
             m.stdout = ""
         elif any(t == "whoami.ipv4.akahelp.net" for t in tokens):
             m.stdout = '"1.1.1.1"'
@@ -384,8 +372,9 @@ def test_watchdog_run(mock_run_loop, mock_euid):
 
 def test_json_formatter_records():
     """JSONFormatter converts a LogRecord into a valid JSON string with expected keys."""
-    import logging
     import json
+    import logging
+
     from ttp.commands._common import JSONFormatter
 
     formatter = JSONFormatter()
@@ -435,7 +424,7 @@ def test_json_formatter_records():
 @patch("logging.StreamHandler")
 def test_setup_logging_json(mock_stream, mock_file, mock_ensure):
     """_setup_logging configures JSON formatter on handlers when log_format is 'json'."""
-    from ttp.commands._common import cli_state, JSONFormatter, logger
+    from ttp.commands._common import JSONFormatter, cli_state, logger
 
     mock_file_handler = MagicMock()
     mock_file.return_value = mock_file_handler

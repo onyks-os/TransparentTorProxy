@@ -45,9 +45,7 @@ cli_state = CLIState()
 
 def print_error(title: str, msg: str) -> None:
     """Print a styled error message using a Rich Panel."""
-    err_console.print(
-        Panel(msg, title=f"[bold red]{title}[/bold red]", border_style="red")
-    )
+    err_console.print(Panel(msg, title=f"[bold red]{title}[/bold red]", border_style="red"))
 
 
 # ---------------------------------------------------------------------------

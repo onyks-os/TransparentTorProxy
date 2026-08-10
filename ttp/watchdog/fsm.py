@@ -3,13 +3,14 @@
 
 """Finite State Machine (FSM) implementation for TTP watchdog."""
 
-import logging
-import os
-import time
-import socket
 import ctypes
 import ctypes.util
+import logging
+import os
+import socket
+import time
 from typing import Any
+
 from transitions import Machine
 
 from ttp.watchdog.alerts import trigger_emergency_killswitch
@@ -142,9 +143,7 @@ class WatchdogFSM:
         # 1. Watch the real target path of resolv.conf
         try:
             resolv_real_path = os.path.realpath("/etc/resolv.conf")
-            self.wd_real = self._libc.inotify_add_watch(
-                self.inotify_fd, resolv_real_path.encode("utf-8"), WATCH_MASK
-            )
+            self.wd_real = self._libc.inotify_add_watch(self.inotify_fd, resolv_real_path.encode("utf-8"), WATCH_MASK)
             if self.wd_real >= 0:
                 logger.info(
                     "Watchdog: Inotify watch established on real target %s",
@@ -156,9 +155,7 @@ class WatchdogFSM:
                     resolv_real_path,
                 )
         except Exception as e:
-            logger.warning(
-                "Watchdog: Exception when adding watch on real target: %s", e
-            )
+            logger.warning("Watchdog: Exception when adding watch on real target: %s", e)
 
         # 2. Watch the symlink itself (without following) to detect link target swapping
         try:
@@ -166,13 +163,9 @@ class WatchdogFSM:
                 self.inotify_fd, b"/etc/resolv.conf", WATCH_MASK | IN_DONT_FOLLOW
             )
             if self.wd_link >= 0:
-                logger.info(
-                    "Watchdog: Inotify watch established on symlink /etc/resolv.conf"
-                )
+                logger.info("Watchdog: Inotify watch established on symlink /etc/resolv.conf")
             else:
-                logger.warning(
-                    "Watchdog: Failed to add inotify watch on symlink /etc/resolv.conf"
-                )
+                logger.warning("Watchdog: Failed to add inotify watch on symlink /etc/resolv.conf")
         except Exception as e:
             logger.warning("Watchdog: Exception when adding watch on symlink: %s", e)
 
@@ -213,12 +206,8 @@ class WatchdogFSM:
 
         # Setup Netlink Socket
         try:
-            self.netlink_socket = socket.socket(
-                socket.AF_NETLINK, socket.SOCK_RAW, NETLINK_NETFILTER
-            )
-            self.netlink_socket.setsockopt(
-                SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, NFNLGRP_NFTABLES
-            )
+            self.netlink_socket = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, NETLINK_NETFILTER)
+            self.netlink_socket.setsockopt(SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, NFNLGRP_NFTABLES)
             self.netlink_socket.bind((0, 0))
             self.netlink_socket.setblocking(False)
         except Exception as e:
@@ -286,9 +275,7 @@ class WatchdogFSM:
             self.heal_fail(failed_comp=failed_comp, err_msg=err_msg)
 
     def _on_heal_success(self, event: Any) -> None:
-        logger.info(
-            "Watchdog FSM: Auto-healing was successful. Session integrity restored."
-        )
+        logger.info("Watchdog FSM: Auto-healing was successful. Session integrity restored.")
 
     def _on_heal_fail(self, event: Any) -> None:
         failed_comp = event.kwargs.get("failed_comp")

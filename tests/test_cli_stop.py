@@ -134,9 +134,7 @@ def test_stop_no_session(mock_euid, mock_read):
     return_value={"dns_backup": {"mount_target": "/etc/resolv.conf"}},
 )
 @patch("os.geteuid", return_value=0)
-def test_stop_restore_only_with_lock(
-    mock_euid, mock_read, mock_stop_tor, mock_fw, mock_dns, mock_del, mock_stop_wd
-):
+def test_stop_restore_only_with_lock(mock_euid, mock_read, mock_stop_tor, mock_fw, mock_dns, mock_del, mock_stop_wd):
     result = runner.invoke(app, ["stop", "--restore-only"])
     assert result.exit_code == 0
     assert "Forcing network restoration" in result.output
@@ -181,12 +179,8 @@ def test_stop_restore_only_no_lock(
 @patch("ttp.commands.stop_restart._do_stop")
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 @patch("os.geteuid", return_value=0)
-def test_restart_active_session(
-    mock_euid, mock_read, mock_stop, mock_sleep, mock_start
-):
-    result = runner.invoke(
-        app, ["restart", "--interface", "wlan0", "--bootstrap-timeout", "300"]
-    )
+def test_restart_active_session(mock_euid, mock_read, mock_stop, mock_sleep, mock_start):
+    result = runner.invoke(app, ["restart", "--interface", "wlan0", "--bootstrap-timeout", "300"])
     assert result.exit_code == 0
     mock_stop.assert_called_once()
     mock_sleep.assert_called_once_with(1)

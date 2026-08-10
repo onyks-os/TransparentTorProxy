@@ -4,60 +4,75 @@
 """Watchdog & Killswitch Module - Proactive Session Integrity & Auto-Healing."""
 
 # Re-expose standard modules and libraries for test mock compatibility
-from pathlib import Path as Path
+import select as select
 import shutil as shutil
 import subprocess as subprocess
 import time as time
-import select as select
+from pathlib import Path as Path
+
+from ttp import (
+    dns as dns,
+)
+from ttp import (
+    firewall as firewall,
+)
 from ttp import (
     state as state,
-    dns as dns,
-    firewall as firewall,
+)
+from ttp import (
     tor_control as tor_control,
+)
+from ttp.watchdog import (
+    alerts as alerts,
+)
+from ttp.watchdog import (
+    fsm as fsm,
+)
+from ttp.watchdog import (
+    inotify as inotify,
+)
+from ttp.watchdog import (
+    integrity as integrity,
 )
 
 # Expose internal submodules so they are accessible as attributes on ttp.watchdog
 from ttp.watchdog import (
     service as service,
-    inotify as inotify,
-    integrity as integrity,
-    alerts as alerts,
-    fsm as fsm,
-)
-
-# Re-export the public API
-from ttp.watchdog.service import (
-    start_watchdog,
-    stop_watchdog,
-    _write_watchdog_service_unit,
-    WATCHDOG_SERVICE_NAME,
-    WATCHDOG_SERVICE_PATH,
-)
-from ttp.watchdog.inotify import run_watchdog_loop
-from ttp.watchdog.fsm import WatchdogFSM
-from ttp.watchdog.integrity import (
-    check_system_integrity,
-    attempt_auto_healing,
-    is_interface_online,
-    has_default_route,
 )
 from ttp.watchdog.alerts import (
     _sanitize_alert_text,
     trigger_emergency_killswitch,
 )
+from ttp.watchdog.fsm import WatchdogFSM
+from ttp.watchdog.inotify import run_watchdog_loop
+from ttp.watchdog.integrity import (
+    attempt_auto_healing,
+    check_system_integrity,
+    has_default_route,
+    is_interface_online,
+)
+
+# Re-export the public API
+from ttp.watchdog.service import (
+    WATCHDOG_SERVICE_NAME,
+    WATCHDOG_SERVICE_PATH,
+    _write_watchdog_service_unit,
+    start_watchdog,
+    stop_watchdog,
+)
 
 __all__ = [
-    "start_watchdog",
-    "stop_watchdog",
-    "_write_watchdog_service_unit",
     "WATCHDOG_SERVICE_NAME",
     "WATCHDOG_SERVICE_PATH",
-    "run_watchdog_loop",
     "WatchdogFSM",
-    "check_system_integrity",
-    "attempt_auto_healing",
-    "is_interface_online",
-    "has_default_route",
     "_sanitize_alert_text",
+    "_write_watchdog_service_unit",
+    "attempt_auto_healing",
+    "check_system_integrity",
+    "has_default_route",
+    "is_interface_online",
+    "run_watchdog_loop",
+    "start_watchdog",
+    "stop_watchdog",
     "trigger_emergency_killswitch",
 ]

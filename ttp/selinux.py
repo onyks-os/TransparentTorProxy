@@ -30,9 +30,7 @@ def setup_selinux_if_needed() -> None:
     logger.info("SELinux detected. Compiling and installing TTP Tor policy module...")
 
     # Use importlib.resources to access the policy file inside the package
-    traversable = importlib.resources.files("ttp.resources.selinux").joinpath(
-        "ttp_tor_policy.te"
-    )
+    traversable = importlib.resources.files("ttp.resources.selinux").joinpath("ttp_tor_policy.te")
 
     with importlib.resources.as_file(traversable) as te_path:
         if not te_path.exists():
@@ -67,9 +65,7 @@ def setup_selinux_if_needed() -> None:
 
             logger.info("SELinux policy module installed successfully.")
         except (subprocess.CalledProcessError, OSError) as e:
-            logger.warning(
-                f"SELinux policy installation failed: {e}. Tor might have permission issues."
-            )
+            logger.warning(f"SELinux policy installation failed: {e}. Tor might have permission issues.")
 
 
 def label_ports_selinux(transport_port: int, dns_port: int) -> None:

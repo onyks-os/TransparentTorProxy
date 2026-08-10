@@ -67,9 +67,7 @@ def do_stop() -> None:
             lock.get("dns_port", 9054),
         )
 
-    console.print(
-        f"{_PREFIX} Executing active socket slaughter (Zero-Leak teardown)..."
-    )
+    console.print(f"{_PREFIX} Executing active socket slaughter (Zero-Leak teardown)...")
     firewall.apply_active_socket_slaughter()
     console.print(f"{_PREFIX} Waiting 300ms for pending connections to crash...")
     time.sleep(0.3)

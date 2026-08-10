@@ -10,15 +10,14 @@ Corresponds to TDD Section 8.1.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from ttp.tor_detect import (
-    detect_tor,
     _check_config,
     _detect_tor_user,
+    detect_tor,
     is_firewalld_active,
 )
-
 
 # Helper: canonical subprocess side_effect
 
@@ -48,9 +47,7 @@ def _make_subprocess_side_effect(running: bool = True):
 def test_full_detection_all_true(tmp_path: Path):
     """torrc with TransPort and DNSPort -> dict with all True."""
     torrc = tmp_path / "torrc"
-    torrc.write_text(
-        "TransPort 9041\nDNSPort 9054\nControlSocket /run/tor/ttp/control.sock\n"
-    )
+    torrc.write_text("TransPort 9041\nDNSPort 9054\nControlSocket /run/tor/ttp/control.sock\n")
 
     with (
         patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/tor"),
@@ -82,9 +79,7 @@ def test_empty_torrc_not_configured(tmp_path: Path):
 def test_correct_torrc_is_configured(tmp_path: Path):
     """torrc with correct default ports -> is_configured = True."""
     torrc = tmp_path / "torrc"
-    torrc.write_text(
-        "TransPort 9041\nDNSPort 9054\nControlSocket /run/tor/ttp/control.sock\n"
-    )
+    torrc.write_text("TransPort 9041\nDNSPort 9054\nControlSocket /run/tor/ttp/control.sock\n")
 
     assert _check_config(torrc) is True
 
@@ -92,9 +87,7 @@ def test_correct_torrc_is_configured(tmp_path: Path):
 def test_custom_ports_configured(tmp_path: Path):
     """torrc with custom ports -> is_configured = True when ports are passed or default fallback matches."""
     torrc = tmp_path / "torrc"
-    torrc.write_text(
-        "TransPort 9060\nDNSPort 9070\nControlSocket /run/tor/ttp/control.sock\n"
-    )
+    torrc.write_text("TransPort 9060\nDNSPort 9070\nControlSocket /run/tor/ttp/control.sock\n")
 
     # 1. False if we check with default ports
     assert _check_config(torrc, transport_port=9041, dns_port=9054) is False
@@ -197,8 +190,7 @@ def test_detect_tor_user_from_ps_debian_tor():
 def test_detect_tor_user_fallback_to_passwd():
     """No running tor process, 'toranon' in /etc/passwd -> returns 'toranon'."""
     passwd_content = (
-        "root:x:0:0:root:/root:/bin/bash\n"
-        "toranon:x:964:964:Tor anonymizing user:/var/lib/tor:/sbin/nologin\n"
+        "root:x:0:0:root:/root:/bin/bash\ntoranon:x:964:964:Tor anonymizing user:/var/lib/tor:/sbin/nologin\n"
     )
     ps_output = "USER COMMAND\nroot systemd\n"
 
@@ -210,9 +202,7 @@ def test_detect_tor_user_fallback_to_passwd():
 
 def test_detect_tor_user_hard_fallback():
     """No process, no passwd match -> falls back to 'tor'."""
-    passwd_content = (
-        "root:x:0:0:root:/root:/bin/bash\nnobody:x:65534:65534::/:/sbin/nologin\n"
-    )
+    passwd_content = "root:x:0:0:root:/root:/bin/bash\nnobody:x:65534:65534::/:/sbin/nologin\n"
     ps_output = "USER COMMAND\nroot systemd\n"
 
     with patch("ttp.tor_detect.subprocess.run") as mock_run:

@@ -13,9 +13,7 @@ from pathlib import Path
 
 def test_selinux_policy_resource_exists():
     """Verify that the SELinux policy .te file is accessible."""
-    traversable = importlib.resources.files("ttp.resources.selinux").joinpath(
-        "ttp_tor_policy.te"
-    )
+    traversable = importlib.resources.files("ttp.resources.selinux").joinpath("ttp_tor_policy.te")
     assert traversable.exists()
     assert traversable.is_file()
 
@@ -27,9 +25,7 @@ def test_selinux_policy_resource_exists():
 
 def test_selinux_resource_as_file():
     """Verify that as_file context manager works (needed for subprocesses)."""
-    traversable = importlib.resources.files("ttp.resources.selinux").joinpath(
-        "ttp_tor_policy.te"
-    )
+    traversable = importlib.resources.files("ttp.resources.selinux").joinpath("ttp_tor_policy.te")
     with importlib.resources.as_file(traversable) as te_path:
         assert isinstance(te_path, Path)
         assert te_path.exists()

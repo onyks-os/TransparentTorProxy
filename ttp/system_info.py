@@ -23,10 +23,8 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict
 
 from ttp import state, tor_control
-
 
 # ---------------------------------------------------------------------------
 # OS-level inspection helpers (moved from tor_detect.py)
@@ -38,9 +36,7 @@ def is_selinux_enforcing() -> bool:
     if not shutil.which("getenforce"):
         return False
     try:
-        result = subprocess.run(
-            ["getenforce"], capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["getenforce"], capture_output=True, text=True, timeout=5)
         return result.stdout.strip() == "Enforcing"
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
@@ -54,9 +50,7 @@ def is_fedora_family() -> bool:
 
     try:
         content = os_release.read_text(encoding="utf-8").lower()
-        return any(
-            x in content for x in ["fedora", "rhel", "centos", "rocky", "almalinux"]
-        )
+        return any(x in content for x in ["fedora", "rhel", "centos", "rocky", "almalinux"])
     except OSError:
         return False
 
@@ -66,9 +60,7 @@ def is_selinux_module_installed() -> bool:
     if not shutil.which("semodule"):
         return False
     try:
-        result = subprocess.run(
-            ["semodule", "-l"], capture_output=True, text=True, timeout=10
-        )
+        result = subprocess.run(["semodule", "-l"], capture_output=True, text=True, timeout=10)
         return bool(re.search(r"ttp_tor_policy\s+1\.1\b", result.stdout))
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
@@ -103,7 +95,7 @@ def is_ipv6_supported() -> bool:
         return False
 
 
-def collect_diagnostics() -> Dict[str, str]:
+def collect_diagnostics() -> dict[str, str]:
     """Gather diagnostic information about the system and Tor.
 
     Does not raise exceptions if system commands fail. Instead, it embeds
@@ -121,7 +113,7 @@ def collect_diagnostics() -> Dict[str, str]:
         - "control_interface"
         - "ttp_state"
     """
-    results: Dict[str, str] = {}
+    results: dict[str, str] = {}
 
     # 1. System
     os_name = "Unknown"

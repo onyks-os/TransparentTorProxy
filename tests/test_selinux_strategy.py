@@ -18,10 +18,9 @@ from ttp.tor_detect import (
     is_selinux_module_installed,
 )
 from ttp.tor_install import (
-    setup_selinux_if_needed,
     remove_selinux_module,
+    setup_selinux_if_needed,
 )
-
 
 # -- OS Family Detection ----------------------------------------------
 
@@ -29,25 +28,22 @@ from ttp.tor_install import (
 def test_is_fedora_family_true_fedora():
     """Returns True if /etc/os-release contains 'fedora'."""
     content = 'ID=fedora\nNAME="Fedora Linux"'
-    with patch.object(Path, "exists", return_value=True):
-        with patch.object(Path, "read_text", return_value=content):
-            assert is_fedora_family() is True
+    with patch.object(Path, "exists", return_value=True), patch.object(Path, "read_text", return_value=content):
+        assert is_fedora_family() is True
 
 
 def test_is_fedora_family_true_rhel():
     """Returns True if /etc/os-release contains 'rhel'."""
     content = 'ID="rhel"\nID_LIKE="fedora"'
-    with patch.object(Path, "exists", return_value=True):
-        with patch.object(Path, "read_text", return_value=content):
-            assert is_fedora_family() is True
+    with patch.object(Path, "exists", return_value=True), patch.object(Path, "read_text", return_value=content):
+        assert is_fedora_family() is True
 
 
 def test_is_fedora_family_false_debian():
     """Returns False if /etc/os-release contains 'debian'."""
     content = 'ID=debian\nNAME="Debian GNU/Linux"'
-    with patch.object(Path, "exists", return_value=True):
-        with patch.object(Path, "read_text", return_value=content):
-            assert is_fedora_family() is False
+    with patch.object(Path, "exists", return_value=True), patch.object(Path, "read_text", return_value=content):
+        assert is_fedora_family() is False
 
 
 def test_is_fedora_family_fallback_to_redhat_release():
@@ -90,9 +86,7 @@ def test_is_selinux_module_installed_true():
     """Returns True if semodule -l lists the policy."""
     with patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/semodule"):
         with patch("ttp.tor_detect.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                stdout="ttp_tor_policy  1.1\nother_mod\n", returncode=0
-            )
+            mock_run.return_value = MagicMock(stdout="ttp_tor_policy  1.1\nother_mod\n", returncode=0)
             assert is_selinux_module_installed() is True
 
 

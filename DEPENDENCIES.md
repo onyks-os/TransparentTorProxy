@@ -45,15 +45,15 @@ Because TTP performs low-level routing and networking modifications, it relies o
 | **Python**                         | `>=3.10`    | The primary runtime interpreter.                                                                           |
 | **systemd**                        | Required    | Managing the lifecycle of the dedicated `ttp-tor.service` and `ttp-watchdog.service` units (not required in BYOD/external-daemon mode). |
 | **nftables** (`nft`)               | Required    | Atomic firewall rule application, redirecting TCP and DNS traffic, and enforcing the emergency killswitch. |
-| **tor**                            | Required    | The Tor network routing daemon. (Auto-installed if missing on supported package managers).                 |
+| **tor**                            | Required    | The Tor network routing daemon. (TTP checks binary presence and displays distro installation guidance if missing). |
 | **util-linux** (`mount`, `umount`) | Required    | Performing stateless bind-mounting overlays on `/etc/resolv.conf` to prevent DNS leaks.                    |
 
 ### 1.3 Optional & Dynamic Dependencies
 
 Depending on your distribution's configuration and active features, additional dependencies may be required:
 
-*   **SELinux Build Tools** (`checkpolicy`, `policycoreutils`): Required on Red Hat, Fedora, or CentOS systems where SELinux is in `Enforcing` mode. These are automatically installed (via `dnf`) to compile and load the custom `ttp_tor_policy.te` module allowing Tor to bind to non-standard ports.
-*   **Pluggable Transports** (`obfs4proxy`, `snowflake-client`): Required when using Tor bridges. TTP will automatically detect if these are missing and attempt to install them via the system package manager (`apt-get`, `dnf`, `pacman`, `zypper`) if bridges of these types are configured.
+*   **SELinux Build Tools** (`checkpolicy`, `policycoreutils`): Required on Red Hat, Fedora, or CentOS systems where SELinux is in `Enforcing` mode to compile and load the custom `ttp_tor_policy.te` module allowing Tor to bind to non-standard ports.
+*   **Pluggable Transports** (`obfs4proxy`, `snowflake-client`): Required when using Tor bridges. TTP will detect if helper binaries are missing and display distro-specific package installation guidance.
 *   **Network Utilities** (`dig` from bind-utils/dnsutils, `curl`): Used for leak detection, diagnostics, and testing scripts.
 
 ---

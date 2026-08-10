@@ -6,6 +6,7 @@
 import logging
 import pwd
 import subprocess
+
 from ttp.exceptions import FirewallError
 from ttp.firewall.builder import _build_ruleset, _has_cgroup_bypass_support
 from ttp.state import LOCK_DIR
@@ -17,9 +18,16 @@ RULES_TEMP_PATH = LOCK_DIR / "ttp.rules"
 
 
 def _run_nft(args: list[str]) -> None:
-    """Helper to run nft commands."""
+    """Execute an nft CLI command synchronously.
+
+    Args:
+        args: Command arguments to append to ``nft`` (e.g. ``["add", "table", "inet", "ttp"]``).
+
+    Raises:
+        subprocess.CalledProcessError: If the ``nft`` command exits with non-zero status.
+    """
     subprocess.run(
-        ["nft"] + args,
+        ["nft", *args],
         capture_output=True,
         text=True,
         check=True,
@@ -28,7 +36,14 @@ def _run_nft(args: list[str]) -> None:
 
 
 def _run_nft_string(ruleset: str) -> None:
-    """Inject a complex ruleset string directly into nft via a temporary file."""
+    """Inject a complex ruleset string directly into nft via a volatile temporary file.
+
+    Args:
+        ruleset: The complete nftables ruleset definition string.
+
+    Raises:
+        FirewallError: If writing to state or running ``nft -f`` fails.
+    """
     try:
         # Ensure the state directory exists
         LOCK_DIR.mkdir(parents=True, exist_ok=True)
@@ -59,10 +74,23 @@ def apply_rules(
     bypass_gids: list[int] | None = None,
     disable_ipv6: bool = False,
 ) -> None:
-    """Create the 'ttp' table and inject redirection rules.
+    """Create the dedicated 'inet ttp' table and inject redirection rules.
 
-    Orchestrates the process: Create -> Flush -> Inject.
-    If any step fails, it triggers an automatic rollback (destruction).
+    Orchestrates the atomic sequence: Create Table -> Flush Table -> Apply Ruleset.
+    If any step fails, triggers an automatic rollback (table destruction).
+
+    Args:
+        tor_user: Username or numeric UID string of the Tor daemon process.
+        transport_port: Local TCP port for Tor TransPort redirection.
+        dns_port: Local UDP/TCP port for Tor DNSPort redirection.
+        allow_root: If True, allows processes running as root (UID 0) to bypass rules.
+        lan_bypass: If True, excludes local LAN subnets from redirection.
+        bypass_uids: Optional list of numeric UIDs exempted from redirection.
+        bypass_gids: Optional list of numeric GIDs exempted from redirection.
+        disable_ipv6: If True, forces dropping all IPv6 traffic regardless of host availability.
+
+    Raises:
+        FirewallError: If the tor_user is invalid or rule injection fails.
     """
     # Resolve numeric UID for the tor user to avoid nft resolution issues
     try:
@@ -101,9 +129,7 @@ def apply_rules(
         _run_nft(["add", "table", "inet", "ttp"])
         _run_nft(["flush", "table", "inet", "ttp"])
         _run_nft_string(ruleset)
-        logger.info(
-            f"Stateless rules applied. Tor user ({tor_user}, UID {tor_uid}) is exempt."
-        )
+        logger.info(f"Stateless rules applied. Tor user ({tor_user}, UID {tor_uid}) is exempt.")
     except Exception as e:
         logger.error(f"Firewall injection failed: {e}. Rolling back...")
         destroy_rules()
@@ -115,11 +141,14 @@ def apply_rules(
 def destroy_rules() -> bool:
     """Destroy the 'ttp' table and clean up firewall rules.
 
-    This is the atomic cleanup operation. It attempts to destroy the table
-    and verifies success.
+    This is the atomic cleanup operation. It flushes the table, destroys it,
+    and verifies that the table is no longer present in kernel state.
 
     Returns:
-        bool: True if the table was successfully destroyed or already gone, False otherwise.
+        bool: True if the table was successfully destroyed or already gone.
+
+    Raises:
+        FirewallError: If table destruction fails and the table remains active.
     """
     # Flush the table first for absolute cleanup safety
     subprocess.run(

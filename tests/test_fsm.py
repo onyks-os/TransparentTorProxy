@@ -4,6 +4,7 @@
 """Tests for WatchdogFSM - state machine validations."""
 
 from unittest.mock import MagicMock, patch
+
 import pytest
 from transitions import MachineError
 
@@ -62,9 +63,7 @@ def test_fsm_initialize_failure(mock_fsm_dependencies):
         fsm.initialize(interface="eth0", interval_seconds=15)
     assert fsm.state == "stopped"
     # Verify emergency killswitch was triggered
-    mock_fsm_dependencies["killswitch"].assert_called_once_with(
-        "firewall", "Netlink setup failure: mock bind error"
-    )
+    mock_fsm_dependencies["killswitch"].assert_called_once_with("firewall", "Netlink setup failure: mock bind error")
 
 
 def test_fsm_disconnect_reconnect(mock_fsm_dependencies):
@@ -112,9 +111,7 @@ def test_fsm_integrity_healing_failure(mock_fsm_dependencies):
     fsm.integrity_fail(failed_comp="tor", err_msg="socket inactive")
     # auto-healing returns False, which internally triggers heal_fail -> killswitch
     assert fsm.state == "killswitch"
-    mock_fsm_dependencies["killswitch"].assert_called_once_with(
-        "tor", "socket inactive"
-    )
+    mock_fsm_dependencies["killswitch"].assert_called_once_with("tor", "socket inactive")
 
 
 def test_fsm_direct_tamper(mock_fsm_dependencies):
@@ -125,9 +122,7 @@ def test_fsm_direct_tamper(mock_fsm_dependencies):
 
     fsm.tamper(failed_comp="dns", err_msg="resolv.conf unmounted")
     assert fsm.state == "killswitch"
-    mock_fsm_dependencies["killswitch"].assert_called_once_with(
-        "dns", "resolv.conf unmounted"
-    )
+    mock_fsm_dependencies["killswitch"].assert_called_once_with("dns", "resolv.conf unmounted")
 
 
 def test_fsm_shutdown_releases_resources(mock_fsm_dependencies):

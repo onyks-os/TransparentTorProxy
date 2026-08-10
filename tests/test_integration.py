@@ -61,13 +61,9 @@ def ensure_clean_state():
 def test_full_ttp_flow():
     """Test the full TTP start -> verify -> refresh -> stop flow."""
     # 1. Start TTP
-    res = subprocess.run(
-        ["ttp", "start", "--bootstrap-timeout", "300"], capture_output=True, text=True
-    )
+    res = subprocess.run(["ttp", "start", "--bootstrap-timeout", "300"], capture_output=True, text=True)
     if res.returncode != 0:
-        status_res = subprocess.run(
-            ["systemctl", "status", "ttp-tor.service"], capture_output=True, text=True
-        )
+        status_res = subprocess.run(["systemctl", "status", "ttp-tor.service"], capture_output=True, text=True)
         journal_res = subprocess.run(
             ["journalctl", "-xeu", "ttp-tor.service", "--no-pager"],
             capture_output=True,
@@ -107,9 +103,7 @@ def test_full_ttp_flow():
         except Exception:
             time.sleep(2)
 
-    assert is_tor, (
-        f"Traffic is not routed through Tor!\nStart stdout:\n{res.stdout}\nStart stderr:\n{res.stderr}"
-    )
+    assert is_tor, f"Traffic is not routed through Tor!\nStart stdout:\n{res.stdout}\nStart stderr:\n{res.stderr}"
     assert exit_ip != "unknown", "Could not determine exit IP"
 
     # 3. Test Refresh Circuit
@@ -131,17 +125,13 @@ def test_full_ttp_flow():
                 if not is_tor_after:
                     break
                 else:
-                    print(
-                        f"Attempt {i + 1}: check.torproject.org says we are still on Tor! Data: {last_data}"
-                    )
+                    print(f"Attempt {i + 1}: check.torproject.org says we are still on Tor! Data: {last_data}")
                     time.sleep(2)
         except Exception as e:
             print(f"Cleartext verification attempt {i + 1} failed: {e}")
             time.sleep(2)
 
-    assert not is_tor_after, (
-        f"Traffic is STILL routed through Tor after 'ttp stop'! Last data: {last_data}"
-    )
+    assert not is_tor_after, f"Traffic is STILL routed through Tor after 'ttp stop'! Last data: {last_data}"
 
 
 @pytest.mark.integration
@@ -154,9 +144,7 @@ def test_custom_ports_flow():
         text=True,
     )
     if res.returncode != 0:
-        status_res = subprocess.run(
-            ["systemctl", "status", "ttp-tor.service"], capture_output=True, text=True
-        )
+        status_res = subprocess.run(["systemctl", "status", "ttp-tor.service"], capture_output=True, text=True)
         journal_res = subprocess.run(
             ["journalctl", "-xeu", "ttp-tor.service", "--no-pager"],
             capture_output=True,
@@ -216,17 +204,13 @@ def test_custom_ports_flow():
                 if not is_tor_after:
                     break
                 else:
-                    print(
-                        f"Attempt {i + 1}: check.torproject.org says we are still on Tor! Data: {last_data}"
-                    )
+                    print(f"Attempt {i + 1}: check.torproject.org says we are still on Tor! Data: {last_data}")
                     time.sleep(2)
         except Exception as e:
             print(f"Cleartext verification attempt {i + 1} failed: {e}")
             time.sleep(2)
 
-    assert not is_tor_after, (
-        f"Traffic is STILL routed through Tor after 'ttp stop'! Last data: {last_data}"
-    )
+    assert not is_tor_after, f"Traffic is STILL routed through Tor after 'ttp stop'! Last data: {last_data}"
 
 
 @pytest.mark.integration
@@ -237,12 +221,8 @@ def test_split_tunneling_flow():
     subprocess.run(["userdel", "-r", bypass_user], capture_output=True)
 
     # Create the user
-    res_user = subprocess.run(
-        ["useradd", "-m", bypass_user], capture_output=True, text=True
-    )
-    assert res_user.returncode == 0, (
-        f"Failed to create user {bypass_user}: {res_user.stderr}"
-    )
+    res_user = subprocess.run(["useradd", "-m", bypass_user], capture_output=True, text=True)
+    assert res_user.returncode == 0, f"Failed to create user {bypass_user}: {res_user.stderr}"
 
     try:
         # Get the real public IP first (unproxied)
@@ -267,9 +247,7 @@ def test_split_tunneling_flow():
             text=True,
         )
         if res.returncode != 0:
-            pytest.fail(
-                f"ttp start with bypass-user failed!\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}"
-            )
+            pytest.fail(f"ttp start with bypass-user failed!\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}")
 
         # 3. Verify normal traffic is routed through Tor
         req = urllib.request.Request(
@@ -299,17 +277,11 @@ def test_split_tunneling_flow():
             "-c",
             "import urllib.request, json; print(urllib.request.urlopen('https://check.torproject.org/api/ip', timeout=10).read().decode())",
         ]
-        bypass_res = subprocess.run(
-            cmd, capture_output=True, text=True, user=bypass_user
-        )
-        assert bypass_res.returncode == 0, (
-            f"Bypass user check failed: {bypass_res.stderr}"
-        )
+        bypass_res = subprocess.run(cmd, capture_output=True, text=True, user=bypass_user)
+        assert bypass_res.returncode == 0, f"Bypass user check failed: {bypass_res.stderr}"
 
         bypass_data = json.loads(bypass_res.stdout.strip())
-        assert not bypass_data.get("IsTor"), (
-            "Bypassed user's traffic is routed through Tor!"
-        )
+        assert not bypass_data.get("IsTor"), "Bypassed user's traffic is routed through Tor!"
         assert bypass_data.get("IP") == real_ip, (
             f"Bypassed user's IP {bypass_data.get('IP')} does not match real IP {real_ip}!"
         )

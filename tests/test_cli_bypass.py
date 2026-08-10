@@ -9,7 +9,7 @@ Tests verify command orchestration logic, not system interactions.
 
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner

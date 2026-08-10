@@ -4,9 +4,10 @@
 """Service management for the volatile TTP watchdog daemon."""
 
 import logging
-import sys
 import subprocess
+import sys
 from pathlib import Path
+
 from ttp import state
 from ttp.exceptions import TorError
 
@@ -92,11 +93,7 @@ def start_watchdog() -> None:
             timeout=10,
         )
         parts = res.stdout.strip().split("=")
-        watchdog_pid = (
-            int(parts[1])
-            if len(parts) > 1 and parts[1].isdigit() and int(parts[1]) > 0
-            else None
-        )
+        watchdog_pid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() and int(parts[1]) > 0 else None
 
         state.update_lock_keys(watchdog_active=True, watchdog_pid=watchdog_pid)
         logger.info("TTP watchdog service started (PID: %s).", watchdog_pid)

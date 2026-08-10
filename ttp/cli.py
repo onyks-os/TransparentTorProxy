@@ -19,7 +19,6 @@ network state is restored even on SIGINT/SIGTERM.
 
 from __future__ import annotations
 
-
 import typer
 
 from ttp.commands._common import (
@@ -36,13 +35,13 @@ from ttp.commands._common import (
     validate_bridge_line,
     verify_tor,
 )
-from ttp.commands.lifecycle import do_stop, signal_handler
 from ttp.commands.admin import (
     bypass_command,
     diagnose_command,
     logs_command,
     uninstall_command,
 )
+from ttp.commands.lifecycle import do_stop, signal_handler
 from ttp.commands.session import (
     check_command,
     check_leak_command,
@@ -77,12 +76,8 @@ app = typer.Typer(
 @app.callback()
 def main(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show debug output."),
-    quiet: bool = typer.Option(
-        False, "--quiet", "-q", help="Suppress all output except errors."
-    ),
-    log_format: str = typer.Option(
-        "text", "--log-format", help="Log format: 'text' or 'json'."
-    ),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress all output except errors."),
+    log_format: str = typer.Option("text", "--log-format", help="Log format: 'text' or 'json'."),
 ):
     cli_state.verbose = verbose
     cli_state.quiet = quiet

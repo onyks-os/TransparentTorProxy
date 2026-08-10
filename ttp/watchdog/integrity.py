@@ -8,6 +8,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Optional
+
 from ttp import dns, state, tor_control
 
 logger = logging.getLogger("ttp")
@@ -44,7 +45,7 @@ def has_default_route() -> bool:
         route_path = Path("/proc/net/route")
         if not route_path.exists():
             return False
-        with open(route_path, "r") as f:
+        with open(route_path) as f:
             for line in f:
                 parts = line.split()
                 if len(parts) >= 8:
@@ -135,8 +136,8 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
 
     # Verify bypass rules if configured in state lock
     if lock:
-        import pwd
         import grp
+        import pwd
 
         for u in lock.get("bypass_users", []):
             try:

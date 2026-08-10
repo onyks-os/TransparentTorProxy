@@ -1,0 +1,147 @@
+/*
+ * extra.css — Custom overrides for Material for MkDocs
+ */
+
+/*
+ * TOC Active-item fix: Material's IntersectionObserver cannot mark
+ * the last headings on short pages as "active" because the page cannot
+ * scroll far enough to bring them above the detection threshold.
+ *
+ * Adding a large bottom margin to the article element lets the browser
+ * scroll those headings past the midpoint, so the observer fires normally.
+ * The padding is visually hidden by the page footer background.
+ */
+.md-content__inner {
+    padding-bottom: 30vh;
+}
+
+/*
+ * Mermaid diagram sizing — prevent diagrams from overflowing their container.
+ */
+.mermaid {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+/*
+ * Custom Theme Palette (Security / GrapheneOS & GitHub Dark inspired)
+ */
+
+/* Dark mode (Elevated surface header + canvas contrast) */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #161b22;
+  --md-primary-fg-color--light: #21262d;
+  --md-primary-fg-color--dark: #010409;
+  --md-default-bg-color: #0d1117;
+  --md-default-fg-color: #f0f6fc;
+  --md-default-fg-color--light: #8b949e;
+  --md-default-fg-color--lighter: #484f58;
+  --md-typeset-color: #f0f6fc;
+  --md-typeset-a-color: #22d3ee;
+  --md-typeset-a-color--hover: #67e8f9;
+  --md-code-bg-color: #161b22;
+  --md-code-fg-color: #f0f6fc;
+}
+
+[data-md-color-scheme="slate"] .md-header,
+[data-md-color-scheme="slate"] .md-tabs {
+  background-color: #161b22;
+  border-bottom: 1px solid #30363d;
+}
+
+/* Light mode (Soft off-white canvas for eye comfort) */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #ffffff;
+  --md-primary-fg-color--light: #f6f8fa;
+  --md-primary-fg-color--dark: #d0d7de;
+  --md-primary-fg-color--text: #1f2328;
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: rgba(31, 35, 40, 0.07);
+  --md-default-bg-color: #f6f8fa;
+  --md-default-fg-color: #1f2328;
+  --md-default-fg-color--light: #656d76;
+  --md-default-fg-color--lighter: #8b949e;
+  --md-typeset-color: #1f2328;
+  --md-typeset-a-color: #0ea5e9;
+  --md-typeset-a-color--hover: #0284c7;
+  --md-code-bg-color: #ffffff;
+  --md-code-fg-color: #1f2328;
+}
+
+[data-md-color-scheme="default"] .md-header {
+  background-color: #ffffff;
+  color: #1f2328;
+  border-bottom: 1px solid #d0d7de;
+}
+
+[data-md-color-scheme="default"] .md-header__title,
+[data-md-color-scheme="default"] .md-header__button,
+[data-md-color-scheme="default"] .md-header__topic,
+[data-md-color-scheme="default"] .md-header__nav {
+  color: #1f2328 !important;
+}
+
+[data-md-color-scheme="default"] .md-tabs {
+  background-color: #ffffff;
+  border-bottom: 1px solid #d0d7de;
+}
+
+[data-md-color-scheme="default"] .md-tabs__link {
+  color: #656d76 !important;
+  opacity: 1;
+}
+
+[data-md-color-scheme="default"] .md-tabs__link--active,
+[data-md-color-scheme="default"] .md-tabs__link:hover {
+  color: #0ea5e9 !important;
+  opacity: 1;
+}
+
+[data-md-color-scheme="default"] .md-search__form {
+  background-color: #eaeef2;
+  border-radius: 6px;
+}
+
+[data-md-color-scheme="default"] .md-search__input {
+  color: #1f2328 !important;
+}
+
+[data-md-color-scheme="default"] .md-search__input::placeholder {
+  color: #656d76 !important;
+}
+
+[data-md-color-scheme="default"] .md-search__icon {
+  color: #656d76 !important;
+}
+
+/* Active Navigation */
+.md-nav__link--active {
+  color: #22d3ee !important;
+  font-weight: 600;
+}
+
+[data-md-color-scheme="default"] .md-nav__link--active {
+  color: #0ea5e9 !important;
+  font-weight: 600;
+}
+
+/* Admonition / Callouts (es. Note, Warning) */
+.md-typeset .admonition,
+.md-typeset details {
+  border-left-color: #22d3ee;
+}
+
+.md-typeset .admonition.note,
+.md-typeset details.note {
+  border-left-color: #22d3ee;
+}
+
+.md-typeset .admonition.warning,
+.md-typeset details.warning {
+  border-left-color: #f97316;
+}
+
+.md-typeset .admonition.danger,
+.md-typeset details.danger {
+  border-left-color: #ef4444;
+}

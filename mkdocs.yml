@@ -1,0 +1,103 @@
+site_name: TTP - Transparent Tor Proxy
+site_url: https://onyks-os.github.io/ttp/
+site_description: Documentation for Transparent Tor Proxy (TTP) - a crash-safe Linux CLI tool to route all system traffic transparently through Tor using nftables.
+site_author: onyks-os
+site_dir: ../onyks-os.github.io/ttp
+docs_dir: docs/web
+repo_url: https://github.com/onyks-os/TransparentTorProxy
+repo_name: onyks-os/TransparentTorProxy
+
+theme:
+  name: material
+  language: en
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - toc.follow
+
+  palette:
+    # Dark mode (default)
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Passa a light mode
+      primary: custom
+      accent: custom
+      media: "(prefers-color-scheme: dark)"
+
+    # Light mode
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Passa a dark mode
+      primary: custom
+      accent: custom
+      media: "(prefers-color-scheme: light)"
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+  - javascripts/mermaid_init.js
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+          options:
+            docstring_style: google
+            show_root_heading: true
+            show_source: true
+            heading_level: 2
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Tutorials:
+      - Quickstart: tutorials/quickstart.md
+  - How-To Guides:
+      - User Bypass: how-to/user-bypass.md
+      - Bridges & Transports: how-to/bridges.md
+      - VM & Chaos Testing: how-to/vm-testing.md
+  - Explanation:
+      - Architecture & Flow: explanation/architecture.md
+      - Watchdog FSM: explanation/watchdog-fsm.md
+      - Security & Threat Model: explanation/security-assessment.md
+  - Reference:
+      - CLI Options: reference/cli.md
+      - Dependencies: reference/dependencies.md
+      - Python API: reference/api.md
+  - Release Notes:
+      - Changelog: release-notes/changelog.md

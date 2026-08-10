@@ -11,6 +11,7 @@ proving that TTP's nftables firewall successfully drops outgoing non-Tor UDP tra
 from __future__ import annotations
 
 import socket
+
 import pytest
 
 
@@ -43,7 +44,7 @@ def test_webrtc_stun_leak_prevention():
         sock.sendto(stun_packet, (stun_ip, stun_port))
 
         # Try to receive a response
-        data, _ = sock.recvfrom(512)
+        _data, _ = sock.recvfrom(512)
 
         # If we successfully received any packet back, it means UDP traffic
         # bypassed the firewall and leaked.
@@ -52,7 +53,7 @@ def test_webrtc_stun_leak_prevention():
             f"Traffic successfully bypassed the transparent proxy and nftables killswitch."
         )
 
-    except socket.timeout:
+    except TimeoutError:
         # Success: The packet was blocked and dropped by the firewall (no response)
         pass
     except OSError:
@@ -68,18 +69,14 @@ def test_webrtc_stun_leak_prevention_ipv6():
     from ttp.tor_detect import is_ipv6_supported
 
     if not is_ipv6_supported():
-        pytest.skip(
-            "IPv6 loopback not supported by the environment. Skipping IPv6 STUN leak test."
-        )
+        pytest.skip("IPv6 loopback not supported by the environment. Skipping IPv6 STUN leak test.")
 
     stun_host = "stun.l.google.com"
     stun_port = 19302
 
     # Resolve STUN host IPv6 address (this query is intercepted safely by Tor DNS)
     try:
-        addr_info = socket.getaddrinfo(
-            stun_host, stun_port, socket.AF_INET6, socket.SOCK_DGRAM
-        )
+        addr_info = socket.getaddrinfo(stun_host, stun_port, socket.AF_INET6, socket.SOCK_DGRAM)
         if not addr_info:
             pytest.skip("Could not resolve STUN server hostname to IPv6 address.")
         stun_ip = addr_info[0][4][0]
@@ -98,7 +95,7 @@ def test_webrtc_stun_leak_prevention_ipv6():
         sock.sendto(stun_packet, (stun_ip, stun_port))
 
         # Try to receive a response
-        data, _ = sock.recvfrom(512)
+        _data, _ = sock.recvfrom(512)
 
         # If we successfully received any packet back, it means UDP traffic leaked.
         pytest.fail(
@@ -106,7 +103,7 @@ def test_webrtc_stun_leak_prevention_ipv6():
             f"Traffic successfully bypassed the transparent proxy and nftables killswitch."
         )
 
-    except socket.timeout:
+    except TimeoutError:
         # Success: The packet was blocked and dropped by the firewall (no response)
         pass
     except OSError:

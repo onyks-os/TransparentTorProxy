@@ -5,16 +5,16 @@
 
 import logging
 import os
-import time
-import struct
 import select
+import struct
+import time
 
 from ttp import dns, state
 from ttp.watchdog.fsm import WatchdogFSM
 from ttp.watchdog.integrity import (
     check_system_integrity,
-    is_interface_online,
     has_default_route,
+    is_interface_online,
 )
 
 logger = logging.getLogger("ttp")
@@ -45,9 +45,7 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
             # Check if the TTP session is still supposed to be active
             lock = state.read_lock()
             if lock is None:
-                logger.info(
-                    "Watchdog: No active TTP lock file found. Exiting gracefully."
-                )
+                logger.info("Watchdog: No active TTP lock file found. Exiting gracefully.")
                 break
 
             # Extract active interface from lock
@@ -77,16 +75,12 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
                 # Re-read lock after exiting the offline loop
                 lock = state.read_lock()
                 if lock is None:
-                    logger.info(
-                        "Watchdog: No active TTP lock file found after recovery. Exiting gracefully."
-                    )
+                    logger.info("Watchdog: No active TTP lock file found after recovery. Exiting gracefully.")
                     break
 
             # Run event multiplexer with heartbeat timeout (15s)
             try:
-                readable, _, _ = select.select(
-                    [fsm.netlink_socket, fsm.inotify_fd], [], [], 15.0
-                )
+                readable, _, _ = select.select([fsm.netlink_socket, fsm.inotify_fd], [], [], 15.0)
             except InterruptedError:
                 # EINTR: syscall interrupted by a signal, ignore and retry
                 continue
@@ -101,9 +95,7 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
 
             # Determine if check is needed (event occurred or 15s elapsed since last check)
             should_check = False
-            if readable:
-                should_check = True
-            elif current_time - fsm.last_check_time >= float(interval_seconds):
+            if readable or current_time - fsm.last_check_time >= float(interval_seconds):
                 should_check = True
 
             if should_check:
@@ -117,9 +109,7 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
                             while offset < len(data):
                                 if len(data) - offset < 16:
                                     break
-                                wd_val, mask, cookie, name_len = struct.unpack_from(
-                                    "iIII", data, offset
-                                )
+                                _wd_val, mask, _cookie, name_len = struct.unpack_from("iIII", data, offset)
                                 # 0x00000400 (IN_DELETE_SELF) or 0x00000800 (IN_MOVE_SELF)
                                 if mask & (0x00000400 | 0x00000800):
                                     lost_watch = True
@@ -152,12 +142,8 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
                             fsm.heal_success()
 
     except Exception as e:
-        logger.error(
-            "Watchdog loop encountered an unexpected error: %s", e, exc_info=True
-        )
+        logger.exception("Watchdog loop encountered an unexpected error: %s", e)
         if fsm.state != "killswitch":
-            fsm.tamper(
-                failed_comp="watchdog", err_msg=f"Unexpected loop exception: {e}"
-            )
+            fsm.tamper(failed_comp="watchdog", err_msg=f"Unexpected loop exception: {e}")
     finally:
         fsm.shutdown()

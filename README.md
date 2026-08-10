@@ -14,6 +14,7 @@ SPDX-License-Identifier: MIT
   <img src="https://img.shields.io/badge/OS-Linux-blue?style=for-the-badge&logo=linux" alt="Linux">
   <img src="https://img.shields.io/badge/Python-3.10+-yellow?style=for-the-badge&logo=python" alt="Python">
   <a href="https://github.com/onyks-os/TransparentTorProxy/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/onyks-os/TransparentTorProxy/ci.yml?style=for-the-badge&logo=github" alt="CI Status"></a>
+  <a href="https://onyks-os.github.io/ttp/"><img src="https://img.shields.io/badge/docs-mkdocs-526CFE?style=for-the-badge&logo=materialformkdocs&logoColor=white" alt="Documentation"></a>
   <a href="https://pypi.org/project/transparent-tor-proxy/"><img src="https://img.shields.io/pypi/dm/transparent-tor-proxy?style=for-the-badge&logo=pypi" alt="PyPI - Downloads"></a>
   <a href="https://www.bestpractices.dev/projects/13164"><img src="https://img.shields.io/cii/level/13164?style=for-the-badge&label=OpenSSF%20Best%20Practices" alt="OpenSSF Best Practices"></a>
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
@@ -216,7 +217,7 @@ TTP is designed to always restore your network, even in edge cases:
 > [!WARNING]
 >
 > * **Tor Browser**: Applications using an explicit SOCKS5 proxy will create a double Tor hop. Use a regular browser instead while TTP is active.
-> * **DNS-over-HTTPS (DoH)**: Normal browsers (Firefox, Chrome, Brave, Edge) may use DoH, bypassing system DNS. TTP mitigates this by blocking well-known DoH resolver IPs (forcing fallback to Tor DNS) and routing unlisted DoH traffic through Tor (which can, however, partially compromise anonymity). For maximum security, disable **DoH / "Secure DNS"** in your browser settings.
+> * **DNS-over-HTTPS (DoH)**: Normal browsers (Firefox, Chrome, Brave, Edge) may use DoH, bypassing system DNS. TTP mitigates DoH via a 3-layer defense: (1) all outbound TCP traffic (including DoH) is redirected to Tor TransPort; (2) common DoH canary domains are mapped to `0.0.0.0` in `torrc`; (3) public DoH IP resolvers are blocked on TCP/UDP port 443 (blocking HTTP/3 QUIC DoH). For maximum security, disable **DoH / "Secure DNS"** in your browser settings.
 > * **IPv6**: Fully supported when available. TTP dynamically detects IPv6 loopback and routes IPv6 traffic through Tor. If the host lacks IPv6 loopback support OR if the `--no-ipv6` option is passed, TTP drops all outgoing IPv6 traffic to prevent leaks.
 > * **Exit IP variation**: Different connections may show different exit IPs due to Tor stream isolation.
 

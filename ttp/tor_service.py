@@ -27,6 +27,13 @@ def _build_service_unit_content(tor_user: str, tor_bin: str) -> str:
     """Build and return the volatile systemd ttp-tor.service unit content.
 
     This is a **pure function** with no side-effects.
+
+    Args:
+        tor_user: Username running the Tor daemon.
+        tor_bin: Absolute path to the Tor executable binary.
+
+    Returns:
+        str: Rendered systemd service unit file definition.
     """
     return f"""\
 [Unit]
@@ -51,7 +58,10 @@ LimitNOFILE=32768
 def _write_service_unit(tor_user: str) -> None:
     """Write a volatile ``ttp-tor.service`` unit to ``/run/systemd/system/``.
 
-    This creates a dedicated Tor instance for TTP.
+    Creates a dedicated systemd service definition for TTP in volatile memory.
+
+    Args:
+        tor_user: Username running the Tor process.
     """
     tor_bin = shutil.which("tor") or "/usr/bin/tor"
     unit = _build_service_unit_content(tor_user, tor_bin)
@@ -69,11 +79,25 @@ def start_tor_service(
     bridges: Optional[list[str]] = None,
     disable_ipv6: bool = False,
 ) -> None:
-    """Generate the runtime torrc and start a dedicated TTP Tor service.
+    """Generate the runtime torrc and start a dedicated TTP Tor systemd service.
 
-    1. Generate volatile torrc in ``/run/tor/ttp/torrc``.
-    2. Write a volatile ``ttp-tor.service`` unit to ``/run/systemd/system/``.
-    3. Reload systemd and start the service.
+    Sequence:
+        1. Generate volatile torrc in ``/run/tor/ttp/torrc``.
+        2. Label SELinux ports if SELinux is enforcing.
+        3. Write a volatile ``ttp-tor.service`` unit to ``/run/systemd/system/``.
+        4. Reload systemd daemon and start the service.
+
+    Args:
+        tor_user: System user designated to run Tor.
+        transport_port: Local TCP port for Tor TransPort redirection.
+        dns_port: Local UDP/TCP port for Tor DNSPort redirection.
+        block_doh: If True, maps canary DoH domains to 0.0.0.0.
+        use_bridges: If True, configures Tor to route via Pluggable Transports.
+        bridges: Optional list of bridge configuration strings.
+        disable_ipv6: If True, forces IPv6 client routing off.
+
+    Raises:
+        TorError: If systemd daemon reload or service restart fails.
     """
     generate_torrc(
         tor_user,
@@ -101,14 +125,12 @@ def start_tor_service(
             check=True,
         )
     except subprocess.CalledProcessError as e:
-        raise TorError(
-            f"Failed to start '{TTP_SERVICE_NAME}': {e.stderr.strip()}"
-        ) from e
+        raise TorError(f"Failed to start '{TTP_SERVICE_NAME}': {e.stderr.strip()}") from e
     logger.info("TTP Tor service started with dedicated config.")
 
 
 def stop_tor_service() -> None:
-    """Stop the dedicated TTP Tor service and remove the volatile unit."""
+    """Stop the dedicated TTP Tor service and remove the volatile systemd unit."""
     subprocess.run(
         ["systemctl", "stop", TTP_SERVICE_NAME],
         capture_output=True,

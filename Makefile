@@ -7,8 +7,16 @@
 #   make integration-all  - Docker tests (Debian, Fedora, Arch)
 #   make verify           - lint + unit + fuzz + audit + integration + package build
 
-# .PHONY tells Make that these are command names, not actual files or directories.
-.PHONY: test fuzz audit lint pre-commit install-hooks integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi test-leak-ip test-leak-dns test-leak-webrtc check-leak tarball
+.PHONY: test fuzz audit lint format pre-commit install-hooks integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi test-leak-ip test-leak-dns test-leak-webrtc check-leak tarball build-web-docs
+
+# 0. Build MkDocs Web Documentation
+build-web-docs:
+	@echo "==> Building MkDocs web documentation into ../onyks-os.github.io/ttp/..."
+	@if command -v mkdocs >/dev/null 2>&1; then \
+		mkdocs build; \
+	else \
+		echo "==> mkdocs not found. Please install with: pip install mkdocs mkdocs-material mkdocstrings[python]"; \
+	fi
 
 # 1. Local unit tests (pytest, no root).
 test:
@@ -36,6 +44,12 @@ lint:
 	else \
 		echo "==> ShellCheck not found, skipping shell script linting."; \
 	fi
+
+# 1d-2. Auto-format Python code and fix fixable lint errors.
+format:
+	@echo "==> Auto-formatting Python code and fixing lint issues..."
+	ruff format ttp/ tests/ fuzzing/
+	ruff check --fix ttp/ tests/ fuzzing/
 
 # 1e. Fast local pre-commit checks (linting & unit tests).
 pre-commit: lint test

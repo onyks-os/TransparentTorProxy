@@ -119,7 +119,7 @@ When bridges are configured, TTP supports pluggable transports via external help
 | `obfs4` / `meek_lite` | `obfs4proxy`       | `obfs4proxy`       | `obfs4`            |
 | `snowflake`           | `snowflake-client` | `snowflake-client` | `snowflake-client` |
 
-Missing binaries are auto-installed via the detected system package manager. For a detailed guide on obtaining and configuring bridges, see the [Bridges & Pluggable Transports Guide](bridges.md).
+If missing, TTP displays distro-specific installation guidance. For a detailed guide on obtaining and configuring bridges, see the [Bridges & Pluggable Transports Guide](bridges.md).
 
 ---
 
