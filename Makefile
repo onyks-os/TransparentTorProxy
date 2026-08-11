@@ -7,13 +7,27 @@
 #   make integration-all  - Docker tests (Debian, Fedora, Arch)
 #   make verify           - lint + unit + fuzz + audit + integration + package build
 
-.PHONY: test fuzz audit lint format pre-commit install-hooks integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi test-leak-ip test-leak-dns test-leak-webrtc check-leak tarball build-web-docs
+.PHONY: test fuzz audit lint format pre-commit install-hooks integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi test-leak-ip test-leak-dns test-leak-webrtc check-leak tarball build-web-docs docs docs-build docs-serve serve-docs
 
-# 0. Build MkDocs Web Documentation
+# 0. MkDocs Web Documentation (Build & Live Dev Server)
+docs: docs-build
+
+docs-build: build-web-docs
+
 build-web-docs:
 	@echo "==> Building MkDocs web documentation into ../onyks-os.github.io/ttp/..."
 	@if command -v mkdocs >/dev/null 2>&1; then \
 		mkdocs build; \
+	else \
+		echo "==> mkdocs not found. Please install with: pip install mkdocs mkdocs-material mkdocstrings[python]"; \
+	fi
+
+docs-serve: serve-docs
+
+serve-docs:
+	@echo "==> Starting MkDocs live documentation server (http://127.0.0.1:8000)..."
+	@if command -v mkdocs >/dev/null 2>&1; then \
+		mkdocs serve; \
 	else \
 		echo "==> mkdocs not found. Please install with: pip install mkdocs mkdocs-material mkdocstrings[python]"; \
 	fi

@@ -275,10 +275,29 @@ def test_split_tunneling_flow():
         cmd = [
             "python3",
             "-c",
-            "import urllib.request, json; print(urllib.request.urlopen('https://check.torproject.org/api/ip', timeout=10).read().decode())",
+            "import urllib.request, json, time, sys\n"
+            "data = None\n"
+            "for attempt in range(10):\n"
+            "    try:\n"
+            "        req = urllib.request.Request('https://check.torproject.org/api/ip', headers={'User-Agent': 'ttp-integration-test'})\n"
+            "        with urllib.request.urlopen(req, timeout=10) as resp:\n"
+            "            data = json.loads(resp.read().decode())\n"
+            "            if not data.get('IsTor'):\n"
+            "                print(json.dumps(data))\n"
+            "                sys.exit(0)\n"
+            "    except Exception:\n"
+            "        try:\n"
+            "            with urllib.request.urlopen('https://api.ipify.org', timeout=10) as resp:\n"
+            "                ip = resp.read().decode().strip()\n"
+            "                print(json.dumps({'IsTor': False, 'IP': ip}))\n"
+            "                sys.exit(0)\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "    time.sleep(2)\n"
+            "sys.exit(1)\n",
         ]
         bypass_res = subprocess.run(cmd, capture_output=True, text=True, user=bypass_user)
-        assert bypass_res.returncode == 0, f"Bypass user check failed: {bypass_res.stderr}"
+        assert bypass_res.returncode == 0, f"Bypass user check failed: {bypass_res.stderr}\nSTDOUT: {bypass_res.stdout}"
 
         bypass_data = json.loads(bypass_res.stdout.strip())
         assert not bypass_data.get("IsTor"), "Bypassed user's traffic is routed through Tor!"

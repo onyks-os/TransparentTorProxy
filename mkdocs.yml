@@ -87,9 +87,15 @@ nav:
   - Home: index.md
   - Tutorials:
       - Quickstart: tutorials/quickstart.md
+      - Bypass Modes: tutorials/bypass-basics.md
+      - Censorship Circumvention: tutorials/censorship-circumvention.md
+      - Automation & Scripts: tutorials/automating-sessions.md
+      - Diagnosing Failures: tutorials/diagnosing-failures.md
+      - IPv6 Policies: tutorials/ipv6-policy.md
   - How-To Guides:
       - User Bypass: how-to/user-bypass.md
       - Bridges & Transports: how-to/bridges.md
+      - Custom Firewalls (UFW/firewalld): how-to/custom-nftables.md
       - VM & Chaos Testing: how-to/vm-testing.md
   - Explanation:
       - Architecture & Flow: explanation/architecture.md

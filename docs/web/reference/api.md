@@ -33,3 +33,31 @@ Automated API reference generated directly from Google-style Python docstrings i
 ::: ttp.tor_install
     options:
       show_root_heading: true
+
+::: ttp.tor_control
+    options:
+      show_root_heading: true
+
+---
+
+## DNS & State Management (`ttp.dns`, `ttp.state`)
+
+::: ttp.dns
+    options:
+      show_root_heading: true
+
+::: ttp.state
+    options:
+      show_root_heading: true
+
+---
+
+## Watchdog Engine (`ttp.watchdog`)
+
+::: ttp.watchdog.integrity
+    options:
+      show_root_heading: true
+
+::: ttp.watchdog.fsm
+    options:
+      show_root_heading: true
