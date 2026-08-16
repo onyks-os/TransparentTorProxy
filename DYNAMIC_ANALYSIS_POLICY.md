@@ -5,6 +5,7 @@ TTP utilizes **Hypothesis**, a property-based testing framework, for dynamic fuz
 ## Scope
 
 The fuzzer exercises the following attack surfaces:
+
 - JSON lock file parsing (`state.py`)
 - Tor version regex extraction (`tor_detect.py`)
 - Torrc configuration validation regexes (`tor_detect.py`)

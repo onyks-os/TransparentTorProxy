@@ -81,6 +81,7 @@ The project is divided into independent Python modules. Each module has a single
 ### 2.1.1 BYOD Execution Flow - `start --external-daemon`
 
 When started in Bring Your Own Daemon (BYOD) mode, TTP delegates Tor lifecycle management to the host OS and focuses strictly on routing/firewall interception:
+
 1. **cli**: Checks for conflicting `--watchdog` option (raises fatal error if active).
 2. **cli**: Performs **Passive Health Checks** to verify the external Tor daemon is listening on target TCP/UDP ports.
 3. **cli**: Resolves the Tor process owner's numeric UID using a hierarchical resolution strategy:

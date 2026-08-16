@@ -13,6 +13,7 @@ Accepted (v0.4.7)
 
 To guarantee that TTP's firewall configuration (`nftables`) is completely leak-proof, we need programmatic validation.
 Testing firewall rules on the active host interface:
+
 1. Is risky, as it disrupts the host's actual network during tests.
 2. Can lead to transient packet drops or leaks on the host.
 3. Is hard to automate securely in a CI/CD environment without affecting the pipeline worker's network.

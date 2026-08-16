@@ -12,6 +12,7 @@ Accepted (v0.3.5)
 ## Context
 
 Once transparent proxying is established, the user relies on Tor for anonymity. However, critical system changes can cause silent leaks or connection drops:
+
 1. The Tor daemon could crash or be terminated.
 2. The user or another daemon could flush/manipulate the firewall rules (`nftables`), removing redirection blocks.
 3. The DNS overlay could be unmounted.

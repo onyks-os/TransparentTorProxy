@@ -50,6 +50,7 @@ No per-application setup needed - just `sudo ttp start` and **every connection**
 Unlike legacy transparent proxy scripts (e.g., TorGhost, Anonsurf) that rely on destructive configuration file overrides and outdated iptables rulesets, TTP is engineered as a systemd-native, fail-closed solution for modern Linux distributions.
 
 Key architectural advantages:
+
 * **No Per-Application Configuration**: Intercepts all TCP and DNS traffic globally at the network layer, eliminating the need to configure SOCKS5 settings in individual applications.
 * **Zero DNS Leaks**: Reroutes DNS queries via a kernel-level bind-mount overlay on `/etc/resolv.conf` (with automated cleanup on teardown), resolving leaks natively without altering persistent files.
 * **Systemd-Native Fail-Closed Design**: Leverages isolated `inet ttp` nftables tables and dedicated systemd units. In the event of a crash, watchdog trigger, or unclean termination, the network is either securely routed via Tor or blocked entirely (fail-closed), preventing cleartext leaks.

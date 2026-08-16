@@ -13,6 +13,7 @@ Accepted (v0.4.5), Updated (v0.4.7)
 
 TTP was originally designed to manage the Tor daemon lifecycle directly via systemd service units.
 However, in certain scenarios, managing the Tor daemon directly inside TTP was restrictive:
+
 1. Inside systemd-enabled lightweight containers (like Docker or systemd-nspawn) where running a full systemd service tree might be customized or restricted.
 2. When users want to route traffic through an existing, custom-configured Tor daemon already running on their system (e.g. system tor, Tor Browser daemon, or multi-instance configurations).
 

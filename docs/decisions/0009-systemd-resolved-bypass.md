@@ -12,6 +12,7 @@ Accepted (v0.4.7)
 ## Context
 
 On modern Linux distributions, `systemd-resolved` is typically active by default. It manages the system's DNS settings and local stub resolver. Even when TTP binds an overlay to `/etc/resolv.conf`, some system services and user applications (like modern web browsers or network configuration managers) bypass `/etc/resolv.conf` entirely by querying systemd-resolved directly via:
+
 1. **D-Bus interface**: Calling `/org/freedesktop/resolve1` methods.
 2. **NSS Module**: Using `nss-resolve` defined in `/etc/nsswitch.conf`.
 

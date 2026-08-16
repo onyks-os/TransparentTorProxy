@@ -12,6 +12,7 @@ Accepted (v0.3.0)
 ## Context
 
 During early development, TTP stored active session state, logs, and lock files on the host's physical persistent disk (e.g. `/var/run` or `/var/lib`). This introduced several issues:
+
 1. If the system crashed or lost power, TTP left behind stale state files that would prevent subsequent startups or lead to inconsistent states.
 2. Writing frequent log statements and state changes to a physical disk (especially on flash/SSD storage on embedded or low-resource hosts) was inefficient and increased wear.
 

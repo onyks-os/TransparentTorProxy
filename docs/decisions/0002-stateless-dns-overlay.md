@@ -13,6 +13,7 @@ Accepted (v0.3.0)
 
 To prevent DNS leaks, all DNS queries must be hijacked and routed to Tor's DNS resolver. Standard practice involves overwriting `/etc/resolv.conf` with `nameserver 127.0.0.1` and `nameserver ::1`.
 However, overwriting `/etc/resolv.conf` directly:
+
 1. Is destructive: if the process crashes or gets killed abruptly, the original host resolver configuration is lost, breaking name resolution for the host.
 2. Conflicts with system resolver daemons (like `systemd-resolved` or `NetworkManager`) which aggressively overwrite `/etc/resolv.conf` on DHCP updates or link changes.
 

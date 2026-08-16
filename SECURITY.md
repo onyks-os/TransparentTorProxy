@@ -32,6 +32,7 @@ Please note that email may have lower response priority than GitHub advisories.
 ## Public Disclosure
 
 When a security vulnerability is confirmed and fixed, TTP will publish a public advisory containing:
+
 - Affected versions
 - Description of the issue
 - Mitigation or upgrade instructions

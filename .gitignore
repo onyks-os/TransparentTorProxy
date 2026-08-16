@@ -228,3 +228,6 @@ codex-linux-flatpak/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+*.rej
+*.orig

@@ -17,37 +17,37 @@ TTP is a Linux system utility that transparently routes all TCP and DNS traffic 
 
 <div class="grid cards" markdown>
 
--   **Volatile Runtime Architecture**
+- **Volatile Runtime Architecture**
 
     ---
 
     All session state, runtime `torrc` files, locks, and log buffers are maintained strictly in `/run/ttp` (`tmpfs`). No configuration data or session traces are written to persistent storage.
 
--   **Kernel-Level Network Interception**
+- **Kernel-Level Network Interception**
 
     ---
 
     Traffic is intercepted globally via custom `inet ttp` `nftables` tables. Applications require no individual proxy configuration, environment variables, or wrapper scripts.
 
--   **Stateless DNS Overlay**
+- **Stateless DNS Overlay**
 
     ---
 
     System DNS resolution is bound to Tor DNSPort (`127.0.0.1:5353`) via an isolated `mount --bind` overlay on `/etc/resolv.conf` and `systemd-resolved` runtime overrides.
 
--   **FSM Watchdog and Self-Healing**
+- **FSM Watchdog and Self-Healing**
 
     ---
 
     A background Finite State Machine monitors `nftables` rule integrity and process health. If tampered with or interrupted, rules are automatically repaired or reset to a closed killswitch state.
 
--   **Subnet and Process Exclusion**
+- **Subnet and Process Exclusion**
 
     ---
 
     Supports RFC 1918 local area network exclusion (`--lan-bypass`) and process isolation by system user or group (`--bypass-user`, `--bypass-group`, `sudo ttp bypass`).
 
--   **IPv6 Leak Prevention**
+- **IPv6 Leak Prevention**
 
     ---
 
@@ -79,7 +79,7 @@ sudo ttp stop
 
 <div class="grid cards" markdown>
 
--   **Tutorials**
+- **Tutorials**
 
     ---
 
@@ -87,7 +87,7 @@ sudo ttp stop
 
     [View Tutorials](tutorials/quickstart.md)
 
--   **How-To Guides**
+- **How-To Guides**
 
     ---
 
@@ -95,7 +95,7 @@ sudo ttp stop
 
     [View How-To Guides](how-to/bridges.md)
 
--   **Explanation**
+- **Explanation**
 
     ---
 
@@ -103,7 +103,7 @@ sudo ttp stop
 
     [View Architecture](explanation/architecture.md)
 
--   **Reference**
+- **Reference**
 
     ---
 

@@ -201,6 +201,7 @@ TTP runs as a local transparent proxy on the host, meaning it can be toggled on 
 ### 4.2 Leak Testing Requirements (Zero-Leak Assertions)
 
 TTP's Network Sandbox Engine (NSE) test suite programmatically validates the firewall ruleset against leaks. The testing requirements are modeled after official industry leak-testing protocols:
+
 - **Whonix Dev Leak Tests**: Ref. [Whonix Dev/Leak Tests Wiki](https://www.whonix.org/wiki/Dev/Leak_Tests)
 - **Tor Project Wiki Leak Tests**: Ref. [Tor Project Torify Leak Testing](https://gitlab.torproject.org/legacy/trac/-/wikis/doc/TorifyHOWTO)
 

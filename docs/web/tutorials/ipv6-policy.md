@@ -14,6 +14,7 @@ sudo ttp start
 ```
 
 In dual-stack mode:
+
 * IPv4 TCP traffic is redirected to Tor `127.0.0.1:9040`.
 * IPv6 TCP traffic is redirected to Tor `[::1]:9040`.
 * DNS queries over IPv4 and IPv6 are bound to Tor DNSPort.

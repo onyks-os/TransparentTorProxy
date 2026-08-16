@@ -12,6 +12,7 @@ Accepted (v0.4.7)
 ## Context
 
 The TTP watchdog daemon manages session integrity and auto-healing. Originally, the watchdog ran in a nested, procedural `while True` loop inside `inotify.py`. While functional, this procedural approach:
+
 1. Compounded state complexity, making it difficult to trace or reason about nested failure recovery paths (e.g. recovering from network disconnects while healing Tor).
 2. Made unit testing and fuzzing of state transitions (such as simulated healing failures or lock-file tampering) extremely difficult without complex mock stacking.
 3. Obscured state tracking, rendering the logs difficult to parse for automated diagnostic audits.

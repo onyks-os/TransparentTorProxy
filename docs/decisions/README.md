@@ -5,6 +5,7 @@ This directory contains the Architectural Decision Records (ADRs) for the **Tran
 ## Purpose
 
 ADRs serve as a light-weight record of significant design and architectural choices made during the development of TTP. They document:
+
 * **Context**: What was the problem and the environment at the time?
 * **Decision**: What choice was made to address it?
 * **Consequences**: What are the positive, negative, and neutral trade-offs of that choice?

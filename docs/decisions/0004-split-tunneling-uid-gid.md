@@ -17,6 +17,7 @@ To achieve this, we need a secure way to exclude specific processes or users fro
 ## Decision
 
 We implemented a split-tunneling architecture based on system UID/GID mapping and priority rules inside `nftables`:
+
 1. Users specify bypassed users/groups using the CLI options `--bypass-user` and `--bypass-group`.
 2. TTP resolves usernames and groupnames to numeric UIDs and GIDs at startup via Python's standard `pwd` and `grp` libraries.
 3. TTP inserts top-priority rules at the beginning of the `output` chain (e.g. `meta skuid <uid> accept` and `meta skgid <gid> accept`) to allow these processes to exit directly to the WAN.

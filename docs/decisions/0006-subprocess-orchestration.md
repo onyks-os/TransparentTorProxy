@@ -19,6 +19,7 @@ We evaluated migrating to a native Netlink Python library (`pyroute2`) to avoid 
 We decided to keep the current `subprocess`-based network orchestration for CLI commands. The overhead (< 50ms) is negligible for user experience and CLI execution, and keeping dependencies minimal is highly beneficial for simplicity and maintainability.
 
 However, we established strict **Trigger Conditions** under which we will evaluate a migration to `pyroute2` in the future (Target: v0.6.0+):
+
 1. **Active Monitoring**: TTP transitions from a static CLI tool to a stateful background daemon that needs to subscribe to Netlink sockets to handle real-time kernel events (e.g. interface IP changes, network cable disconnects).
 2. **Strict Performance constraints**: Future profiling tests (via `cProfile`) demonstrate that shell command execution via `subprocess` accounts for more than 20% of TTP's total boot time (excluding Tor bootstrapping).
 

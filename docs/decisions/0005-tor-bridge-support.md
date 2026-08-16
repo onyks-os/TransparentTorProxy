@@ -13,6 +13,7 @@ Accepted (v0.4.7: No Auto-Install policy)
 
 In censored networks or environments where Tor usage is monitored or blocked, standard direct connections to the Tor network fail. Users need to connect using Tor Bridges and Pluggable Transports (like `obfs4` or `snowflake`) to disguise their traffic.
 To support this natively in TTP, we need to handle:
+
 1. Validating bridge lines and bridge files.
 2. Detecting and referencing censors-bypassing pluggable transport helper binaries in the volatile `torrc` config.
 

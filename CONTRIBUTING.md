@@ -121,6 +121,7 @@ When writing code for TTP, please adhere to these core principles:
 ### Test Policy for Major Changes
 
 A change is considered **major** if it:
+
 - Adds a new significant feature (e.g., a new CLI command).
 - Modifies the firewall rules (`nftables`) or DNS resolution management.
 - Alters the crash-safety architecture.
