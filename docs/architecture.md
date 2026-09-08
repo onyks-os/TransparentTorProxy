@@ -26,8 +26,9 @@ SPDX-License-Identifier: MIT
 11. [Unit Tests - Specifications](#11-unit-tests--specifications)
 
 **Related documents:**
-- [interfaces.md](interfaces.md) — Full CLI, Tor, and system interface reference (OSPS-SA-02.01)
-- [security-assessment.md](security-assessment.md) — STRIDE threat model and risk assessment (OSPS-SA-03.01)
+
+* [interfaces.md](interfaces.md) — Full CLI, Tor, and system interface reference (OSPS-SA-02.01)
+* [security-assessment.md](security-assessment.md) — STRIDE threat model and risk assessment (OSPS-SA-03.01)
 
 ---
 
@@ -97,13 +98,13 @@ When started in Bring Your Own Daemon (BYOD) mode, TTP delegates Tor lifecycle m
 
 > [!NOTE]  
 > **Normal:** `ttp stop` -> stops the watchdog service (if active) -> resolves Tor UID -> applies **Teardown Lockdown** (injects temporary drop rule at the top of the firewall output filter chain) -> graceful Tor `SHUTDOWN` (skipped in BYOD mode) -> stops the Tor service (skipped in BYOD mode) -> applies **Active Socket Slaughter** (injects counter reject and TCP Reset rules at the top of the output chain) -> waits for a 1.5-second micro-delay (allowing pending local connections to abort) -> flushes Netfilter connection tracking table via `conntrack -F` -> restores firewall/DNS (flushing and deleting `inet ttp` table) -> deletes lock. This zero-leak sequence prevents any cleartext traffic from escaping while the proxy is shutting down.
-
+>
 > [!TIP]
 > **Emergency Restore:** `ttp stop --restore-only` bypasses session checks and forces network cleanup. Useful if TTP crashed and the lock file was lost.
-
+>
 > [!WARNING]
 > **Crash (SIGTERM/SIGINT):** Signal handler ensures restoration before shutdown.
-
+>
 > [!IMPORTANT]
 > **Worst-case (kill -9):** Next `ttp start` detects orphaned lock and auto-restores.
 
@@ -138,6 +139,7 @@ Orchestrates Tor readiness and native systemd service configuration. Enforces a 
 ### 3.3 `firewall/` Package
 
 Generates rules applied atomically via `nft -f` into the dedicated `inet ttp` table. Structured into a specialized package:
+
 * `builder.py`: Pure ruleset string generator (`_build_ruleset`, `_has_cgroup_bypass_support`).
 * `runner.py`: Low-level `nft` execution engine (`apply_rules`, `destroy_rules`, temporary ruleset file management).
 * `emergency.py`: Lockdown and killswitch mechanisms (`apply_teardown_lockdown`, `apply_active_socket_slaughter`, `apply_emergency_killswitch`).
@@ -173,6 +175,7 @@ Implements a **stateless overlay** by bind-mounting a volatile resolver file fro
 Manages `/run/ttp/ttp.lock` (JSON) on a volatile `tmpfs` mount. This ensures that session state disappears on power loss, preventing stale lock issues. Contains PID, timestamps, and metadata. Detects orphaned sessions.
 
 **Security Hardening**:
+
 * **Directory Permissions**: The `/run/ttp` directory is created with `0700` permissions (restricted to owner/root) to prevent unprivileged local enumeration.
 * **Lock File Permissions**: The `ttp.lock` file is written with `0600` permissions, securing sensitive bridge credentials and configuration parameters from local information disclosure.
 * **PID Recycling Protection**: When checking for orphaned processes, `state.py` parses `/proc/{pid}/cmdline` to verify that the active PID still corresponds to a `ttp` process, mitigating TOCTOU issues.
@@ -184,12 +187,14 @@ Also handles the **tmpfs pre-flight check** (`check_tmpfs_space`) to ensure at l
 Typer CLI acting as the primary orchestrator. It manages the **TTP Tor service lifecycle** via a dedicated `ttp-tor.service` unit, handling signals (`SIGINT`/`SIGTERM`) to ensure clean network restoration.
 
 The command handlers are modularized within `ttp/commands/`:
+
 * `start.py`: Orchestrates start steps, delegating to helper parsers (`_parse_bypass_users_groups`, `_parse_bridges`, `_resolve_external_tor_uid`).
 * `stop_restart.py`: Handles session teardown (`stop`) and session regeneration (`restart`).
 * `session.py`: Coordinates passive diagnostic checking (`status`, `check`, `check-leak`, `refresh`).
 * `admin.py`: Handles logs extraction (`logs`), uninstallation (`uninstall`), and manual process bypass (`bypass`).
 
 Helper functions are split into internal submodules:
+
 * `_ports.py`: Port-probing and socket ownership check utilities.
 * `_logging.py`: Structured logging and formatting setup.
 * `_validation.py`: Input validators, system pre-flight checks, and Tor routing verifiers.
@@ -251,18 +256,21 @@ stateDiagram-v2
 ### 3.10 `selinux.py`
 
 Handles security policies and dynamic labeling for system integration under SELinux (active in Enforcing mode on Fedora/RHEL):
+
 * **Custom Tor Policy Module**: Compiles (`checkmodule` / `semodule_package`) and installs (`semodule -i`) the custom `ttp_tor_policy` to allow standard Tor processes to operate with TTP's customized features.
 * **Dynamic Port Labeling**: Dynamically maps custom user-selected TransPort and DNSPort to `tor_port_t` on startup via `semanage port -a` (or modifies existing ones using `-m`), and unregisters them on teardown via `semanage port -d` to avoid system configuration pollution.
 
 ### 3.11 `ux.py`
 
 Manages persistent user engagement features that must survive system reboots (unlike volatile locks in `state.py`). It is the owner of:
+
 * Persistent sentinels in `/var/lib/ttp/` (e.g. `.starred_notified`).
 * Dynamic CLI star solicitation prompts.
 
 ### 3.12 `dns_resolved.py`
 
 Manages configurations specific to systemd-resolved:
+
 * Checks service status actively via systemctl commands.
 * Writes a volatile systemd-resolved drop-in resolver mapping (`/run/systemd/resolved.conf.d/ttp.conf`) containing local DNSPort mappings (IPv4 and IPv6).
 * Restarts the systemd-resolved service and flushes the system DNS cache on both initialization and teardown.
@@ -271,9 +279,9 @@ Manages configurations specific to systemd-resolved:
 
 The entry point `ttp/cli.py` is a thin Typer orchestrator that delegates execution to isolated command modules in the `ttp/commands/` directory.
 
-- **`cli.py`**: Initializes the root Typer app, defines global state callbacks (`--verbose`, `--quiet`, `--log-format`), and mounts all sub-commands.
-- **`ttp/commands/`**: Contains specialized command handlers (`start.py`, `stop_restart.py`, `session.py`, `admin.py`, `watchdog.py`) mapping 1:1 to user intents.
-- **`_common.py` / `lifecycle.py`**: Provide shared utilities and state management across all CLI commands.
+* **`cli.py`**: Initializes the root Typer app, defines global state callbacks (`--verbose`, `--quiet`, `--log-format`), and mounts all sub-commands.
+* **`ttp/commands/`**: Contains specialized command handlers (`start.py`, `stop_restart.py`, `session.py`, `admin.py`, `watchdog.py`) mapping 1:1 to user intents.
+* **`_common.py` / `lifecycle.py`**: Provide shared utilities and state management across all CLI commands.
 
 ```mermaid
 %%{init: {
@@ -458,7 +466,7 @@ TTP employs a `Makefile` in the root directory to provide a unified entry point 
 
 ---
 
-## 11. Unit Tests - Specifications
+## 11. Unit Tests — Specifications
 
 *(Tests run without root, using `unittest.mock`)*
 

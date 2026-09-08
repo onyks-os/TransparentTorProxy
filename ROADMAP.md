@@ -13,24 +13,35 @@ Delivered:
 - Split tunneling (UID/GID + cgroups v2 `ttp bypass`)
 - Tor bridges (obfs4/snowflake), BYOD mode, zero-leak teardown
 - Privilege-separated watchdog user (`ttp-watchdog` + `CAP_NET_ADMIN`)
-- NSE ruleset tests, chaos monkey, multi-distro Docker integration
+- NSE ruleset tests (written; wired into CI in 0.4.8), chaos monkey, multi-distro Docker integration
 - `cli.py` split into `ttp/commands/`; Debian Docker integration runs on every push and PR
 - Single quality gate: CI and `scripts/verify.sh` both delegate to `make lint` / `make test`,
   so ruff, mypy, ShellCheck and the secret scan cannot drift apart
 
 ---
 
-## v0.4.8 — Verification Debt (next)
+## v0.4.8 — Verification Debt (in progress)
 
 **Goal:** Make a green test suite mean something. Every item here exists because a
 real defect survived the current suite, not because the metric looked low.
 
+### Done
+
+| Item | Outcome |
+| :--- | :------ |
+| **Zero-leak suite is executed** | `tests/test_nse_rules.py` had no make target, no CI job and no step in `verify.sh`, and its marker is excluded from the default run. It now has `make test-nse`, a CI job on every push, and a pre-release step. |
+| **Positive controls** | Every containment test first runs its stimulus with the ruleset flushed and requires the leak to be *observed*. "The sniffer saw nothing" can no longer be mistaken for "the firewall blocked it". |
+| **State and validation coverage** | `_ports.py` 45% → 100%, `_validation.py` 58% → 98%, `tor_install.py` 64% → 100%, `state.py` 66% → 99%, `firewall/builder.py` 79% → 100%, `ux.py` 57% → 100%. Total 80% → 86%, 295 tests → 428. |
+| **Coverage is enforceable** | `make coverage` invoked `pytest --cov` without `pytest-cov` being a dependency, so it failed outright. Fixed, and `--cov-fail-under` now ratchets it. |
+| **markdownlint (and ShellCheck) in CI** | Both were invoked only when present and had never been installed on the runner. Both are installed, the job asserts they are on PATH, and the backlog they had accumulated is fixed. |
+| **NSE pinned to `>=2.1.0,<3`** | Was `>=1.1.1`, open across a major with breaking changes. 2.1.0 is the first release whose oracle cannot report a clean result having observed nothing. |
+
+### Remaining
+
 | Item | Description |
 | :--- | :---------- |
 | **Behavioural CLI tests** | `tests/test_cli_*.py` assert on the sequence of internal calls rather than on the effect. That is how `ttp restart` shipped broken *with a dedicated passing test that asserted the broken call list*. Mock at the system boundary (`subprocess`, `pwd`, filesystem) and assert on the generated ruleset, `torrc`, and lock file — the shape `tests/test_firewall.py` already uses. |
-| **State and validation coverage** | Coverage is inverted: the deterministic ruleset builder sits at 79% while `_ports.py` (45%), `_validation.py` (58%), `tor_install.py` (64%) and `state.py` (66%) — the lock, recovery, and input-parsing paths — are the least covered. Target 80% on `state.py` and `_validation.py`. |
 | **Release rehearsal in CI** | `make packages` on a clean checkout, asserting every artifact the release job signs actually exists. Two release blockers (the `make build` target drift and an unpinned build backend emitting metadata `twine` rejects) were invisible until the pipeline was run end to end on a clean tree. |
-| **markdownlint in CI** | `make lint`'s `lint-docs` step silently no-ops because markdownlint is not installed on the runner. Either install it or drop the pretence. |
 
 ---
 
@@ -54,6 +65,7 @@ real defect survived the current suite, not because the metric looked low.
 | **Supply chain & reproducibility** | The project already publishes Sigstore-signed assets, an SBOM, and a verification guide; what is missing is evidence they hold. Verify the published signatures in CI, keep the build backend pinned deliberately rather than by accident, and check that a rebuild of the same tag produces identical artifacts. |
 
 *Deferred until v0.5.0+ unless a contributor picks them up:*
+
 - Playwright L7 leak tests in CI
 - System tray applet
 
@@ -69,6 +81,7 @@ real defect survived the current suite, not because the metric looked low.
 | **Zero system leaks mode** | Host stays on clearnet; only sandboxed apps use Tor. |
 
 *Research / long-term (no committed date):*
+
 - eBPF/bpftrace syscall auditing
 - Kubernetes sidecar packaging
 - Netlink/pyroute2 migration (see ADR backlog — frozen unless active monitoring requires it)

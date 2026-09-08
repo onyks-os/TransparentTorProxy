@@ -20,6 +20,7 @@ However, overwriting `/etc/resolv.conf` directly:
 ## Decision
 
 Instead of modifying the `/etc/resolv.conf` file directly, we use a stateless kernel-level overlay via `mount --bind`.
+
 1. We write a temporary resolv.conf containing Tor's local resolver addresses to `/run/ttp/resolv.conf`.
 2. We perform a bind mount (`mount --bind /run/ttp/resolv.conf /etc/resolv.conf`).
 3. To resolve conflicts, we follow the symlink if `/etc/resolv.conf` is a symbolic link and bind mount to its real target path instead.

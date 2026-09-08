@@ -25,7 +25,7 @@ lint-shell: ## Lint shell scripts with ShellCheck
 lint-docs: ## Lint Markdown and check for broken relative links
 	@if command -v markdownlint >/dev/null 2>&1; then \
 		echo "==> [$(PROJECT_SHORT)] Running markdownlint..."; \
-		markdownlint '**/*.md' --ignore node_modules --ignore .venv --ignore venv; \
+		markdownlint '**/*.md' --ignore node_modules --ignore .venv --ignore venv --ignore .internal; \
 	else \
 		echo "==> markdownlint not found, skipping. Install it: npm i -g markdownlint-cli"; \
 	fi

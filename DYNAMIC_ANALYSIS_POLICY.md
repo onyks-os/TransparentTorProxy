@@ -27,6 +27,7 @@ Python assertions (`assert`) are enabled during all test and fuzzing runs. The `
 ## Automation
 
 The fuzzing workflow (`.github/workflows/fuzzing.yml`) runs automatically:
+
 - On every pull request targeting `main`.
 - Weekly (every Sunday at midnight UTC) via scheduled cron.
 

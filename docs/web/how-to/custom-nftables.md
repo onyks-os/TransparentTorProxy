@@ -36,7 +36,7 @@ If UFW is active on your host system:
 sudo ttp start --lan-bypass
 ```
 
-3. To inspect both UFW rules and TTP redirection rules simultaneously:
+1. To inspect both UFW rules and TTP redirection rules simultaneously:
 
 ```bash
 # View UFW status

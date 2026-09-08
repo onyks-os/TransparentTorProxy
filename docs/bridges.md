@@ -23,6 +23,7 @@ You can get bridge lines directly from the Tor Project:
 * **Web**: Visit [bridges.torproject.org](https://bridges.torproject.org/) and follow the instructions to solve a captcha and get bridge lines.
 * **Email**: Send an email to [bridges@torproject.org](mailto:bridges@torproject.org) from a **Gmail** or **Riseup** address with the body `get bridges` (or `get transport obfs4` / `get transport snowflake`).
 * **Built-in Snowflake**: Snowflake bridges can often be used with a generic configuration since they dynamically connect to brokers. A typical Snowflake bridge line looks like:
+
   ```text
   snowflake 192.0.2.3:1 2B280B23111094B5E21A4B02A7E30B6780EB7167 connmux=1
   ```
@@ -34,6 +35,7 @@ You can get bridge lines directly from the Tor Project:
 TTP allows you to configure bridges in two ways: passing them directly in the command line or loading them from a text file.
 
 ### Option A: Direct CLI Option (`--bridge`)
+
 You can pass one or more individual bridge lines directly to the start/restart command.
 
 ```bash
@@ -47,6 +49,7 @@ sudo ttp start \
 ```
 
 ### Option B: Using a Bridges File (`--bridge-file`)
+
 If you have a list of bridges, save them to a plain text file (one bridge line per line, blank lines and lines starting with `#` are ignored) and specify the path:
 
 ```bash
@@ -68,6 +71,7 @@ If a bridge requires a **Pluggable Transport** helper binary (such as `obfs4prox
    * **Arch Linux**: `sudo pacman -S obfs4proxy` or `snowflake-client`
    * **openSUSE**: `sudo zypper install obfs4proxy` or `snowflake-client`
 4. **Configuration**: Once verified, TTP generates the volatile `torrc` and registers the transport plugins:
+
    ```text
    UseBridges 1
    ClientTransportPlugin obfs4 exec /usr/bin/obfs4proxy
@@ -82,14 +86,18 @@ If a bridge requires a **Pluggable Transport** helper binary (such as `obfs4prox
 To ensure that your connection is successfully utilizing the configured bridges:
 
 1. **Check Status**:
+
    ```bash
    ttp status
    ```
+
    Verify that the session is active and check the exit IP.
 2. **Review TTP Logs**:
+
    ```bash
    sudo ttp logs
    ```
+
    Look for notices confirming bridge usage or connection to pluggable transport helper processes:
    * `[notice] Delaying directory fetches: Learning about the system's connections`
    * `[notice] Bridge 'obfs4' at ... is up and running.`

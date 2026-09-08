@@ -18,9 +18,10 @@ During early development, TTP stored active session state, logs, and lock files 
 
 ## Decision
 
-We decided to move all runtime session data, log files, ephemeral configuration (such as the generated `torrc`), and dynamic systemd service files into the `/run/` memory-backed volatile directory (`tmpfs`). 
+We decided to move all runtime session data, log files, ephemeral configuration (such as the generated `torrc`), and dynamic systemd service files into the `/run/` memory-backed volatile directory (`tmpfs`).
 
 Specifically:
+
 * TTP session lock files are written to `/run/ttp/ttp.lock`.
 * Dynamic unit files are written to `/run/systemd/system/` (e.g. `ttp-tor.service` and `ttp-watchdog.service`).
 * Active session logs are written to `/run/ttp/ttp.log` and capped at 1MB.

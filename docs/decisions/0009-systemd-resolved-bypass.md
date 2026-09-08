@@ -25,7 +25,9 @@ To prevent D-Bus and NSS DNS leaks, TTP hijacks the systemd-resolved configurati
 We implement a three-layer defense-in-depth bypass strategy:
 
 ### 1. Volatile Configuration Drop-in
+
 When TTP starts, if `systemd-resolved` is active, it writes a volatile configuration drop-in file to `/run/systemd/resolved.conf.d/ttp.conf`:
+
 ```ini
 [Resolve]
 DNS=127.0.0.1:{dns_port}
@@ -36,19 +38,24 @@ MulticastDNS=no
 LLMNR=no
 Cache=no-negative
 ```
+
 * **Volatile Storage**: Storing in `/run` means the configuration resides on `tmpfs` and evaporates automatically on reboot/power loss, preventing a broken DNS state if the host crashes or shuts down abruptly.
 * **Wildcard Routing**: `Domains=~.` configures this loopback resolver as the catch-all routing domain, prioritizing it for all queries.
 * **Negative Cache Disable**: `Cache=no-negative` prevents caching temporary resolution failures during Tor bootstrapping.
 
 ### 2. Service Restart & Cache Flush Sequence
+
 To enforce the new drop-in configuration, TTP executes:
+
 * `systemctl reload-or-restart systemd-resolved`
 * `resolvectl flush-caches`
 
 Upon teardown, TTP deletes the volatile config, restarts systemd-resolved, and flushes the cache once more to restore original DNS functionality.
 
 ### 3. Kernel Guillotine (Fail-Closed Firewall)
+
 Since `systemd-resolved` runs under a dedicated system user (typically `systemd-resolve` or `systemd-resolved`), TTP dynamically resolves this user's UID and appends strict drop rules to the `filter_out` chain in its `nftables` ruleset:
+
 * For IPv4: `meta skuid {resolved_uid} ip daddr != 127.0.0.1 drop`
 * For IPv6: `meta skuid {resolved_uid} ip6 daddr != ::1 drop` (if IPv6 is enabled)
 

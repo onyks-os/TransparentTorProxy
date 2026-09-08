@@ -21,6 +21,7 @@ A static firewall ruleset does not protect the user against runtime changes or d
 ## Decision
 
 We introduced a proactive watchdog background daemon (`ttp-watchdog`) and an emergency fail-closed killswitch.
+
 * The watchdog service periodically (every 5 seconds) verifies the integrity of the Tor process socket, the `nftables` ruleset presence, and the DNS overlay mount.
 * On the first integrity check failure, the watchdog attempts "auto-healing" (restarting Tor, re-injecting rules, or re-mounting DNS).
 * If the auto-healing step fails or a subsequent check fails (two-strike rule), TTP immediately triggers an emergency fail-closed lockout (killswitch).

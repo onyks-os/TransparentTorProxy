@@ -66,12 +66,14 @@ By participating in this project, you agree to maintain a professional and respe
 
    > [!NOTE]
    > To run the firewall ruleset validation tests (`tests/test_nse_rules.py`), you must also install the `nse` extras:
+>
    > ```bash
    > pip install -e ".[nse]"
    > ```
+>
    > `network-sandbox-engine` provides the namespace/nftables orchestration API. `pyroute2` enables netlink-based route setup inside namespaces without requiring `/sys` mount permissions (needed for Docker compatibility).
 
-4. **Run tests**:
+1. **Run tests**:
 
    ```bash
    pytest tests/ -v
@@ -127,6 +129,7 @@ A change is considered **major** if it:
 - Alters the crash-safety architecture.
 
 In these cases, the contributor **must**:
+
 - Add new unit tests to cover the functionality.
 - Update existing tests if the expected behavior changes.
 - Manually run integration tests in a virtual machine (VM).
@@ -139,7 +142,7 @@ By contributing to TTP, you certify that you have the right to submit the contri
 
 **Every commit must include a `Signed-off-by` line** with your real name and email:
 
-```
+```text
 Signed-off-by: Jane Doe <jane@example.com>
 ```
 
@@ -160,7 +163,7 @@ git rebase --signoff HEAD~<number-of-commits>
 <details>
 <summary>Full DCO text</summary>
 
-```
+```text
 Developer Certificate of Origin
 Version 1.1
 

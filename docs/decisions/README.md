@@ -1,6 +1,6 @@
 # Architectural Decision Records (ADRs)
 
-This directory contains the Architectural Decision Records (ADRs) for the **TransparentTorProxy (TTP)** project. 
+This directory contains the Architectural Decision Records (ADRs) for the **TransparentTorProxy (TTP)** project.
 
 ## Purpose
 
@@ -13,6 +13,7 @@ ADRs serve as a light-weight record of significant design and architectural choi
 ## Structure of an ADR
 
 Each ADR is formatted using the Markdown standard and named using a sequential ID:
+
 * `0001-some-decision.md`
 * `0002-another-decision.md`
 
@@ -28,4 +29,3 @@ Each ADR is formatted using the Markdown standard and named using a sequential I
 8. [0008-byod-architecture.md](docs/decisions/0008-byod-architecture.md) — Support for custom external Tor instances via Bring Your Own Daemon (BYOD) on systemd hosts.
 9. [0009-systemd-resolved-bypass.md](docs/decisions/0009-systemd-resolved-bypass.md) — systemd-resolved DNS bypass and fail-closed firewall kernel drop.
 10. [0010-watchdog-finite-state-machine.md](docs/decisions/0010-watchdog-finite-state-machine.md) — Watchdog FSM (Finite State Machine) using the transitions library.
-

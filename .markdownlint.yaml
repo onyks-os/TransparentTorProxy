@@ -14,3 +14,14 @@ MD041: false
 # (for example a repeated "### Added" per release in CHANGELOG.md).
 MD024:
   siblings_only: true
+
+# Table pipes are not required to align with the header. Aligning them by hand
+# is churn on every edit, and misalignment has never made a table harder to read
+# in a rendered view - which is the only place these tables are read.
+MD060: false
+
+# Code block style is not enforced. The docs use MkDocs Material tabbed blocks
+# (`=== "Debian"` followed by an indented fence), and markdownlint reads that
+# indentation as an indented code block. The rule cannot tell the two apart, so
+# it reports every tabbed install snippet as an error.
+MD046: false

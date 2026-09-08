@@ -21,7 +21,7 @@ TTP exposes a single binary entry point `ttp`, implemented via [Typer](https://t
 
 ### 1.1 Invocation
 
-```
+```text
 ttp [COMMAND] [OPTIONS]
 ```
 

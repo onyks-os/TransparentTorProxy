@@ -5,7 +5,7 @@ This document describes fallback installation methods for Transparent Tor Proxy 
 > [!WARNING]
 > **Important Note on Linux Distributions (PEP 668)**  
 > Recent versions of Ubuntu, Debian, and other major distributions prevent global `pip install` to protect system stability. Using Python package managers directly bypasses TTP's kernel-level optimizations (such as SELinux module compilation on Fedora/RHEL) and will not install or manage system dependencies (`tor`, `nftables`, `conntrack`) automatically.
-> 
+>
 > Therefore, these methods are **not recommended** for general use and should only be used as a fallback if native packages or source script installation are not possible.
 
 ---
@@ -39,6 +39,6 @@ sudo ln -s ~/.local/share/ttp-venv/bin/ttp /usr/local/bin/ttp
 
 ## Uninstallation Warning
 
-Running `pipx uninstall` or deleting the virtual environment directory **only removes the Python code**. If TTP is active, your firewall rules and DNS overlay will remain hijacked. 
+Running `pipx uninstall` or deleting the virtual environment directory **only removes the Python code**. If TTP is active, your firewall rules and DNS overlay will remain hijacked.
 
 **Always run `sudo ttp stop` before uninstalling** via `pip`/`pipx` to restore your network to its default state.
