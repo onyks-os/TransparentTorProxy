@@ -113,10 +113,14 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
+      # libpcap is not optional here: the sniffer compiles a BPF filter, and
+      # without it Scapy raises "Cannot set filter" at construction time. The
+      # suite then fails loudly - including its own positive control - which is
+      # the intended behaviour, but the fix is to install the library.
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nftables iproute2 conntrack
+          sudo apt-get install -y nftables iproute2 conntrack libpcap0.8
 
       - name: Record the environment under test
         run: |

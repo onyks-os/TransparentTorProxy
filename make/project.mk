@@ -61,6 +61,13 @@ test-nse: ## Zero-leak nftables verification in a netns (requires root + the nse
 	@echo "==> [$(PROJECT_SHORT)] Zero-leak ruleset verification (NSE)..."
 	@echo "    kernel:   $$(uname -r)"
 	@echo "    nftables: $$(nft --version 2>/dev/null || echo 'MISSING')"
+	@# Scapy compiles the sniffer's BPF filter through libpcap. Without it every
+	@# test in the suite fails at sniffer construction - correctly, but with a
+	@# message about Scapy rather than about the missing library.
+	@if ! ldconfig -p 2>/dev/null | grep -q libpcap; then \
+		echo "    !!! libpcap not found. Install it (libpcap0.8 / libpcap) or the"; \
+		echo "        sniffer cannot compile its BPF filter and every test fails."; \
+	fi
 	@sudo -E TTP_REQUIRE_NSE=1 $(VENV)/bin/python -m pytest tests/test_nse_rules.py -m nse -v
 
 ##@ Native packaging

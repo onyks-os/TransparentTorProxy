@@ -278,6 +278,9 @@ still reach the LAN. A firewall that blocked everything would pass the first
 seven and fail the eighth.
 
 ```bash
+sudo apt install nftables iproute2 conntrack libpcap0.8   # libpcap is required:
+                                                          # the sniffer compiles
+                                                          # a BPF filter
 pip install -e ".[nse]"
 make test-nse            # runs as root; TTP_REQUIRE_NSE=1 so it cannot skip itself
 ```
