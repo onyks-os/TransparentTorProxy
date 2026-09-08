@@ -144,11 +144,16 @@ def test_setup_selinux_if_needed_skips_when_present():
 
 
 def test_remove_selinux_module_calls_semodule_r():
-    """Calls semodule -r if the module is installed."""
+    """Calls semodule -r if the module is installed.
+
+    Both the binary lookup and subprocess must be patched on ttp.selinux, the
+    module that actually calls them. Patching Path.exists here used to work only
+    because the production code hardcoded /usr/sbin/semodule.
+    """
     with (
         patch("ttp.tor_detect.is_selinux_module_installed", return_value=True),
-        patch.object(Path, "exists", return_value=True),
-        patch("ttp.tor_detect.subprocess.run") as mock_run,
+        patch("ttp.selinux.shutil.which", return_value="/usr/sbin/semodule"),
+        patch("ttp.selinux.subprocess.run") as mock_run,
     ):
         remove_selinux_module()
         mock_run.assert_any_call(["semodule", "-r", "ttp_tor_policy"], check=True)
