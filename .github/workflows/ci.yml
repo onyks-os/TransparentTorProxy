@@ -143,3 +143,59 @@ jobs:
         run: |
           sudo -E env "PATH=$PATH" TTP_REQUIRE_NSE=1 \
             python -m pytest tests/test_nse_rules.py -m nse -v
+
+  release-rehearsal:
+    # `make packages` is what the release workflow runs to produce the .deb,
+    # .rpm, wheel and sdist it then signs and publishes. Two release blockers -
+    # the `make build` target drift and an unpinned build backend emitting
+    # metadata twine rejects - were invisible until that pipeline was run end to
+    # end on a clean tree, i.e. at tag time, after the tag existed.
+    #
+    # This job runs it on every push instead, so the next such breakage is a red
+    # CI run rather than a failed release.
+    name: Release rehearsal (make packages)
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm checkpolicy policycoreutils-python-utils
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Build every release artifact
+        run: make packages
+
+      # release.sh skips the .rpm when rpmbuild is absent and still exits 0, so
+      # a missing build tool would otherwise produce a silently incomplete
+      # release. Same assertion the release workflow makes, run earlier.
+      - name: Verify all release artifacts were produced
+        run: |
+          missing=0
+          for pattern in 'packaging/*.deb' 'packaging/*.rpm' 'packaging/*.whl' \
+                         'packaging/*.tar.gz' 'packaging/SHA256SUMS.txt'; do
+            if ! compgen -G "$pattern" > /dev/null; then
+              echo "::error::No release artifact matched $pattern"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          ls -la packaging/
+        shell: bash
+
+      - name: Check the distributions are publishable
+        run: |
+          pip install --upgrade twine
+          twine check packaging/*.whl packaging/*.tar.gz

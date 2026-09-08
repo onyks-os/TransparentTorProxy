@@ -51,6 +51,12 @@ regardless.
   accumulated are fixed.
 - **`--strict-markers`**: a typo in a pytest marker silently deselects the test it
   was meant to tag.
+- **Release rehearsal in CI**: `make packages` runs on every push, asserting that
+  every artifact the release job signs was actually produced and that `twine
+  check` passes on the distributions. `packaging/release.sh` skips the `.rpm`
+  when `rpmbuild` is absent and still exits 0, so a missing build tool used to
+  produce a silently incomplete release - discovered only at tag time, when the
+  tag already existed.
 
 ### Changed
 

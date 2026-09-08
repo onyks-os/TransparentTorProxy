@@ -35,13 +35,13 @@ real defect survived the current suite, not because the metric looked low.
 | **Coverage is enforceable** | `make coverage` invoked `pytest --cov` without `pytest-cov` being a dependency, so it failed outright. Fixed, and `--cov-fail-under` now ratchets it. |
 | **markdownlint (and ShellCheck) in CI** | Both were invoked only when present and had never been installed on the runner. Both are installed, the job asserts they are on PATH, and the backlog they had accumulated is fixed. |
 | **NSE pinned to `>=2.1.0,<3`** | Was `>=1.1.1`, open across a major with breaking changes. 2.1.0 is the first release whose oracle cannot report a clean result having observed nothing. |
+| **Release rehearsal in CI** | `make packages` runs on every push and asserts every artifact the release job signs actually exists, plus `twine check`. The two blockers that motivated this were invisible until tag time, when the tag already existed. |
 
 ### Remaining
 
 | Item | Description |
 | :--- | :---------- |
 | **Behavioural CLI tests** | `tests/test_cli_*.py` assert on the sequence of internal calls rather than on the effect. That is how `ttp restart` shipped broken *with a dedicated passing test that asserted the broken call list*. Mock at the system boundary (`subprocess`, `pwd`, filesystem) and assert on the generated ruleset, `torrc`, and lock file — the shape `tests/test_firewall.py` already uses. |
-| **Release rehearsal in CI** | `make packages` on a clean checkout, asserting every artifact the release job signs actually exists. Two release blockers (the `make build` target drift and an unpinned build backend emitting metadata `twine` rejects) were invisible until the pipeline was run end to end on a clean tree. |
 
 ---
 
