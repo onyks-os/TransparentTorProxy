@@ -279,8 +279,9 @@ seven and fail the eighth.
 
 ```bash
 # libpcap is required: the sniffer compiles a BPF filter, and Scapy dlopen()s
-# the unversioned libpcap.so that only the -dev package ships.
-sudo apt install nftables iproute2 conntrack libpcap0.8 libpcap-dev
+# the unversioned libpcap.so that only the -devel/-dev package ships.
+sudo apt install nftables iproute2 conntrack libpcap0.8 libpcap-dev   # Debian/Ubuntu
+sudo dnf install nftables iproute2 conntrack libpcap libpcap-devel    # Fedora/RHEL
 pip install -e ".[nse]"
 make test-nse            # runs as root; TTP_REQUIRE_NSE=1 so it cannot skip itself
 ```
