@@ -93,15 +93,18 @@ run_step() {
 
 echo -e "\n${YELLOW}TTP Pre-release Verification Pipeline${NC}\n"
 
-run_step "Formatting Check (Ruff Format)" "ruff format --check ttp/ tests/"
-run_step "Linting (Ruff)" "ruff check ttp/ tests/"
-run_step "Unit Tests (Pytest)" "pytest tests/ -q"
+# Lint and test go through the Makefile so this script cannot drift from what
+# CI enforces: `make lint` is ruff + mypy + shellcheck + secret scan.
+run_step "Lint & Type Check (make lint)" "make lint"
+run_step "Unit Tests (make test)" "make test"
 run_step "Fuzzing (Hypothesis)" "pytest fuzzing/fuzz_target.py -q"
 run_step "Dependency Audit (pip-audit)" "pip-audit ."
 run_step "Integration (Debian)" "make integration-debian"
 run_step "Integration (Fedora)" "make integration-fedora"
 run_step "Integration (Arch)" "make integration-arch"
-run_step "Build Artifacts (.deb, .rpm)" "make build"
+# `make build` only produces the Python sdist/wheel; `make packages` is what
+# builds the native .deb and .rpm this step claims to verify.
+run_step "Build Artifacts (.deb, .rpm)" "make packages"
 
 ELAPSED=$(( SECONDS - START_TIME ))
 M=$(( ELAPSED / 60 ))

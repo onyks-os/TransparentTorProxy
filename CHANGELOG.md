@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.7] - 2026-08-09
+## [0.4.7] - 2026-09-08
 
 ### Added
 
@@ -32,10 +32,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CI Enforces the Makefile Contract**: the `lint` job in `.github/workflows/ci.yml` reimplemented `ruff check` and `ruff format --check` by hand and had drifted from `make lint`, which also runs `mypy`, ShellCheck over `packaging/`, and the tracked-file secret scan. As a result **no workflow ran mypy at all**. Both the `lint` and `unit-tests` jobs, and `scripts/verify.sh`, now delegate to `make lint` and `make test` so CI and local verification cannot diverge from the documented contract again.
+- **Type Annotations Pass Under mypy**: resolved the 24 errors surfaced by adding mypy to the lint gate - 16 through configuration (`stem` ships no `py.typed`; `transitions.Machine` attaches FSM triggers at runtime) and 8 in the code, covering a `socket | None` dereference in the watchdog FSM, an invalid `select()` source list, and unchecked `Any` returns from third-party JSON verification endpoints.
+- **Release Workflow Gating**: the release job now verifies that the pushed tag matches the version in `pyproject.toml`, runs `make lint` and `make test` before building, and asserts that every expected artifact exists before signing. Previously a tag could publish an unverified build, and `packaging/release.sh` skipping the `.rpm` when `rpmbuild` is absent would still exit 0.
 - **Standardized Error Handling**: Unified CLI error handling across `_validation.py` and `watchdog.py` to consistently raise `typer.Exit(code=1)` with Rich formatted error panels.
 - **Flaky NSE Test Resolution**: Hardened `test_bypassed_user_escape` in `tests/test_nse_rules.py` with ARP cache warmup, Scapy sniffer initialization delays, and multi-packet transmissions.
 - **Systemd Hard Requirement**: Declared systemd as strictly required for TTP. Start, restart, and bypass CLI commands check for systemd on startup and fail immediately with a descriptive error message if missing. Removed references to systemd-less environments, Alpine Linux, or Void Linux in documents, ADRs, and help strings.
 - **Bypass Command Sudo Check**: Improved the `ttp bypass` CLI command to fail early with a clean, descriptive error message ("This command must be run with sudo to safely delegate privileges via systemd-run.") if executed without `sudo` or outside a `sudo` environment.
+
+### Fixed
+
+- **Release Pipeline Target Drift (release-blocking)**: `.github/workflows/release.yml` and `scripts/verify.sh` still invoked `make build`, which after the Makefile modularization only produces the Python sdist and wheel into `dist/`. The native `.deb`/`.rpm`/`SHA256SUMS.txt` artifacts that both the Sigstore signing step and the GitHub Release upload consume are produced by `make packages` (`packaging/release.sh`) into `packaging/`. Tagging a release would have published an empty or incomplete asset set. Both callers now use `make packages`.
+- **Non-Atomic Firewall Table Replacement**: `apply_rules()` and `apply_emergency_killswitch()` issued `nft add table`, `nft flush table`, and the ruleset injection as three separate `nft` invocations - three independent kernel transactions. Between the flush and the injection the `inet ttp` table existed but was empty, providing neither redirection nor drop, so traffic egressed in cleartext. Both paths now submit the table reset and the ruleset as a single `nft -f` transaction via the new `_apply_table_atomically()` helper. This was most severe in the killswitch, which by definition runs when session integrity has already been lost.
+- **Silent Fail-Open During Teardown**: `apply_teardown_lockdown()` and `apply_active_socket_slaughter()` caught every `Exception` and logged it at `debug` level with the assumption that the table was already gone. A genuine `nft` failure - permissions, a corrupted chain, a missing binary - therefore opened a cleartext window during `ttp stop` and left no record above debug. Failures are now classified: a missing table or chain stays at `debug`, anything else is logged at `warning` with an explicit leak-window notice.
+- **`ttp restart` Crash on Every Invocation Without Bridge Flags**: `restart_command()` forwarded arguments to `start_command()` through a conditionally-populated `**kwargs` dict, omitting any parameter whose value was `None` or `False`. Because `start_command()` is called directly as a Python function rather than through the Typer parser, an omitted parameter took its signature default - a truthy `typer.OptionInfo` sentinel, not `None`. `_parse_bridges()` then raised `TypeError: 'bool' object is not callable` on `bridge_file`, and `_parse_bypass_users_groups()` raised `TypeError: 'OptionInfo' object is not iterable` on `bypass_user`. All parameters are now forwarded explicitly.
+- **`packaging/build_deb.sh` Wheel Path Resolution**: replaced an unquoted `ls` glob (ShellCheck SC2086) with a direct path construction and an explicit existence check, so a missing wheel fails with a readable message instead of a word-splitting surprise.
+- **Unpinned Build Backend Broke the Release Build**: `[build-system] requires` was an unbounded `hatchling`. hatchling 1.32.0 emits `Metadata-Version: 2.5`, which `twine check` rejects via `packaging` 26.0 (`InvalidDistribution: '2.5' is not a valid metadata version`), aborting `packaging/release.sh` at step 0. Pinned to `hatchling>=1.27,<1.32`, which emits the still-accepted 2.4. An unpinned backend also meant the published artifact metadata could change with no commit to this repository.
+- **Package Builds Inherited the Operator's umask**: `build_deb.sh`, `build_rpm.sh` and `release.sh` created their staging trees with whatever umask the operator happened to have. Under a hardened `umask 027` the `DEBIAN/` control directory came out `750` and `dpkg-deb` refused to build at all (`control directory has bad permissions 750`), making local release builds impossible on such machines; more subtly, the file modes inside the published packages varied with who ran the build. All three scripts now set `umask 022` explicitly.
+- **README Native Package Paths**: the installation instructions pointed at `./packaging/transparent-tor-proxy_<version>_all.deb`, a path that never exists in a fresh clone because the built packages are gitignored release assets. The instructions now direct users to the GitHub release assets.
+
+
+## [0.4.6] - unreleased
+
+Version 0.4.6 was built (2026-07-21) but never tagged or published: no `v0.4.6` tag
+exists and no release assets were ever distributed. The work from that cycle - the
+watchdog Finite State Machine, the `dns.py` refactoring, the `cli.py` split into
+`ttp/commands/`, and the permissions/timeout hardening - shipped as part of 0.4.7
+above. The version number is recorded here so the history has no silent gap.
 
 ## [0.4.5] - 2026-06-21
 

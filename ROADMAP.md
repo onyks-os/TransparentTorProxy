@@ -4,30 +4,41 @@ This document outlines the **realistic, near-term** development plan for Transpa
 
 ---
 
-## Current Status (v0.4.7)
+## Current Status (v0.4.7 — shipped)
 
 Delivered:
 
 - Volatile core, stateless nftables, DNS overlay + systemd-resolved bypass
-- Watchdog with auto-healing and emergency killswitch
+- Watchdog governed by a formal FSM (`transitions`), with auto-healing and emergency killswitch
 - Split tunneling (UID/GID + cgroups v2 `ttp bypass`)
 - Tor bridges (obfs4/snowflake), BYOD mode, zero-leak teardown
 - Privilege-separated watchdog user (`ttp-watchdog` + `CAP_NET_ADMIN`)
 - NSE ruleset tests, chaos monkey, multi-distro Docker integration
+- `cli.py` split into `ttp/commands/`; Debian Docker integration runs on every push and PR
+- Single quality gate: CI and `scripts/verify.sh` both delegate to `make lint` / `make test`,
+  so ruff, mypy, ShellCheck and the secret scan cannot drift apart
 
 ---
 
-## v0.4.7 — Hardening & Reliability (Q3–Q4 2026)
+## v0.4.8 — Verification Debt (next)
 
-**Goal:** Make the project maintainable and trustworthy for contributors.
+**Goal:** Make a green test suite mean something. Every item here exists because a
+real defect survived the current suite, not because the metric looked low.
 
 | Item | Description |
 | :--- | :---------- |
-| **CI integration tests** | Run Debian Docker integration on every PR (in progress). |
-| **Test suite hygiene** | Keep unit tests green after every architectural change; mark root/NSE tests explicitly. |
-| **CLI modularization** | Split `cli.py` into `ttp/commands/` (phase 1: shared helpers + lifecycle — done). |
-| **Watchdog FSM** | Replace procedural watchdog logic with a formal state machine (`transitions` library) for predictable killswitch transitions. |
-| **systemd-resolved hardening** | Refine ADR 0009 implementation based on field reports (D-Bus/NSS edge cases). |
+| **Behavioural CLI tests** | `tests/test_cli_*.py` assert on the sequence of internal calls rather than on the effect. That is how `ttp restart` shipped broken *with a dedicated passing test that asserted the broken call list*. Mock at the system boundary (`subprocess`, `pwd`, filesystem) and assert on the generated ruleset, `torrc`, and lock file — the shape `tests/test_firewall.py` already uses. |
+| **State and validation coverage** | Coverage is inverted: the deterministic ruleset builder sits at 79% while `_ports.py` (45%), `_validation.py` (58%), `tor_install.py` (64%) and `state.py` (66%) — the lock, recovery, and input-parsing paths — are the least covered. Target 80% on `state.py` and `_validation.py`. |
+| **Release rehearsal in CI** | `make packages` on a clean checkout, asserting every artifact the release job signs actually exists. Two release blockers (the `make build` target drift and an unpinned build backend emitting metadata `twine` rejects) were invisible until the pipeline was run end to end on a clean tree. |
+| **markdownlint in CI** | `make lint`'s `lint-docs` step silently no-ops because markdownlint is not installed on the runner. Either install it or drop the pretence. |
+
+---
+
+## v0.4.9 — systemd-resolved field hardening
+
+| Item | Description |
+| :--- | :---------- |
+| **systemd-resolved hardening** | Refine the ADR 0009 implementation based on field reports (D-Bus/NSS edge cases). Carried over from the 0.4.7 cycle: it needs real-world reports to act on, so it is scheduled where the reports will exist rather than kept open indefinitely. |
 
 ---
 
@@ -38,8 +49,9 @@ Delivered:
 | Item | Description |
 | :--- | :---------- |
 | **VPN coexistence** | Detect `tun+`/`wg+` interfaces and generate compatible nftables rules for Tor-over-VPN / VPN-over-Tor. |
-| **Desktop notifications** | DBus notifications for killswitch activation, circuit rotation, watchdog alerts. |
+| **Desktop notifications** | Extend the existing `wall` + `notify-send` alerts in `ttp/watchdog/alerts.py` to proper D-Bus notifications, and cover circuit rotation as well as killswitch activation. |
 | **`ttp monitor` (TUI)** | Real-time bandwidth/circuit stats via Rich or Textual. |
+| **Supply chain & reproducibility** | The project already publishes Sigstore-signed assets, an SBOM, and a verification guide; what is missing is evidence they hold. Verify the published signatures in CI, keep the build backend pinned deliberately rather than by accident, and check that a rebuild of the same tag produces identical artifacts. |
 
 *Deferred until v0.5.0+ unless a contributor picks them up:*
 - Playwright L7 leak tests in CI

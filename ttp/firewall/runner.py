@@ -16,6 +16,25 @@ logger = logging.getLogger("ttp")
 # Path to the temporary ruleset file for better debugging (line numbers)
 RULES_TEMP_PATH = LOCK_DIR / "ttp.rules"
 
+# Prepended to every full-table replacement. Keeping the create+flush in the same
+# nft script as the ruleset makes the swap a single kernel transaction: nft -f
+# either commits the whole thing or nothing. Issuing them as separate `nft`
+# invocations leaves a window where the table exists but is empty - no redirect
+# and no drop - during which traffic egresses in cleartext.
+_TABLE_RESET_PREAMBLE = "add table inet ttp\nflush table inet ttp\n"
+
+
+def _apply_table_atomically(ruleset: str) -> None:
+    """Replace the entire ``inet ttp`` table in one atomic nft transaction.
+
+    Args:
+        ruleset: The complete ``table inet ttp { ... }`` definition to install.
+
+    Raises:
+        FirewallError: If the transaction fails; the previous table is left intact.
+    """
+    _run_nft_string(_TABLE_RESET_PREAMBLE + ruleset.strip() + "\n")
+
 
 def _run_nft(args: list[str]) -> None:
     """Execute an nft CLI command synchronously.
@@ -76,7 +95,8 @@ def apply_rules(
 ) -> None:
     """Create the dedicated 'inet ttp' table and inject redirection rules.
 
-    Orchestrates the atomic sequence: Create Table -> Flush Table -> Apply Ruleset.
+    Create Table -> Flush Table -> Apply Ruleset is submitted to nft as a single
+    transaction, so the table is never observable in a half-applied state.
     If any step fails, triggers an automatic rollback (table destruction).
 
     Args:
@@ -125,10 +145,7 @@ def apply_rules(
     )
 
     try:
-        # 1. Create and sanitize the dedicated table
-        _run_nft(["add", "table", "inet", "ttp"])
-        _run_nft(["flush", "table", "inet", "ttp"])
-        _run_nft_string(ruleset)
+        _apply_table_atomically(ruleset)
         logger.info(f"Stateless rules applied. Tor user ({tor_user}, UID {tor_uid}) is exempt.")
     except Exception as e:
         logger.error(f"Firewall injection failed: {e}. Rolling back...")

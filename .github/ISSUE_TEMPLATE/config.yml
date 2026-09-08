@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/onyks-os/TransparentTorProxy/security/advisories/new
+    about: Please report vulnerabilities privately, never as a public issue.
+  - name: 💬 Ask a question
+    url: https://github.com/onyks-os/TransparentTorProxy/discussions
+    about: Usage questions and general discussion.

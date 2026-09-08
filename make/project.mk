@@ -1,0 +1,75 @@
+# ---------------------------------------------------------------------------
+# project.mk — targets that exist only in TTP.
+#
+# Everything here is either privileged, container-based, or specific to the
+# native packaging pipeline, so it has no equivalent in the shared contract.
+# Targets that extend a contract target do so by adding a prerequisite rather
+# than redefining a recipe, which keeps `make` from overriding the fragment.
+# ---------------------------------------------------------------------------
+
+.PHONY: integration-debian integration-fedora integration-arch integration-all \
+        chaos-monkey test-leak-ip test-leak-dns test-leak-webrtc check-leak \
+        packages clean-packages verify-full tarball testpypi pypi
+
+##@ Integration (Docker, privileged)
+
+# Tor bootstrap is occasionally flaky in a cold container, so each suite is
+# retried once before it is reported as a failure.
+integration-debian: ## Run the integration suite on Debian
+	@echo "==> [$(PROJECT_SHORT)] Integration tests on Debian..."
+	@./scripts/vm/run_integration_tests.sh debian || (sleep 5 && ./scripts/vm/run_integration_tests.sh debian)
+
+integration-fedora: ## Run the integration suite on Fedora
+	@echo "==> [$(PROJECT_SHORT)] Integration tests on Fedora..."
+	@./scripts/vm/run_integration_tests.sh fedora || (sleep 5 && ./scripts/vm/run_integration_tests.sh fedora)
+
+integration-arch: ## Run the integration suite on Arch Linux
+	@echo "==> [$(PROJECT_SHORT)] Integration tests on Arch Linux..."
+	@./scripts/vm/run_integration_tests.sh arch || (sleep 5 && ./scripts/vm/run_integration_tests.sh arch)
+
+integration-all: integration-debian integration-fedora integration-arch ## All three distributions in sequence
+
+chaos-monkey: ## Watchdog chaos-monkey stress test (60s, requires root)
+	@echo "==> [$(PROJECT_SHORT)] Watchdog chaos monkey..."
+	sudo -E $(VENV)/bin/python3 tests/chaos_monkey.py --duration 60
+
+##@ Leak verification (run from an unproxied host, REAL_PUBLIC_IP set)
+
+test-leak-ip: ## Offensive IP leak test
+	@$(PYTHON) -m pytest tests/leak/test_ip_leak.py -v -s
+
+test-leak-dns: ## Offensive DNS leak test
+	@$(PYTHON) -m pytest tests/leak/test_dns_leak.py -v -s
+
+test-leak-webrtc: ## Offensive WebRTC STUN leak test
+	@$(PYTHON) -m pytest tests/leak/test_webrtc_leak.py -v -s
+
+check-leak: test-leak-ip test-leak-dns test-leak-webrtc ## The full leak suite
+
+##@ Native packaging
+
+packages: ## Build .deb and .rpm into packaging/ (was `make build` before the template migration)
+	@echo "==> [$(PROJECT_SHORT)] Building Debian, RPM, and Python release artifacts..."
+	@./packaging/release.sh
+
+tarball: ## Build the source tarball only
+	@echo "==> [$(PROJECT_SHORT)] Building sdist..."
+	@$(PYTHON) -m build --sdist --outdir $(DIST_DIR)
+
+# `make clean` must also remove the native packages, which the shared fragment
+# knows nothing about.
+clean: clean-packages
+
+clean-packages:
+	@rm -rf .build_tmp/ packaging/*.deb packaging/*.rpm packaging/*.tar.gz \
+		packaging/*.whl packaging/SHA256SUMS.txt packaging/SHA256SUMS.txt.asc
+
+##@ Release rehearsal
+
+verify-full: ## The 8-minute pre-release suite (lint + unit + integration + packages)
+	@chmod +x scripts/verify.sh
+	@./scripts/verify.sh $(ARGS)
+
+# Names kept from the pre-template Makefile so muscle memory still works.
+testpypi: publish-test ## Alias for publish-test
+pypi: publish ## Alias for publish

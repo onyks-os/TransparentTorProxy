@@ -30,6 +30,12 @@
 # and propagate pipe failures (-o pipefail).
 set -euo pipefail
 
+# Package contents must not inherit the operator's umask: a hardened workstation
+# (umask 027) produces group/other-unreadable directories, which dpkg-deb rejects
+# outright ("control directory has bad permissions 750") and which would otherwise
+# make the shipped file modes depend on who ran the build.
+umask 022
+
 # Change the current directory to the root of the project.
 # $0 is the path to this script. `dirname` gets the folder it's in (packaging/).
 # `/..` moves one level up to the root folder (TransparentTorProxy/).
@@ -68,7 +74,13 @@ python3 -m build --wheel >/dev/null
 # Find the newly created wheel file.
 # Note: Hatchling replaces dashes with underscores in the filename.
 WHEEL_NAME=$(echo "$PROJECT_NAME" | tr '-' '_')
-WHEEL_FILE=$(ls dist/${WHEEL_NAME}-${VERSION}-py3-none-any.whl)
+# The name is fully determined, so build the path directly instead of globbing
+# through ls, and fail with a readable message if the wheel is not there.
+WHEEL_FILE="dist/${WHEEL_NAME}-${VERSION}-py3-none-any.whl"
+if [ ! -f "$WHEEL_FILE" ]; then
+    echo "ERROR: expected wheel not found: $WHEEL_FILE" >&2
+    exit 1
+fi
 
 # Unzip the wheel file directly into the Debian dist-packages directory.
 # This effectively "installs" the Python library files into the package structure.

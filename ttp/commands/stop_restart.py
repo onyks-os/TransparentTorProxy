@@ -161,18 +161,10 @@ def restart_command(
     else:
         console.print(f"{_PREFIX} No active session found, starting a new one...")
 
-    kwargs_start = {}
-    if bypass_user is not None:
-        kwargs_start["bypass_user"] = bypass_user
-    if bypass_group is not None:
-        kwargs_start["bypass_group"] = bypass_group
-    if use_bridges:
-        kwargs_start["use_bridges"] = use_bridges
-    if bridge_file is not None:
-        kwargs_start["bridge_file"] = bridge_file
-    if bridge is not None:
-        kwargs_start["bridge"] = bridge
-
+    # Every parameter is forwarded explicitly: omitting one would leave
+    # start_command with its ``typer.Option(...)`` default, which is an
+    # OptionInfo sentinel (truthy, not a real value) when the function is
+    # called directly instead of through the CLI parser.
     start_command(
         interface=interface,
         bootstrap_timeout=bootstrap_timeout,
@@ -181,8 +173,12 @@ def restart_command(
         allow_root=allow_root,
         no_lan_bypass=no_lan_bypass,
         watchdog=watchdog,
+        bypass_user=bypass_user,
+        bypass_group=bypass_group,
+        use_bridges=use_bridges,
+        bridge_file=bridge_file,
+        bridge=bridge,
         external_daemon=external_daemon,
         tor_uid=tor_uid,
         no_ipv6=no_ipv6,
-        **kwargs_start,
     )

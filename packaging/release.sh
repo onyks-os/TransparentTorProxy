@@ -29,6 +29,9 @@
 # and propagate pipe failures (-o pipefail).
 set -euo pipefail
 
+# Keep artifact permissions independent of the operator's umask (see build_deb.sh).
+umask 022
+
 # Navigate to the project root regardless of where the script is invoked from.
 cd "$(dirname "$0")/.."
 

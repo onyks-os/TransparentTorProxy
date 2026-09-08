@@ -222,7 +222,7 @@ cython_debug/
 .cursorindexingignore
 
 # Codex
-codex-linux-flatpak/
+**/codex-linux-flatpak/
 
 # Marimo
 marimo/_static/
@@ -231,3 +231,49 @@ __marimo__/
 
 *.rej
 *.orig
+
+# Profile: python
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[codz]
+*$py.class
+*.so
+.Python
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Tooling caches
+.tox/
+.nox/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+.hypothesis/
+.ipynb_checkpoints
+
+# Other
+.claude

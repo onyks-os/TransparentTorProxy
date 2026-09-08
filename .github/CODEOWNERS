@@ -1,0 +1,22 @@
+# Every file requires review from the project lead by default.
+# See MAINTAINERS.md for the role definitions.
+*                       @onyks-os
+
+# Security-critical paths — always require an explicit lead sign-off.
+/.github/workflows/     @onyks-os
+/SECURITY.md            @onyks-os
+/docs/security-assessment.md @onyks-os
+
+# Source paths that carry security-critical logic: anything that can put the host
+# on the clearnet, or that runs with elevated privileges.
+/ttp/firewall/          @onyks-os
+/ttp/watchdog/          @onyks-os
+/ttp/dns.py             @onyks-os
+/ttp/dns_resolved.py    @onyks-os
+/ttp/tor_control.py     @onyks-os
+/ttp/state.py           @onyks-os
+/ttp/selinux.py         @onyks-os
+
+# Host-modifying and release-signing surfaces.
+/scripts/               @onyks-os
+/packaging/             @onyks-os

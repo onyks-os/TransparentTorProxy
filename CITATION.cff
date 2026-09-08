@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+title: "TransparentTorProxy"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - alias: "onyks-os"
+    name: "onyks-os"
+repository-code: "https://github.com/onyks-os/TransparentTorProxy"
+url: "https://onyks-os.github.io/ttp/"
+abstract: "A Linux CLI tool that transparently routes all system traffic through the Tor network using nftables"
+keywords:
+  - "TransparentTorProxy"
+license: MIT
+version: "0.4.7"
+date-released: "2026-09-08"

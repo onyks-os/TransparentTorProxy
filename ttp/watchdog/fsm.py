@@ -171,10 +171,11 @@ class WatchdogFSM:
 
     def flush_event_buffers(self, fds: list[Any]) -> None:
         """Discard any accumulated events in netlink or inotify queues."""
-        if self.netlink_socket in fds:
+        sock = self.netlink_socket
+        if sock is not None and sock in fds:
             try:
                 while True:
-                    data = self.netlink_socket.recv(65535)
+                    data = sock.recv(65535)
                     if not isinstance(data, (bytes, bytearray)) or len(data) == 0:
                         break
             except BlockingIOError:

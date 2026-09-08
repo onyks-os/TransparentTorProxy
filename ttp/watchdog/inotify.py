@@ -6,6 +6,7 @@
 import logging
 import os
 import select
+import socket
 import struct
 import time
 
@@ -78,9 +79,18 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
                     logger.info("Watchdog: No active TTP lock file found after recovery. Exiting gracefully.")
                     break
 
-            # Run event multiplexer with heartbeat timeout (15s)
+            # Run event multiplexer with heartbeat timeout (15s).
+            # The FSM sources are collected defensively: a torn-down FSM leaves
+            # netlink_socket at None and inotify_fd at -1, and select() would
+            # raise on those instead of falling back to the heartbeat.
+            watch_sources: list[socket.socket | int] = []
+            if fsm.netlink_socket is not None:
+                watch_sources.append(fsm.netlink_socket)
+            if fsm.inotify_fd >= 0:
+                watch_sources.append(fsm.inotify_fd)
+
             try:
-                readable, _, _ = select.select([fsm.netlink_socket, fsm.inotify_fd], [], [], 15.0)
+                readable, _, _ = select.select(watch_sources, [], [], 15.0)
             except InterruptedError:
                 # EINTR: syscall interrupted by a signal, ignore and retry
                 continue

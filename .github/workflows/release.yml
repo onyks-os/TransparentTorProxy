@@ -36,8 +36,47 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      # The tag is the only thing a human types during a release, so it is the
+      # only thing that can silently disagree with the tree it points at.
+      - name: Verify tag matches the packaged version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version="$(grep -m1 '^version = ' pyproject.toml | cut -d '"' -f2)"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match pyproject.toml version $pkg_version"
+            exit 1
+          fi
+          echo "Releasing version $pkg_version"
+
+      - name: Lint and type-check
+        run: make lint
+
+      - name: Run unit tests
+        run: make test
+
+      # `make packages` (packaging/release.sh) is what populates packaging/ with
+      # the .deb, .rpm, .whl, .tar.gz and SHA256SUMS.txt that the sign and publish
+      # steps below consume. `make build` only produces the Python sdist/wheel
+      # into dist/, which would leave every glob below empty.
       - name: Build release packages
-        run: make build
+        run: make packages
+
+      # release.sh skips the .rpm when rpmbuild is absent and still exits 0, so a
+      # missing build tool would otherwise publish a silently incomplete release.
+      - name: Verify all release artifacts were produced
+        run: |
+          missing=0
+          for pattern in 'packaging/*.deb' 'packaging/*.rpm' 'packaging/*.whl' \
+                         'packaging/*.tar.gz' 'packaging/SHA256SUMS.txt'; do
+            # shellcheck disable=SC2086
+            if ! compgen -G "$pattern" > /dev/null; then
+              echo "::error::No release artifact matched $pattern"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          ls -la packaging/
+        shell: bash
 
       - name: Generate SBOM
         run: |

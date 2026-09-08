@@ -4,11 +4,47 @@
 """Stateless Firewall Module - Emergency lockdown, killswitch, and socket slaughter mechanisms."""
 
 import logging
+import subprocess
 
 from ttp.exceptions import FirewallError
-from ttp.firewall.runner import _run_nft, _run_nft_string
+from ttp.firewall.runner import _apply_table_atomically, _run_nft
 
 logger = logging.getLogger("ttp")
+
+# nft's wording when the target table or chain is simply not there. That is the
+# expected, benign case for the teardown helpers below - the session was already
+# stopped. Anything else is a real failure of a leak-prevention step and must be
+# visible, not swallowed at debug level.
+_MISSING_OBJECT_MARKERS = (
+    "no such file or directory",
+    "does not exist",
+    "could not process rule",
+)
+
+
+def _log_teardown_failure(action: str, exc: Exception) -> None:
+    """Log a teardown step failure, distinguishing 'already gone' from a real fault.
+
+    A missing table or chain means the session was already torn down and is logged
+    at debug level. Every other failure means a leak-prevention rule did not make it
+    into the kernel, and is logged at warning level so it is not lost.
+
+    Args:
+        action: Human-readable name of the teardown step that failed.
+        exc: The exception raised by the nft invocation.
+    """
+    stderr = ""
+    if isinstance(exc, subprocess.CalledProcessError):
+        stderr = (exc.stderr or "") if isinstance(exc.stderr, str) else ""
+
+    if any(marker in stderr.lower() for marker in _MISSING_OBJECT_MARKERS):
+        logger.debug("%s skipped (table/chain does not exist): %s", action, exc)
+    else:
+        logger.warning(
+            "%s FAILED: %s. Outbound traffic may not be locked down during teardown.",
+            action,
+            exc,
+        )
 
 
 def apply_teardown_lockdown(tor_uid: int | None = None) -> None:
@@ -29,8 +65,7 @@ def apply_teardown_lockdown(tor_uid: int | None = None) -> None:
         _run_nft(rule)
         logger.warning("Teardown lockdown applied: outbound traffic locked.")
     except Exception as e:
-        # Gracefully handle cases where the table or chain does not exist (e.g., already stopped)
-        logger.debug("Could not apply teardown lockdown (table/chain may not exist): %s", e)
+        _log_teardown_failure("Teardown lockdown", e)
 
 
 def apply_active_socket_slaughter() -> None:
@@ -40,7 +75,7 @@ def apply_active_socket_slaughter() -> None:
     for UDP sockets and TCP RST packets for open TCP streams.
     """
     try:
-        # 1. Uccide le connessioni UDP pendenti (invia ICMP Port Unreachable al processo locale)
+        # 1. Kill pending UDP connections (sends ICMP Port Unreachable to the local process)
         _run_nft(
             [
                 "insert",
@@ -55,7 +90,7 @@ def apply_active_socket_slaughter() -> None:
                 "reject",
             ]
         )
-        # 2. Uccide le connessioni TCP pendenti istantaneamente (invia RST al processo locale)
+        # 2. Kill pending TCP connections instantly (sends RST to the local process)
         _run_nft(
             [
                 "insert",
@@ -75,8 +110,7 @@ def apply_active_socket_slaughter() -> None:
         )
         logger.warning("Active socket slaughter rules applied: resetting pending connections.")
     except Exception as e:
-        # Gracefully handle cases where the table or chain does not exist (e.g., already stopped)
-        logger.debug("Could not apply active socket slaughter: %s", e)
+        _log_teardown_failure("Active socket slaughter", e)
 
 
 def apply_emergency_killswitch() -> None:
@@ -105,12 +139,10 @@ def apply_emergency_killswitch() -> None:
     }
     """
     try:
-        # 1. Create and sanitize the dedicated table
-        _run_nft(["add", "table", "inet", "ttp"])
-        _run_nft(["flush", "table", "inet", "ttp"])
-
-        # 2. Total isolation: drop everything except loopback
-        _run_nft_string(ruleset)
+        # Table reset and drop-all ruleset go in as one transaction. Flushing in a
+        # separate nft call would briefly leave the table empty, which is an open
+        # network at the exact moment integrity has already been lost.
+        _apply_table_atomically(ruleset)
         logger.warning("Emergency killswitch applied: network traffic isolated.")
     except Exception as e:
         logger.error(f"Failed to apply emergency killswitch: {e}")

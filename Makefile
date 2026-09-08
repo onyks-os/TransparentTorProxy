@@ -1,146 +1,42 @@
-# TTP local CI/CD: unit tests, Docker integration, native packages.
+# TransparentTorProxy (TTP) — developer entrypoint.
 #
-# Usage:
-#   make test             - unit tests only
-#   make fuzz             - property-based fuzz tests (Hypothesis)
-#   make audit            - dependency vulnerability scan
-#   make integration-all  - Docker tests (Debian, Fedora, Arch)
-#   make verify           - lint + unit + fuzz + audit + integration + package build
+# Every target is documented inline; run `make help` for the full list.
+# Logic lives in the modular fragments under make/ so that this file stays readable:
+#
+#   make/common.mk   — environment, help, housekeeping, TODO tracking
+#   make/quality.mk  — lint, format, audit, security gates
+#   make/docs.mk     — MkDocs site and ADR scaffolding
+#   make/release.mk  — versioning, build, SBOM, checksums, signing
+#   make/python.mk   — language-specific implementation of the target contract
+#   make/project.mk  — TTP-specific targets (Docker integration, leak suite, packages)
+#   make/local.mk    — optional, git-ignored, machine-local overrides
 
-.PHONY: test fuzz audit lint format pre-commit install-hooks integration-debian integration-fedora integration-arch integration-all verify build clean testpypi pypi test-leak-ip test-leak-dns test-leak-webrtc check-leak tarball build-web-docs docs docs-build docs-serve serve-docs
+SHELL := /bin/bash
+.DEFAULT_GOAL := help
 
-# 0. MkDocs Web Documentation (Build & Live Dev Server)
-docs: docs-build
+# ---------------------------------------------------------------------------
+# Project identity — the single source of truth for scripts and workflows.
+# ---------------------------------------------------------------------------
+PROJECT_NAME  := TransparentTorProxy
+PROJECT_SHORT := TTP
+PROJECT_SLUG  := TransparentTorProxy
+PROJECT_PKG   := ttp
+PROJECT_DIST  := transparent-tor-proxy
+GITHUB_OWNER  := onyks-os
+VERSION       := 0.4.7
 
-docs-build: build-web-docs
+# Directories that hold first-party source, tests, and shell scripts.
+SRC_DIRS     := ttp
+TEST_DIRS    := tests
+SCRIPT_DIRS  := scripts packaging
 
-build-web-docs:
-	@echo "==> Building MkDocs web documentation into ../onyks-os.github.io/ttp/..."
-	@if command -v mkdocs >/dev/null 2>&1; then \
-		mkdocs build; \
-	else \
-		echo "==> mkdocs not found. Please install with: pip install mkdocs mkdocs-material mkdocstrings[python]"; \
-	fi
+# This repository predates the template's .venv convention.
+VENV         := venv
 
-docs-serve: serve-docs
-
-serve-docs:
-	@echo "==> Starting MkDocs live documentation server (http://127.0.0.1:8000)..."
-	@if command -v mkdocs >/dev/null 2>&1; then \
-		mkdocs serve; \
-	else \
-		echo "==> mkdocs not found. Please install with: pip install mkdocs mkdocs-material mkdocstrings[python]"; \
-	fi
-
-# 1. Local unit tests (pytest, no root).
-test:
-	@echo "==> Running local Unit Tests..."
-	pytest tests/ -v
-
-# 1b. Property-based fuzz testing (Hypothesis, no root).
-fuzz:
-	@echo "==> Running Hypothesis Fuzz Tests..."
-	pytest fuzzing/fuzz_target.py -v
-
-# 1c. Dependency vulnerability scan (pip-audit).
-audit:
-	@echo "==> Running Dependency Audit (pip-audit)..."
-	pip-audit .
-
-# 1d. Code formatting, Python linting, and shell script linting checks.
-lint:
-	@echo "==> Running Lint and Formatting Checks..."
-	ruff format --check ttp/ tests/
-	ruff check ttp/ tests/
-	@if command -v shellcheck >/dev/null 2>&1; then \
-		echo "==> Running ShellCheck..."; \
-		find scripts -name "*.sh" -exec shellcheck {} +; \
-	else \
-		echo "==> ShellCheck not found, skipping shell script linting."; \
-	fi
-
-# 1d-2. Auto-format Python code and fix fixable lint errors.
-format:
-	@echo "==> Auto-formatting Python code and fixing lint issues..."
-	ruff format ttp/ tests/ fuzzing/
-	ruff check --fix ttp/ tests/ fuzzing/
-
-# 1e. Fast local pre-commit checks (linting & unit tests).
-pre-commit: lint test
-
-# 1f. Install Git pre-commit hook.
-install-hooks:
-	@echo "Installing Git pre-commit hook..."
-	@echo '#!/bin/sh' > .git/hooks/pre-commit
-	@echo 'make pre-commit' >> .git/hooks/pre-commit
-	@chmod +x .git/hooks/pre-commit
-	@echo "Git pre-commit hook installed successfully."
-
-# 2. Integration tests (privileged Docker; retries once on failure for flaky Tor bootstrap).
-
-integration-debian:
-	@echo "==> Starting integration tests on Debian..."
-	./scripts/vm/run_integration_tests.sh debian || (sleep 5 && ./scripts/vm/run_integration_tests.sh debian)
-
-integration-fedora:
-	@echo "==> Starting integration tests on Fedora..."
-	./scripts/vm/run_integration_tests.sh fedora || (sleep 5 && ./scripts/vm/run_integration_tests.sh fedora)
-
-integration-arch:
-	@echo "==> Starting integration tests on Arch Linux..."
-	./scripts/vm/run_integration_tests.sh arch || (sleep 5 && ./scripts/vm/run_integration_tests.sh arch)
-
-# A convenience command to run all three integration tests in sequence.
-integration-all: integration-debian integration-fedora integration-arch
-
-# 3. Full verify: scripts/verify.sh (lint, unit, integration, package build).
-verify:
-	@chmod +x scripts/verify.sh
-	@./scripts/verify.sh $(ARGS)
-
-# 3b. Run Watchdog Chaos Monkey stress tests
-chaos-monkey:
-	@echo "==> Running Watchdog Chaos Monkey Stress Tests..."
-	sudo -E venv/bin/python3 tests/chaos_monkey.py --duration 60
-
-# 4. Native packages (.deb / .rpm) and Python release artifacts (Source Tarball & Wheel) via packaging/release.sh
-build:
-	@echo "==> Building Debian, RPM packages, and Python release artifacts..."
-	@./packaging/release.sh
-
-tarball:
-	@echo "==> Generating Source Tarball (sdist)..."
-	python3 -m build --sdist
-
-# Builds the Python wheel/sdist and uploads to TestPyPI
-testpypi: clean
-	@echo "==> Building and publishing to TestPyPI..."
-	python3 -m build
-	python3 -m twine upload --repository testpypi dist/*
-
-# Builds the Python wheel/sdist and uploads to official PyPI
-pypi: clean
-	@echo "==> Building and publishing to PyPI..."
-	python3 -m build
-	python3 -m twine upload dist/*
-
-# 5. Clean build artifacts and release outputs.
-clean:
-	@echo "==> Cleaning build artifacts..."
-	rm -rf dist/ build/ .build_tmp/ ttp.egg-info/ packaging/*.deb packaging/*.rpm packaging/*.tar.gz packaging/*.whl packaging/SHA256SUMS.txt packaging/SHA256SUMS.txt.asc
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-
-# 6. Offensive Leak Testing Suite (must run inside unproxied target environment, with REAL_PUBLIC_IP set)
-test-leak-ip:
-	@echo "==> Running Offensive IP Leak Test..."
-	pytest tests/leak/test_ip_leak.py -v -s
-
-test-leak-dns:
-	@echo "==> Running Offensive DNS Leak Test..."
-	pytest tests/leak/test_dns_leak.py -v -s
-
-test-leak-webrtc:
-	@echo "==> Running Offensive WebRTC STUN Leak Test..."
-	pytest tests/leak/test_webrtc_leak.py -v -s
-
-check-leak: test-leak-ip test-leak-dns test-leak-webrtc
+include make/common.mk
+include make/quality.mk
+include make/docs.mk
+include make/release.mk
+include make/python.mk
+include make/project.mk
+-include make/local.mk

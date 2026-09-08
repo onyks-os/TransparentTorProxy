@@ -29,6 +29,9 @@
 # Strict mode: exit on error, undefined variables, and pipe failures.
 set -euo pipefail
 
+# Keep packaged file modes independent of the operator's umask (see build_deb.sh).
+umask 022
+
 # Navigate to the project root.
 # $(dirname "$0") resolves to packaging/, so /.. takes us to the root.
 cd "$(dirname "$0")/.."

@@ -1,0 +1,16 @@
+# markdownlint-cli configuration — https://github.com/DavidAnson/markdownlint
+default: true
+
+# Line length is not enforced; prose wraps at the author's discretion.
+MD013: false
+
+# Inline HTML is used deliberately for the README badge block and MkDocs cards.
+MD033: false
+
+# The README opens with an HTML <h1>, not a Markdown heading.
+MD041: false
+
+# Duplicate headings are legitimate under different parent sections
+# (for example a repeated "### Added" per release in CHANGELOG.md).
+MD024:
+  siblings_only: true

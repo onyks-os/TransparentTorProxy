@@ -55,14 +55,17 @@ def _fetch_endpoint(url: str) -> dict | None:
     """Fetch a JSON payload from *url*, returning the parsed dict or ``None``.
 
     Uses stdlib ``urllib.request`` to avoid adding a ``requests`` dependency.
-    Returns ``None`` on any network, timeout, or parse error.
+    Returns ``None`` on any network, timeout, or parse error, and also when
+    the endpoint answers with valid JSON that is not an object (these are
+    third-party services: the payload shape cannot be assumed).
     """
     import urllib.error
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "ttp"})
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode())
+            payload = json.loads(resp.read().decode())
+        return payload if isinstance(payload, dict) else None
     except (
         urllib.error.URLError,
         TimeoutError,
@@ -84,7 +87,7 @@ def get_exit_ip() -> str:
         if data is not None:
             # check.torproject.org uses "IP", ipify uses "ip", ifconfig.me uses "ip_addr"
             ip = data.get("IP") or data.get("ip") or data.get("ip_addr")
-            if ip:
+            if isinstance(ip, str) and ip:
                 return ip
     return "unknown"
 

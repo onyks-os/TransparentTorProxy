@@ -1,0 +1,27 @@
+# Blocks pull requests that introduce a dependency with a known vulnerability
+# or an incompatible license.
+name: Dependency Review
+
+on:
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Review dependencies
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          # Licenses incompatible with MIT. See SCA_POLICY.md.
+          deny-licenses: GPL-3.0, AGPL-3.0, SSPL-1.0
+          comment-summary-in-pr: on-failure

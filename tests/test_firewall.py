@@ -8,6 +8,7 @@ All tests mock subprocess.run so no real firewall rules are ever touched.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from unittest.mock import MagicMock, patch
 
@@ -33,23 +34,28 @@ def mock_cgroup_support():
 @patch("ttp.firewall.runner.LOCK_DIR")
 @patch("ttp.firewall.runner.pwd.getpwnam")
 @patch("ttp.firewall.runner.subprocess.run")
-def test_apply_rules_orchestration(mock_run, mock_pwd, mock_lock_dir, mock_rules_path):
-    """apply_rules must create, flush and then inject the ruleset."""
+def test_apply_rules_is_a_single_atomic_transaction(mock_run, mock_pwd, mock_lock_dir, mock_rules_path):
+    """The table reset must ride in the same nft script as the ruleset.
+
+    Issuing `add table` and `flush table` as separate nft invocations would leave a
+    window in which the table exists but is empty - no redirect and no drop - during
+    which traffic egresses in cleartext. The whole swap must be one transaction.
+    """
     mock_run.return_value = MagicMock(returncode=0)
     mock_pwd.return_value = MagicMock(pw_uid=123)
 
     apply_rules(tor_user="debian-tor")
 
-    # Check sequence: add table -> flush table -> inject ruleset (nft -f <temp_file>)
-    calls = mock_run.call_args_list
-    assert ["nft", "add", "table", "inet", "ttp"] in [c.args[0] for c in calls]
-    assert ["nft", "flush", "table", "inet", "ttp"] in [c.args[0] for c in calls]
+    # Exactly one nft invocation, and it is a file-driven (atomic) one.
+    assert mock_run.call_count == 1
+    argv = mock_run.call_args.args[0]
+    assert argv[:2] == ["nft", "-f"]
 
-    # Check nft -f call
-    nft_f_call = [c.args[0] for c in calls if "-f" in str(c.args[0])]
-    assert len(nft_f_call) == 1
-    assert nft_f_call[0][0] == "nft"
-    assert nft_f_call[0][1] == "-f"
+    # The script itself carries the reset, ahead of the table definition.
+    script = mock_rules_path.write_text.call_args.args[0]
+    reset_pos = script.index("flush table inet ttp")
+    assert script.index("add table inet ttp") < reset_pos
+    assert reset_pos < script.index("table inet ttp {")
 
 
 @patch("ttp.firewall.runner.RULES_TEMP_PATH")
@@ -59,19 +65,15 @@ def test_apply_rules_orchestration(mock_run, mock_pwd, mock_lock_dir, mock_rules
 def test_apply_rules_failure_triggers_destroy(mock_run, mock_pwd, mock_lock_dir, mock_rules_path):
     """If rule injection fails, it must attempt to destroy the table."""
     mock_pwd.return_value = MagicMock(pw_uid=123)
-    # First two calls (add/flush) succeed, third call (inject) fails
+    # The single injection call fails; the rollback calls that follow succeed.
     mock_run.side_effect = [
-        MagicMock(returncode=0),  # add
-        MagicMock(returncode=0),  # flush
         subprocess.CalledProcessError(1, "nft", stderr="syntax error"),  # inject
         MagicMock(returncode=0),  # destroy: flush (rollback)
         MagicMock(returncode=0),  # destroy: destroy (rollback)
     ]
 
-    try:
+    with pytest.raises(FirewallError):
         apply_rules(tor_user="debian-tor")
-    except FirewallError:
-        pass
 
     # Check that destroy was called
     assert any("destroy" in str(c) for c in mock_run.call_args_list)
@@ -610,3 +612,68 @@ class TestBuildRuleset:
         """Same inputs must always produce identical output."""
         kwargs = _base_kwargs(tor_uid=42, bypass_uids=[100], bypass_gids=[200], ipv6_avail=True)
         assert _build_ruleset(**kwargs) == _build_ruleset(**kwargs)
+
+
+# Emergency & teardown paths
+
+
+class TestEmergencyTeardown:
+    """The two paths whose failure mode would be fail-OPEN rather than fail-closed."""
+
+    @patch("ttp.firewall.runner.RULES_TEMP_PATH")
+    @patch("ttp.firewall.runner.LOCK_DIR")
+    @patch("ttp.firewall.runner.subprocess.run")
+    def test_killswitch_is_a_single_atomic_transaction(self, mock_run, mock_lock_dir, mock_rules_path):
+        """The killswitch must never flush the table in a separate nft call.
+
+        The killswitch fires when integrity is already lost. A separate flush would
+        empty the table - removing the redirect before installing the drop - which is
+        an open network at the worst possible moment.
+        """
+        from ttp.firewall import apply_emergency_killswitch
+
+        mock_run.return_value = MagicMock(returncode=0)
+        apply_emergency_killswitch()
+
+        assert mock_run.call_count == 1
+        assert mock_run.call_args.args[0][:2] == ["nft", "-f"]
+
+        script = mock_rules_path.write_text.call_args.args[0]
+        assert "add table inet ttp" in script
+        assert script.index("flush table inet ttp") < script.index("table inet ttp {")
+        # And the resulting table really is the drop-all one.
+        assert "policy drop" in script
+
+    @patch("ttp.firewall.emergency._run_nft")
+    def test_teardown_lockdown_missing_chain_stays_quiet(self, mock_run_nft, caplog):
+        """An already-stopped session is the expected case: debug, not warning."""
+        from ttp.firewall import apply_teardown_lockdown
+
+        mock_run_nft.side_effect = subprocess.CalledProcessError(1, "nft", stderr="Error: No such file or directory")
+        with caplog.at_level(logging.WARNING, logger="ttp"):
+            apply_teardown_lockdown(tor_uid=123)
+
+        assert caplog.records == []
+
+    @patch("ttp.firewall.emergency._run_nft")
+    def test_teardown_lockdown_real_failure_is_loud(self, mock_run_nft, caplog):
+        """A genuine nft failure leaves a cleartext window and must be visible."""
+        from ttp.firewall import apply_teardown_lockdown
+
+        mock_run_nft.side_effect = subprocess.CalledProcessError(1, "nft", stderr="Operation not permitted")
+        with caplog.at_level(logging.WARNING, logger="ttp"):
+            apply_teardown_lockdown(tor_uid=123)
+
+        assert any(r.levelno >= logging.WARNING for r in caplog.records)
+        assert "Teardown lockdown FAILED" in caplog.text
+
+    @patch("ttp.firewall.emergency._run_nft")
+    def test_socket_slaughter_real_failure_is_loud(self, mock_run_nft, caplog):
+        """Same contract for the socket slaughter step."""
+        from ttp.firewall import apply_active_socket_slaughter
+
+        mock_run_nft.side_effect = subprocess.CalledProcessError(1, "nft", stderr="Operation not permitted")
+        with caplog.at_level(logging.WARNING, logger="ttp"):
+            apply_active_socket_slaughter()
+
+        assert "Active socket slaughter FAILED" in caplog.text
