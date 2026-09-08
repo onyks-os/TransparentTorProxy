@@ -23,6 +23,8 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          # Full history so the previous tag can be resolved for the compare link.
+          fetch-depth: 0
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v7
@@ -98,6 +100,36 @@ jobs:
             packaging/SHA256SUMS.txt
             packaging/sbom.json
 
+      # The release body is the curated CHANGELOG section, which is how the notes
+      # for v0.4.5 and earlier were written. GitHub's generate_release_notes lists
+      # merged pull requests instead: on this repository, where work lands as direct
+      # commits, that yields two unrelated old PRs and a "New Contributors" line
+      # crediting the maintainer as a first-time contributor to their own project.
+      - name: Assemble release notes from the CHANGELOG
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          make release-notes VERSION="$version" > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+          # Previous tag by version order, not by reachability: v0.4.5 points at a
+          # commit that history rewriting left outside main, so `git describe`
+          # walks past it to v0.4.0 and the link would imply 0.4.5 never shipped.
+          prev_tag="$(git tag --list 'v*' --sort=-version:refname \
+                       | grep -vFx "${GITHUB_REF_NAME}" | head -n1 || true)"
+          {
+            echo
+            echo "---"
+            echo
+            if [ -n "$prev_tag" ]; then
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${prev_tag}...${GITHUB_REF_NAME}"
+            fi
+            echo "**Verifying these artifacts**: see [docs/verification.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/verification.md)"
+          } >> RELEASE_NOTES.md
+          echo "----- release notes -----"
+          cat RELEASE_NOTES.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -109,7 +141,8 @@ jobs:
             packaging/SHA256SUMS.txt
             packaging/*.sigstore*
             packaging/sbom.json
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: false
 
       # Hand the *signed* wheel and sdist to the publishing jobs. They must upload
       # these exact bytes: rebuilding downstream would put a different artifact on
