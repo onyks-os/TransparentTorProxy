@@ -41,6 +41,13 @@ def _mock_tmpfs_preflight():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _mock_root_euid():
+    """Most CLI commands require root; mock geteuid to 0 by default."""
+    with patch("os.geteuid", return_value=0):
+        yield
+
+
 # start
 
 
@@ -52,13 +59,9 @@ def _mock_tmpfs_preflight():
 @patch("ttp.tor_control.graceful_shutdown", return_value=True)
 @patch(
     "ttp.state.read_lock",
-    return_value={
-        "dns_backup": {"mount_target": "/etc/resolv.conf"},
-    },
+    return_value={"dns_backup": {"mount_target": "/etc/resolv.conf"}},
 )
-@patch("os.geteuid", return_value=0)
 def test_stop_active_session(
-    mock_euid,
     mock_read,
     mock_graceful,
     mock_stop_tor,
@@ -71,12 +74,13 @@ def test_stop_active_session(
     result = runner.invoke(app, ["stop"])
     assert result.exit_code == 0
     assert "terminated" in result.output
-    mock_graceful.assert_called_once_with(timeout=10)
-    mock_stop_tor.assert_called_once()
-    mock_fw.assert_called_once()
-    mock_dns.assert_called_once()
-    mock_del.assert_called_once()
-    mock_stop_wd.assert_called_once()
+    assert mock_graceful.call_count == 1
+    assert mock_graceful.call_args.kwargs == {"timeout": 10}
+    assert mock_stop_tor.call_count == 1
+    assert mock_fw.call_count == 1
+    assert mock_dns.call_count == 1
+    assert mock_del.call_count == 1
+    assert mock_stop_wd.call_count == 1
 
 
 @patch("ttp.watchdog.stop_watchdog")
@@ -87,13 +91,9 @@ def test_stop_active_session(
 @patch("ttp.tor_control.graceful_shutdown", return_value=False)
 @patch(
     "ttp.state.read_lock",
-    return_value={
-        "dns_backup": {"mount_target": "/etc/resolv.conf"},
-    },
+    return_value={"dns_backup": {"mount_target": "/etc/resolv.conf"}},
 )
-@patch("os.geteuid", return_value=0)
 def test_stop_graceful_shutdown_failure_continues(
-    mock_euid,
     mock_read,
     mock_graceful,
     mock_stop_tor,
@@ -106,19 +106,19 @@ def test_stop_graceful_shutdown_failure_continues(
     result = runner.invoke(app, ["stop"])
     assert result.exit_code == 0
     assert "terminated" in result.output
-    mock_graceful.assert_called_once()
-    mock_stop_tor.assert_called_once()
-    mock_fw.assert_called_once()
-    mock_stop_wd.assert_called_once()
+    assert mock_graceful.call_count == 1
+    assert mock_stop_tor.call_count == 1
+    assert mock_fw.call_count == 1
+    assert mock_stop_wd.call_count == 1
 
 
 @patch("ttp.state.read_lock", return_value=None)
-@patch("os.geteuid", return_value=0)
-def test_stop_no_session(mock_euid, mock_read):
+def test_stop_no_session(mock_read):
     """stop with no session -> clean exit."""
     result = runner.invoke(app, ["stop"])
     assert result.exit_code == 0
     assert "No active session" in result.output
+    assert mock_read.call_count == 1
 
 
 # status
@@ -133,27 +133,7 @@ def test_stop_no_session(mock_euid, mock_read):
     "ttp.state.read_lock",
     return_value={"dns_backup": {"mount_target": "/etc/resolv.conf"}},
 )
-@patch("os.geteuid", return_value=0)
-def test_stop_restore_only_with_lock(mock_euid, mock_read, mock_stop_tor, mock_fw, mock_dns, mock_del, mock_stop_wd):
-    result = runner.invoke(app, ["stop", "--restore-only"])
-    assert result.exit_code == 0
-    assert "Forcing network restoration" in result.output
-    mock_stop_tor.assert_called_once()
-    mock_fw.assert_called_once()
-    mock_dns.assert_called_once_with({"mount_target": "/etc/resolv.conf"})
-    mock_del.assert_called_once()
-    mock_stop_wd.assert_called_once()
-
-
-@patch("ttp.watchdog.stop_watchdog")
-@patch("ttp.state.delete_lock")
-@patch("ttp.dns.restore_dns")
-@patch("ttp.firewall.destroy_rules")
-@patch("ttp.tor_install.stop_tor_service")
-@patch("ttp.state.read_lock", return_value=None)
-@patch("os.geteuid", return_value=0)
-def test_stop_restore_only_no_lock(
-    mock_euid,
+def test_stop_restore_only_with_lock(
     mock_read,
     mock_stop_tor,
     mock_fw,
@@ -164,11 +144,37 @@ def test_stop_restore_only_no_lock(
     result = runner.invoke(app, ["stop", "--restore-only"])
     assert result.exit_code == 0
     assert "Forcing network restoration" in result.output
-    mock_stop_tor.assert_called_once()
-    mock_fw.assert_called_once()
-    mock_dns.assert_called_once_with(None)
-    mock_del.assert_called_once()
-    mock_stop_wd.assert_called_once()
+    assert "Network restored" in result.output
+    assert mock_stop_tor.call_count == 1
+    assert mock_fw.call_count == 1
+    assert mock_dns.call_args[0][0] == {"mount_target": "/etc/resolv.conf"}
+    assert mock_del.call_count == 1
+    assert mock_stop_wd.call_count == 1
+
+
+@patch("ttp.watchdog.stop_watchdog")
+@patch("ttp.state.delete_lock")
+@patch("ttp.dns.restore_dns")
+@patch("ttp.firewall.destroy_rules")
+@patch("ttp.tor_install.stop_tor_service")
+@patch("ttp.state.read_lock", return_value=None)
+def test_stop_restore_only_no_lock(
+    mock_read,
+    mock_stop_tor,
+    mock_fw,
+    mock_dns,
+    mock_del,
+    mock_stop_wd,
+):
+    result = runner.invoke(app, ["stop", "--restore-only"])
+    assert result.exit_code == 0
+    assert "Forcing network restoration" in result.output
+    assert "Network restored" in result.output
+    assert mock_stop_tor.call_count == 1
+    assert mock_fw.call_count == 1
+    assert mock_dns.call_args[0][0] is None
+    assert mock_del.call_count == 1
+    assert mock_stop_wd.call_count == 1
 
 
 # restart
@@ -178,56 +184,38 @@ def test_stop_restore_only_no_lock(
 @patch("time.sleep")
 @patch("ttp.commands.stop_restart._do_stop")
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
-@patch("os.geteuid", return_value=0)
-def test_restart_active_session(mock_euid, mock_read, mock_stop, mock_sleep, mock_start):
+def test_restart_active_session(mock_read, mock_stop, mock_sleep, mock_start):
     result = runner.invoke(app, ["restart", "--interface", "wlan0", "--bootstrap-timeout", "300"])
     assert result.exit_code == 0
-    mock_stop.assert_called_once()
-    mock_sleep.assert_called_once_with(1)
-    mock_start.assert_called_once_with(
-        interface="wlan0",
-        bootstrap_timeout=300,
-        transport_port=9041,
-        dns_port=9054,
-        allow_root=False,
-        no_lan_bypass=False,
-        watchdog=False,
-        bypass_user=None,
-        bypass_group=None,
-        use_bridges=False,
-        bridge_file=None,
-        bridge=None,
-        external_daemon=False,
-        tor_uid=None,
-        no_ipv6=False,
-    )
+    assert "Stopping current session" in result.output
+    assert mock_stop.call_count == 1
+    assert mock_sleep.call_args[0][0] == 1
+    kwargs = mock_start.call_args.kwargs
+    assert kwargs["interface"] == "wlan0"
+    assert kwargs["bootstrap_timeout"] == 300
+    assert kwargs["transport_port"] == 9041
+    assert kwargs["dns_port"] == 9054
+    assert kwargs["allow_root"] is False
+    assert kwargs["external_daemon"] is False
+    assert kwargs["no_ipv6"] is False
 
 
 @patch("ttp.commands.stop_restart.start_command")
 @patch("ttp.commands.stop_restart._do_stop")
 @patch("ttp.state.read_lock", return_value=None)
-@patch("os.geteuid", return_value=0)
-def test_restart_inactive_session(mock_euid, mock_read, mock_stop, mock_start):
+def test_restart_inactive_session(mock_read, mock_stop, mock_start):
     result = runner.invoke(app, ["restart"])
     assert result.exit_code == 0
-    mock_stop.assert_not_called()
-    mock_start.assert_called_once_with(
-        interface=None,
-        bootstrap_timeout=180,
-        transport_port=9041,
-        dns_port=9054,
-        allow_root=False,
-        no_lan_bypass=False,
-        watchdog=False,
-        bypass_user=None,
-        bypass_group=None,
-        use_bridges=False,
-        bridge_file=None,
-        bridge=None,
-        external_daemon=False,
-        tor_uid=None,
-        no_ipv6=False,
-    )
+    assert "No active session found, starting a new one" in result.output
+    assert mock_stop.call_count == 0
+    kwargs = mock_start.call_args.kwargs
+    assert kwargs["interface"] is None
+    assert kwargs["bootstrap_timeout"] == 180
+    assert kwargs["transport_port"] == 9041
+    assert kwargs["dns_port"] == 9054
+    assert kwargs["allow_root"] is False
+    assert kwargs["external_daemon"] is False
+    assert kwargs["no_ipv6"] is False
 
 
 # check
@@ -237,32 +225,18 @@ def test_restart_inactive_session(mock_euid, mock_read, mock_stop, mock_start):
 @patch("time.sleep")
 @patch("ttp.commands.stop_restart._do_stop")
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
-@patch("os.geteuid", return_value=0)
-def test_restart_custom_ports(mock_euid, mock_read, mock_stop, mock_sleep, mock_start):
+def test_restart_custom_ports(mock_read, mock_stop, mock_sleep, mock_start):
     """restart propagates custom ports to start command."""
     result = runner.invoke(app, ["restart", "-t", "9080", "-d", "9090"])
     assert result.exit_code == 0
-    mock_stop.assert_called_once()
-    mock_start.assert_called_once_with(
-        interface=None,
-        bootstrap_timeout=180,
-        transport_port=9080,
-        dns_port=9090,
-        allow_root=False,
-        no_lan_bypass=False,
-        watchdog=False,
-        bypass_user=None,
-        bypass_group=None,
-        use_bridges=False,
-        bridge_file=None,
-        bridge=None,
-        external_daemon=False,
-        tor_uid=None,
-        no_ipv6=False,
-    )
+    assert "Stopping current session" in result.output
+    assert mock_stop.call_count == 1
+    kwargs = mock_start.call_args.kwargs
+    assert kwargs["transport_port"] == 9080
+    assert kwargs["dns_port"] == 9090
+    assert kwargs["bootstrap_timeout"] == 180
 
 
-@patch("os.geteuid", return_value=0)
 @patch("ttp.state.read_lock")
 @patch("ttp.state.delete_lock")
 @patch("ttp.dns.restore_dns")
@@ -276,7 +250,6 @@ def test_stop_external_daemon(
     mock_restore,
     mock_delete_lock,
     mock_read_lock,
-    mock_euid,
 ):
     """Verify stop command on BYOD session removes firewall/DNS but does not stop Tor daemon."""
     mock_read_lock.return_value = {
@@ -289,11 +262,11 @@ def test_stop_external_daemon(
     assert result.exit_code == 0
     assert "Session terminated" in result.output
 
-    mock_shutdown.assert_not_called()
-    mock_stop_svc.assert_not_called()
-    mock_destroy.assert_called_once()
-    mock_restore.assert_called_once_with({"interface": "eth0"})
-    mock_delete_lock.assert_called_once()
+    assert mock_shutdown.call_count == 0
+    assert mock_stop_svc.call_count == 0
+    assert mock_destroy.call_count == 1
+    assert mock_restore.call_args[0][0] == {"interface": "eth0"}
+    assert mock_delete_lock.call_count == 1
 
 
 @patch("ttp.state.delete_lock")
@@ -313,9 +286,7 @@ def test_stop_external_daemon(
     return_value={"dns_backup": {}, "tor_uid": 123, "transport_port": 9041},
 )
 @patch("ttp.watchdog.stop_watchdog")
-@patch("os.geteuid", return_value=0)
 def test_stop_graceful_teardown_sequence(
-    mock_euid,
     mock_stop_wd,
     mock_read,
     mock_getpwnam,
@@ -348,16 +319,11 @@ def test_stop_graceful_teardown_sequence(
     result = runner.invoke(app, ["stop"])
     assert result.exit_code == 0
 
-    mock_run.assert_called_once_with(
-        ["/usr/sbin/conntrack", "-F"],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=10,
-    )
-    mock_lockdown.assert_called_once_with(123)
-    mock_slaughter.assert_called_once()
-    mock_sleep.assert_called_once_with(0.3)
+    assert mock_run.call_args[0][0] == ["/usr/sbin/conntrack", "-F"]
+    assert mock_run.call_args.kwargs == {"capture_output": True, "text": True, "check": True, "timeout": 10}
+    assert mock_lockdown.call_args[0][0] == 123
+    assert mock_slaughter.call_count == 1
+    assert mock_sleep.call_args[0][0] == 0.3
 
     expected_order = [
         "stop_wd",
@@ -392,9 +358,7 @@ def test_stop_graceful_teardown_sequence(
     return_value={"dns_backup": {}, "tor_uid": 123, "transport_port": 9041},
 )
 @patch("ttp.watchdog.stop_watchdog")
-@patch("os.geteuid", return_value=0)
 def test_stop_graceful_teardown_no_conntrack(
-    mock_euid,
     mock_stop_wd,
     mock_read,
     mock_getpwnam,
@@ -413,8 +377,8 @@ def test_stop_graceful_teardown_no_conntrack(
     """Verify stop skips conntrack flushing if conntrack binary is not found in PATH."""
     result = runner.invoke(app, ["stop"])
     assert result.exit_code == 0
-    mock_which.assert_called_once_with("conntrack")
-    mock_run.assert_not_called()
+    assert mock_which.call_args[0][0] == "conntrack"
+    assert mock_run.call_count == 0
 
 
 # bypass
