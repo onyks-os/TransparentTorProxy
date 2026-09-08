@@ -117,10 +117,12 @@ jobs:
       # without it Scapy raises "Cannot set filter" at construction time. The
       # suite then fails loudly - including its own positive control - which is
       # the intended behaviour, but the fix is to install the library.
+      # libpcap-dev as well as the runtime package: Scapy dlopen()s the
+      # unversioned "libpcap.so", and only the -dev package ships that symlink.
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nftables iproute2 conntrack libpcap0.8
+          sudo apt-get install -y nftables iproute2 conntrack libpcap0.8 libpcap-dev
 
       - name: Record the environment under test
         run: |
