@@ -3,7 +3,7 @@
 # which `twine check` (via packaging 26.0) rejects as invalid, breaking the
 # release build. An unpinned build backend also means the artifact metadata can
 # change with no commit to this repository. Revisit once twine/packaging accept 2.5.
-requires = ["hatchling>=1.27,<1.32"]
+requires = ["hatchling>=1.27,<1.33"]
 build-backend = "hatchling.build"
 
 [project]
