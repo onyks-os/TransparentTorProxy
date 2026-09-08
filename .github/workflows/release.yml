@@ -103,6 +103,6 @@ jobs:
             packaging/*.whl
             packaging/*.tar.gz
             packaging/SHA256SUMS.txt
-            packaging/*.sigstore
+            packaging/*.sigstore*
             packaging/sbom.json
           generate_release_notes: true

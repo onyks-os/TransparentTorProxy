@@ -250,10 +250,15 @@ def test_setup_selinux_if_needed_skips_if_installed(mock_fedora, mock_enforcing,
 
 
 @patch("ttp.tor_detect.is_selinux_module_installed", return_value=True)
-@patch("ttp.tor_detect.shutil.which", return_value="/usr/sbin/semodule")
+@patch("ttp.selinux.shutil.which", return_value="/usr/sbin/semodule")
 @patch("ttp.selinux.subprocess.run")
 def test_remove_selinux_module(mock_run, mock_which, mock_installed):
-    """remove_selinux_module runs semodule -r if installed."""
+    """remove_selinux_module runs semodule -r if installed.
+
+    The which() mock must target ttp.selinux, not ttp.tor_detect: patching the
+    wrong module left the real filesystem probe in place, so this test passed on
+    a Fedora workstation and failed on every CI runner without SELinux tooling.
+    """
     mock_run.return_value = MagicMock(returncode=0)
     remove_selinux_module()
     assert any("semodule" in str(c) and "-r" in str(c) for c in mock_run.call_args_list)

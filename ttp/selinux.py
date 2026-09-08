@@ -140,7 +140,10 @@ def unlabel_ports_selinux(transport_port: int, dns_port: int) -> None:
 
 def remove_selinux_module() -> None:
     """Remove the custom TTP SELinux policy module."""
-    if not Path("/usr/sbin/semodule").exists():
+    # PATH lookup, not a hardcoded /usr/sbin: semodule sits in different places
+    # across distributions, and this matches how the module probes checkmodule
+    # and semodule_package above.
+    if not shutil.which("semodule"):
         return
 
     from ttp.tor_detect import is_selinux_module_installed

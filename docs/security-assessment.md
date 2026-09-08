@@ -220,12 +220,15 @@ All TTP release artifacts (`.deb`, `.rpm`, `.whl`, `.tar.gz`) are signed using *
 
 ```bash
 cosign verify-blob \
-  --certificate <artifact.sigstore.crt> \
-  --signature <artifact.sigstore.sig> \
-  --certificate-identity "https://github.com/onyks-os/TransparentTorProxy/.github/workflows/release.yml@refs/heads/main" \
+  --bundle <artifact>.sigstore.json \
+  --certificate-identity "https://github.com/onyks-os/TransparentTorProxy/.github/workflows/release.yml@refs/tags/<tag>" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   <artifact>
 ```
+
+The release workflow runs on tag pushes, so the certificate identity is bound to
+`refs/tags/<tag>`, never to a branch. See [verification.md](verification.md) for the
+full procedure.
 
 ### 5.2 Dependency Monitoring
 

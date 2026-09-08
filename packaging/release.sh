@@ -41,6 +41,10 @@ VERSION=$(grep -m 1 '^version =' pyproject.toml | cut -d '"' -f 2)
 # The directory where all build scripts live and where outputs are placed.
 RELEASE_DIR="packaging"
 
+# The release signing key published in docs/verification.md. Override only if the
+# project key is rotated - and update docs/verification.md in the same commit.
+GPG_KEY_ID="${GPG_KEY_ID:-34774E0CEC668426}"
+
 echo "============================================"
 echo "  TTP Release Builder - v${VERSION}"
 echo "============================================"
@@ -120,13 +124,17 @@ echo "[4/5] Generating SHA256 checksums..."
 
     # GPG release signing
     if command -v gpg >/dev/null 2>&1; then
-        if [ -n "$(gpg --list-secret-keys 2>/dev/null)" ]; then
-            echo "      [GPG] Secret key found. Signing SHA256SUMS.txt..."
-            gpg --detach-sign --armor --yes SHA256SUMS.txt
+        # Pin the signing key. Without --local-user gpg picks the first usable
+        # secret key, which on a machine with several keys silently produces a
+        # signature made by a key that docs/verification.md does not publish.
+        if gpg --list-secret-keys "$GPG_KEY_ID" >/dev/null 2>&1; then
+            echo "      [GPG] Signing SHA256SUMS.txt with $GPG_KEY_ID..."
+            gpg --detach-sign --armor --yes --local-user "$GPG_KEY_ID" SHA256SUMS.txt
             echo "      [OK] SHA256SUMS.txt.asc signature generated."
         else
-            echo "      [!] GPG is installed, but no secret keys were found. Skipping automatic signing."
-            echo "          To sign manually: gpg --detach-sign --armor SHA256SUMS.txt"
+            echo "      [!] Release signing key $GPG_KEY_ID not available. Skipping GPG signing."
+            echo "          Release assets published by CI are signed with Sigstore instead;"
+            echo "          see docs/verification.md."
         fi
     else
         echo "      [!] GPG command not found. Skipping automatic signing."

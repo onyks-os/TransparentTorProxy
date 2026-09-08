@@ -30,6 +30,13 @@ jobs:
           while read -r sha; do
             [ -z "$sha" ] && continue
             author="$(git show -s --format='%an <%ae>' "$sha")"
+            # The DCO is a statement by a human that they have the right to submit
+            # the contribution. An automated dependency bump asserts no authorship
+            # over the third-party code it points at, so requiring a sign-off from
+            # the bot blocks the merge queue without establishing anything.
+            case "$author" in
+              *"[bot]"*) echo "Skipping bot commit $sha ($author)"; continue ;;
+            esac
             if ! git show -s --format='%B' "$sha" | grep -qiF "Signed-off-by: $author"; then
               echo "::error::Commit $sha is missing 'Signed-off-by: $author'"
               failed=1

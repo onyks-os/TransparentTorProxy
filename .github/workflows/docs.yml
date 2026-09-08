@@ -23,10 +23,21 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
+      # mkdocs.yml declares the mkdocstrings plugin, so the build aborts with
+      # "The \"mkdocstrings\" plugin is not installed" unless it is present here.
       - name: Install documentation toolchain
         run: |
           python -m pip install --upgrade pip
-          pip install mkdocs-material mkdocs
+          pip install mkdocs mkdocs-material "mkdocstrings[python]"
+
+      # docs/web/release-notes/changelog.md is generated from CHANGELOG.md by
+      # `make docs-sync`. Regenerating it and failing on a diff keeps the published
+      # release notes from silently drifting behind the root changelog.
+      - name: Check the generated release notes are up to date
+        run: |
+          make docs-sync
+          git diff --exit-code docs/web/release-notes/changelog.md \
+            || { echo "::error::Run 'make docs-sync' and commit the result."; exit 1; }
 
       # --strict turns broken links and missing nav entries into build failures,
       # so documentation rot is caught in review rather than after publication.
