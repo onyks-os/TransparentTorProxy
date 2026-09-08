@@ -20,7 +20,10 @@ from ttp.exceptions import TorError
 from ttp.tor_detect import is_selinux_module_installed
 from ttp.tor_install import (
     TTP_SERVICE_NAME,
+    _get_distro_install_command,
     _write_service_unit,
+    ensure_pluggable_transports,
+    ensure_tor_ready,
     generate_torrc,
     remove_selinux_module,
     setup_selinux_if_needed,
@@ -429,3 +432,230 @@ def test_build_service_unit_content():
     assert "ExecStartPre=+/bin/mkdir -p" in content
     assert "ExecStart=/usr/sbin/tor -f" in content
     assert "LimitNOFILE=32768" in content
+
+
+# ---------------------------------------------------------------------------
+# _get_distro_install_command — the no-auto-install policy in practice
+#
+# TTP never installs packages itself, so this string IS the remediation. A wrong
+# package manager here leaves the user with a command that does not work on
+# their machine, at the exact moment they cannot proxy their traffic.
+# ---------------------------------------------------------------------------
+
+
+def _only(*present: str):
+    """A shutil.which that finds only the named binaries."""
+    return lambda name: f"/usr/bin/{name}" if name in present else None
+
+
+def test_install_command_prefers_apt_get() -> None:
+    with patch("shutil.which", side_effect=_only("apt-get")):
+        assert _get_distro_install_command("tor", "tor") == "sudo apt install tor"
+
+
+def test_install_command_accepts_apt_without_apt_get() -> None:
+    with patch("shutil.which", side_effect=_only("apt")):
+        assert _get_distro_install_command("tor", "tor") == "sudo apt install tor"
+
+
+def test_install_command_uses_dnf_on_fedora() -> None:
+    with patch("shutil.which", side_effect=_only("dnf")):
+        assert _get_distro_install_command("obfs4proxy", "obfs4") == "sudo dnf install obfs4"
+
+
+def test_install_command_uses_pacman_on_arch() -> None:
+    with patch("shutil.which", side_effect=_only("pacman")):
+        got = _get_distro_install_command("obfs4proxy", "obfs4", pkg_arch="obfs4proxy-git")
+        assert got == "sudo pacman -S obfs4proxy-git"
+
+
+def test_arch_falls_back_to_the_debian_package_name() -> None:
+    with patch("shutil.which", side_effect=_only("pacman")):
+        assert _get_distro_install_command("tor", "tor") == "sudo pacman -S tor"
+
+
+def test_install_command_uses_zypper_on_suse() -> None:
+    with patch("shutil.which", side_effect=_only("zypper")):
+        got = _get_distro_install_command("tor", "tor", pkg_suse="tor-suse")
+        assert got == "sudo zypper install tor-suse"
+
+
+def test_suse_falls_back_to_the_debian_package_name() -> None:
+    with patch("shutil.which", side_effect=_only("zypper")):
+        assert _get_distro_install_command("tor", "tor") == "sudo zypper install tor"
+
+
+def test_unknown_distro_offers_both_common_commands() -> None:
+    """On a distro we do not recognise, guess nothing and show the two likely forms."""
+    with patch("shutil.which", side_effect=_only()):
+        got = _get_distro_install_command("tor", "tor")
+    assert "apt install tor" in got
+    assert "dnf install tor" in got
+
+
+def test_apt_wins_when_several_managers_are_present() -> None:
+    """Containers often carry more than one; the first match must be deterministic."""
+    with patch("shutil.which", side_effect=_only("apt-get", "dnf", "pacman")):
+        assert _get_distro_install_command("tor", "tor").startswith("sudo apt")
+
+
+# ---------------------------------------------------------------------------
+# ensure_pluggable_transports
+# ---------------------------------------------------------------------------
+
+
+def test_present_transport_binaries_are_accepted() -> None:
+    with patch("shutil.which", return_value="/usr/bin/obfs4proxy"):
+        ensure_pluggable_transports(["obfs4"])  # must not raise
+
+
+def test_transport_names_are_case_insensitive() -> None:
+    with patch("shutil.which", return_value="/usr/bin/obfs4proxy"):
+        ensure_pluggable_transports(["OBFS4"])
+
+
+def test_missing_transport_binary_exits_zero_without_installing() -> None:
+    """
+    Exit code 0, not 1: a missing optional dependency is guidance, not a crash.
+    And nothing may be installed - that is the documented policy.
+    """
+    with (
+        patch("shutil.which", return_value=None),
+        patch("subprocess.run") as run,
+        pytest.raises(typer.Exit) as exc,
+    ):
+        ensure_pluggable_transports(["obfs4"])
+    assert exc.value.exit_code == 0
+    run.assert_not_called()
+
+
+def test_unknown_transport_exits_without_touching_the_filesystem() -> None:
+    with (
+        patch("shutil.which") as which,
+        pytest.raises(typer.Exit) as exc,
+    ):
+        ensure_pluggable_transports(["wireguard"])
+    assert exc.value.exit_code == 0
+    which.assert_not_called()
+
+
+def test_the_first_missing_transport_stops_the_check() -> None:
+    with (
+        patch("shutil.which", return_value=None),
+        pytest.raises(typer.Exit),
+    ):
+        ensure_pluggable_transports(["obfs4", "snowflake"])
+
+
+def test_the_guidance_names_the_missing_binary_and_the_transport() -> None:
+    """A message that does not say what is missing sends the user to a search engine."""
+    printed: list[str] = []
+
+    class _Console:
+        def print(self, renderable):  # type: ignore[no-untyped-def]
+            printed.append(str(getattr(renderable, "renderable", renderable)))
+
+    with (
+        patch("shutil.which", side_effect=_only("apt-get")),
+        patch("ttp.commands._common.console", _Console()),
+        pytest.raises(typer.Exit),
+    ):
+        ensure_pluggable_transports(["obfs4"])
+
+    blob = " ".join(printed)
+    assert "obfs4proxy" in blob
+    assert "obfs4" in blob
+    assert "apt install" in blob
+
+
+# ---------------------------------------------------------------------------
+# ensure_tor_ready
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_tor_ready_exits_zero_when_tor_is_absent() -> None:
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": False}),
+        patch("ttp.tor_install.start_tor_service") as start,
+        patch("shutil.which", side_effect=_only("apt-get")),
+        pytest.raises(typer.Exit) as exc,
+    ):
+        ensure_tor_ready()
+    assert exc.value.exit_code == 0
+    start.assert_not_called()
+
+
+def test_ensure_tor_ready_starts_the_service_and_returns_the_detection() -> None:
+    info = {"is_installed": True, "tor_user": "toranon", "version": "0.4.8.12"}
+    with (
+        patch("ttp.tor_install.detect_tor", return_value=info),
+        patch("ttp.tor_install.start_tor_service") as start,
+    ):
+        assert ensure_tor_ready(transport_port=9051, dns_port=9053) is info
+
+    assert start.call_args[0][0] == "toranon"
+    assert start.call_args.kwargs["transport_port"] == 9051
+    assert start.call_args.kwargs["dns_port"] == 9053
+
+
+def test_ensure_tor_ready_defaults_the_tor_user() -> None:
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),
+        patch("ttp.tor_install.start_tor_service") as start,
+    ):
+        ensure_tor_ready()
+    assert start.call_args[0][0] == "debian-tor"
+
+
+def test_bridges_trigger_a_transport_check() -> None:
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),
+        patch("ttp.tor_install.start_tor_service"),
+        patch("ttp.tor_install.ensure_pluggable_transports") as ensure_pt,
+    ):
+        ensure_tor_ready(use_bridges=True, bridges=["obfs4 192.0.2.1:9001 CERT=x"])
+    ensure_pt.assert_called_once_with(["obfs4"])
+
+
+def test_duplicate_transports_are_only_checked_once() -> None:
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),
+        patch("ttp.tor_install.start_tor_service"),
+        patch("ttp.tor_install.ensure_pluggable_transports") as ensure_pt,
+    ):
+        ensure_tor_ready(
+            use_bridges=True,
+            bridges=["obfs4 192.0.2.1:9001", "obfs4 192.0.2.2:9001", "snowflake 192.0.2.3:1"],
+        )
+    ensure_pt.assert_called_once_with(["obfs4", "snowflake"])
+
+
+def test_plain_ip_bridges_need_no_transport() -> None:
+    """A vanilla bridge is just an address; requiring obfs4proxy for it would be wrong."""
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),
+        patch("ttp.tor_install.start_tor_service"),
+        patch("ttp.tor_install.ensure_pluggable_transports") as ensure_pt,
+    ):
+        ensure_tor_ready(use_bridges=True, bridges=["192.0.2.1:9001"])
+    ensure_pt.assert_not_called()
+
+
+def test_bridges_without_the_flag_are_ignored() -> None:
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),
+        patch("ttp.tor_install.start_tor_service"),
+        patch("ttp.tor_install.ensure_pluggable_transports") as ensure_pt,
+    ):
+        ensure_tor_ready(use_bridges=False, bridges=["obfs4 192.0.2.1:9001"])
+    ensure_pt.assert_not_called()
+
+
+def test_ensure_tor_ready_forwards_every_tor_option() -> None:
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),
+        patch("ttp.tor_install.start_tor_service") as start,
+    ):
+        ensure_tor_ready(block_doh=False, disable_ipv6=True, use_bridges=False)
+    assert start.call_args.kwargs["block_doh"] is False
+    assert start.call_args.kwargs["disable_ipv6"] is True
