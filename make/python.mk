@@ -60,8 +60,15 @@ lang-clean:
 coverage: ## Run the test suite with a coverage report
 	@$(PYTHON) -m pytest $(TEST_DIRS) --cov=$(PROJECT_PKG) --cov-report=term-missing --cov-report=html
 
-publish-test: build ## Upload the built distribution to TestPyPI
+# Manual escape hatches only. Publication is normally performed by
+# .github/workflows/release.yml on a tag push, which uploads the exact wheel and
+# sdist that Sigstore signed. These targets rebuild from the working tree, so
+# what they push does NOT correspond to any published signature - use them only
+# to recover a failed release, and never for a routine one.
+publish-test: build ## Upload a locally rebuilt distribution to TestPyPI (prefer the release workflow)
+	@echo "==> [$(PROJECT_SHORT)] WARNING: uploading a local rebuild, not the signed release artifacts."
 	@$(PYTHON) -m twine upload --repository testpypi $(DIST_DIR)/*
 
-publish: build ## Upload the built distribution to PyPI
+publish: build ## Upload a locally rebuilt distribution to PyPI (prefer the release workflow)
+	@echo "==> [$(PROJECT_SHORT)] WARNING: uploading a local rebuild, not the signed release artifacts."
 	@$(PYTHON) -m twine upload $(DIST_DIR)/*

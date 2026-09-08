@@ -5,14 +5,18 @@ on:
     tags:
       - 'v*'
 
+# Declared per job instead of globally: only `release` needs to write to the repo,
+# and each publishing job gets its own OIDC token scoped to its own environment.
 permissions:
-  contents: write   # Required to create/update the GitHub Release and upload assets
-  id-token: write   # Required for Sigstore keyless OIDC authentication
+  contents: read
 
 jobs:
   release:
     name: Build, Sign, and Publish Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # Create the GitHub Release and upload its assets
+      id-token: write   # Sigstore keyless signing
 
     steps:
       - name: Checkout repository
@@ -106,3 +110,118 @@ jobs:
             packaging/*.sigstore*
             packaging/sbom.json
           generate_release_notes: true
+
+      # Hand the *signed* wheel and sdist to the publishing jobs. They must upload
+      # these exact bytes: rebuilding downstream would put a different artifact on
+      # PyPI than the one the Sigstore bundle attests to, under the same version.
+      # Only the Python distributions go in - never the .deb/.rpm/.sigstore files.
+      - name: Stage Python distributions for publication
+        run: |
+          mkdir -p dist_publish
+          cp packaging/*.whl packaging/*.tar.gz dist_publish/
+          ls -la dist_publish/
+
+      - name: Upload distributions as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist_publish/
+          if-no-files-found: error
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Publication. TestPyPI first, and PyPI only after an installed smoke test of
+  # what actually landed there - so a broken distribution is caught on the index
+  # nobody depends on, not the one everybody does.
+  # ---------------------------------------------------------------------------
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/transparent-tor-proxy
+    permissions:
+      id-token: write   # Trusted Publishing: mints a short-lived OIDC token, no stored secret
+
+    steps:
+      - name: Download the distributions built by the release job
+        uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # A re-run of an already-published tag should be a no-op here rather
+          # than a hard failure; TestPyPI is a rehearsal surface.
+          skip-existing: true
+
+  verify-testpypi:
+    name: Install from TestPyPI and smoke test
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # The index takes a little while to serve a freshly uploaded file, so poll
+      # rather than sleeping for a guessed interval.
+      - name: Install the published version from TestPyPI
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "Waiting for transparent-tor-proxy==$version to appear on TestPyPI..."
+          for attempt in $(seq 1 20); do
+            if pip install \
+                 --index-url https://test.pypi.org/simple/ \
+                 --extra-index-url https://pypi.org/simple/ \
+                 "transparent-tor-proxy==$version"; then
+              echo "Installed on attempt $attempt."
+              exit 0
+            fi
+            echo "Not available yet (attempt $attempt/20), retrying in 15s..."
+            sleep 15
+          done
+          echo "::error::transparent-tor-proxy==$version never became installable from TestPyPI"
+          exit 1
+
+      # Proves the distribution is not merely uploaded but usable: the console
+      # script resolves, the package imports, and the version matches the tag.
+      - name: Smoke test the installed package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ttp --help > /dev/null
+          installed="$(python -c 'import ttp; print(ttp.__version__)')"
+          echo "Installed version: $installed"
+          if [ "$installed" != "$version" ]; then
+            echo "::error::Installed version $installed does not match tag $version"
+            exit 1
+          fi
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: verify-testpypi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/transparent-tor-proxy
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download the distributions built by the release job
+        uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No skip-existing here on purpose: a version that already exists on PyPI
+        # means something is wrong with the release, and must fail loudly.

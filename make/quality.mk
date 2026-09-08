@@ -35,7 +35,7 @@ lint-secrets: ## Fail if a tracked file looks like it contains a secret
 	@# and untracked scratch files are not going anywhere.
 	@if ! git rev-parse --git-dir >/dev/null 2>&1; then \
 		echo "==> Not a git repository, skipping the secret scan."; \
-	elif git grep -nIE '(BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]+)' \
+	elif git grep -nIE '(BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]+|pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]+)' \
 		-- ':!*.md' ':!make/*' 2>/dev/null; then \
 		echo "!!! Potential secret found in a tracked file. Revoke it and remove it from history."; \
 		echo "!!! See SECRETS_POLICY.md for the incident response steps."; \
