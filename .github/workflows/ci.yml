@@ -29,6 +29,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      # `make lint` runs ShellCheck and markdownlint when they are on PATH and
+      # prints "skipping" when they are not. On a bare runner they were never
+      # installed, so two of the four linters in the gate quietly did nothing.
+      - name: Install ShellCheck and markdownlint
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          npm install -g markdownlint-cli
+
+      - name: Assert every linter is actually present
+        run: |
+          command -v shellcheck
+          command -v markdownlint
+
       # Delegate to the Makefile rather than restating the steps here. This job
       # previously reimplemented ruff by hand and drifted: mypy was part of
       # `make lint` but was never run in CI.
@@ -60,6 +74,13 @@ jobs:
       - name: Run unit tests
         run: make test
 
+      # The coverage floor lives in the Makefile, so `make coverage` locally and
+      # this job cannot disagree about what "covered enough" means. Running it
+      # on one interpreter is enough: the number does not vary by version.
+      - name: Enforce the coverage ratchet
+        if: matrix.python-version == '3.12'
+        run: make coverage
+
   integration-debian:
     name: Integration Tests (Debian)
     needs: unit-tests
@@ -69,3 +90,50 @@ jobs:
 
       - name: Run Debian integration tests
         run: make integration-debian
+
+  zero-leak:
+    # The suite behind the README's strongest claim. Until now it ran nowhere:
+    # no make target, no CI job, no step in verify.sh, and the `nse` marker is
+    # excluded from the default pytest run. A claim nothing executes is not a
+    # measurement.
+    #
+    # Requires network-sandbox-engine >= 2.1.0. Below that, the engine could
+    # report a clean result from an oracle that observed nothing, so a green run
+    # here would prove nothing about the firewall. tests/test_nse_rules.py
+    # refuses to run against an older NSE rather than producing a false pass.
+    name: Zero-leak ruleset verification (NSE)
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables iproute2 conntrack
+
+      - name: Record the environment under test
+        run: |
+          uname -r
+          nft --version
+          ip -V
+
+      - name: Install TTP with the NSE extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,nse]"
+
+      # TTP_REQUIRE_NSE=1 turns a missing, shadowed or too-old NSE into a hard
+      # error instead of a skip. Without it this job could pass by running
+      # nothing at all, which is the failure mode the whole suite exists to
+      # rule out.
+      - name: Verify zero cleartext escapes
+        run: |
+          sudo -E env "PATH=$PATH" TTP_REQUIRE_NSE=1 \
+            python -m pytest tests/test_nse_rules.py -m nse -v

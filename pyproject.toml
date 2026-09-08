@@ -30,9 +30,18 @@ dev = [
     "twine>=7.0.0",
     "bump-my-version>=1.4.1",
     "hypothesis>=6.0.0",
+    # `make coverage` invokes pytest --cov, so the plugin that provides it is a
+    # declared dependency. It was not, and the target therefore failed with
+    # "unrecognized arguments" - a gate that could not run.
+    "pytest-cov>=5.0.0",
 ]
 nse = [
-    "network-sandbox-engine>=1.1.1",
+    # 2.1.0 is the floor, not a preference. Before it, the NSE runner reported
+    # PASSED when its oracle observed nothing, and the trace monitor could stop
+    # reading mid-run without saying so - which would make TTP's zero-leak suite
+    # green against an instrument that was not measuring. The upper bound is a
+    # real bound: 2.0.0 already rewrote run_test_pipeline's signature once.
+    "network-sandbox-engine>=2.1.0,<3",
     "pyroute2",
 ]
 
@@ -45,7 +54,9 @@ markers = [
     "leak: marks tests as offensive leak verification tests",
     "nse: marks tests that require root, NSE, and network namespace privileges",
 ]
-addopts = "--ignore=tests/leak -m \"not integration and not nse\""
+# --strict-markers: a typo in a marker name silently deselects the test it was
+# meant to tag, which is how a suite quietly stops running.
+addopts = "--ignore=tests/leak -m \"not integration and not nse\" --strict-markers"
 filterwarnings = [
     "ignore:setDaemon\\(\\) is deprecated:DeprecationWarning:stem.*"
 ]

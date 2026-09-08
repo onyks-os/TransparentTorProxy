@@ -41,7 +41,7 @@ No per-application setup needed - just `sudo ttp start` and **every connection**
 
 > [!CAUTION]
 > TTP is a tool designed to aid privacy by routing traffic through Tor. However, no tool can guarantee 100% anonymity. Your safety also depends on your behavior (e.g., using a regular browser vs. Tor Browser, signing into accounts, etc.). Always use TTP as part of a multi-layered security strategy.
-
+>
 > [!WARNING]
 > **If you are a whistleblower or are engaging in high-risk activities, DO NOT use TTP.** Instead, use officially audited and reliable tools like [TailsOS](https://tails.net/) or the [Tor Browser](https://www.torproject.org/) directly. The authors and contributors of TTP assume no responsibility for your safety or the consequences of using this software.
 
@@ -118,22 +118,31 @@ TTP is designed to be simple and lightweight. For the complete list of CLI comma
 Most network-modifying commands require root privileges (`sudo`):
 
 * **Start the proxy**:
+
   ```bash
   sudo ttp start
   ```
+
 * **Stop the proxy**:
+
   ```bash
   sudo ttp stop
   ```
+
 * **Check current session status**:
+
   ```bash
   ttp status
   ```
+
 * **Verify Tor routing and latency**:
+
   ```bash
   ttp check
   ```
+
 * **Request a new exit IP (rotate circuits)**:
+
   ```bash
   sudo ttp refresh
   ```
@@ -249,12 +258,32 @@ TTP uses a **Makefile** to automate and standardize the testing pipeline. This e
 | `make clean`              | Removes all build artifacts, caches, and temp files.                      |
 
 ### Ruleset Verification via Network Sandbox Engine (NSE)
-TTP integrates the **Network Sandbox Engine (NSE)**, a development dependency, to run programmatic validation of TTP's `nftables` rulesets inside isolated network namespaces:
-* **Zero-Leak PCAP Assertion**: Tests apply the actual firewall rules and inject test packets (TCP connections, DNS lookups, bypassed identities). A Scapy sniffer runs on the boundary virtual interface (`veth`) and asserts that no cleartext packets escape to the WAN.
-* **To run ruleset tests**: Install NSE (`pip install -e ".[nse]"`) and run:
-  ```bash
-  sudo pytest tests/test_nse_rules.py -v
-  ```
+
+TTP's zero-leak claim is measured, not asserted. The
+[Network Sandbox Engine](https://github.com/onyks-os/NetworkSandboxEngine) builds
+an isolated network namespace, loads TTP's *real* generated ruleset into it,
+generates the traffic a leak would consist of, and watches the boundary `veth`
+interface with a Scapy sniffer.
+
+**Every containment test runs twice.** `assert no leaks` is also true when the
+sniffer never started, when the interface name is wrong, or when the traffic
+never left the process, so each test first runs the same stimulus with the
+ruleset **flushed** and requires the packet to be seen. Only then does it assert
+that TTP's ruleset stops it. A harness that cannot observe a leak fails the
+test rather than passing it.
+
+Covered: plain DNS (UDP and TCP), ordinary TCP, DoT on 853, QUIC DoH on UDP/443,
+ICMP, arbitrary UDP, IPv6 — plus the other direction, that a bypassed UID can
+still reach the LAN. A firewall that blocked everything would pass the first
+seven and fail the eighth.
+
+```bash
+pip install -e ".[nse]"
+make test-nse            # runs as root; TTP_REQUIRE_NSE=1 so it cannot skip itself
+```
+
+This runs in CI on every push (the **Zero-leak ruleset verification** job) and as
+a step in `scripts/verify.sh` before a release.
 
 ### Advanced: Real-World VM Testing
 
@@ -309,10 +338,10 @@ If you want to contribute to making transparent proxying safer and more robust, 
 
 ## Obtain, Feedback & Contributions
 
-- **Obtain**: TTP is available on [PyPI](https://pypi.org/project/transparent-tor-proxy/) and can also be downloaded from the [GitHub Releases](https://github.com/onyks-os/TransparentTorProxy/releases) page. For installation methods, see the [Installation](#installation) section.
-- **Feedback**: Report bugs, suggest enhancements, or request features by opening a ticket on the [GitHub Issues](https://github.com/onyks-os/TransparentTorProxy/issues) tracker.
-- **Contribute**: Contributions are always welcome! Review our [Contributing Guidelines](CONTRIBUTING.md) to learn how to submit code, follow coding standards, and run tests.
-- **Security**: Please review our [Security Policy](SECURITY.md) before reporting any vulnerabilities or security concerns.
+* **Obtain**: TTP is available on [PyPI](https://pypi.org/project/transparent-tor-proxy/) and can also be downloaded from the [GitHub Releases](https://github.com/onyks-os/TransparentTorProxy/releases) page. For installation methods, see the [Installation](#installation) section.
+* **Feedback**: Report bugs, suggest enhancements, or request features by opening a ticket on the [GitHub Issues](https://github.com/onyks-os/TransparentTorProxy/issues) tracker.
+* **Contribute**: Contributions are always welcome! Review our [Contributing Guidelines](CONTRIBUTING.md) to learn how to submit code, follow coding standards, and run tests.
+* **Security**: Please review our [Security Policy](SECURITY.md) before reporting any vulnerabilities or security concerns.
 
 ## Support
 

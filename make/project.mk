@@ -9,7 +9,7 @@
 
 .PHONY: integration-debian integration-fedora integration-arch integration-all \
         chaos-monkey test-leak-ip test-leak-dns test-leak-webrtc check-leak \
-        packages clean-packages verify-full tarball testpypi pypi
+        test-nse packages clean-packages verify-full tarball testpypi pypi
 
 ##@ Integration (Docker, privileged)
 
@@ -45,6 +45,23 @@ test-leak-webrtc: ## Offensive WebRTC STUN leak test
 	@$(PYTHON) -m pytest tests/leak/test_webrtc_leak.py -v -s
 
 check-leak: test-leak-ip test-leak-dns test-leak-webrtc ## The full leak suite
+
+##@ Zero-leak ruleset verification (NSE)
+
+# The suite behind the README's strongest claim. It was written months ago and
+# then run by nothing: no make target, no CI job, no step in verify.sh, and the
+# `nse` marker is excluded from the default pytest run. This target is what
+# turns that assertion into a measurement.
+#
+# TTP_REQUIRE_NSE=1 makes a missing, shadowed, or too-old NSE a hard error
+# instead of a skip. A gate that skips itself is not a gate - and `nse` is a
+# short import name that an unrelated PyPI package can shadow, which would look
+# exactly like "NSE is not installed".
+test-nse: ## Zero-leak nftables verification in a netns (requires root + the nse extra)
+	@echo "==> [$(PROJECT_SHORT)] Zero-leak ruleset verification (NSE)..."
+	@echo "    kernel:   $$(uname -r)"
+	@echo "    nftables: $$(nft --version 2>/dev/null || echo 'MISSING')"
+	@sudo -E TTP_REQUIRE_NSE=1 $(VENV)/bin/python -m pytest tests/test_nse_rules.py -m nse -v
 
 ##@ Native packaging
 

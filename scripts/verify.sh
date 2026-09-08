@@ -99,6 +99,20 @@ run_step "Lint & Type Check (make lint)" "make lint"
 run_step "Unit Tests (make test)" "make test"
 run_step "Fuzzing (Hypothesis)" "pytest fuzzing/fuzz_target.py -q"
 run_step "Dependency Audit (pip-audit)" "pip-audit ."
+# The suite behind the README's zero-leak claim. It is listed here because a
+# release that has not run it is a release shipping an unverified claim; it needs
+# root and the `nse` extra, so it is skipped rather than failed when either is
+# missing. A skip is announced, not silent.
+if [ "$(id -u)" -eq 0 ] || sudo -n true 2>/dev/null; then
+    if python3 -c "import nse" 2>/dev/null; then
+        run_step "Zero-leak Ruleset (make test-nse)" "make test-nse"
+    else
+        printf " ${YELLOW}[SKIP] %-35s${NC} (network-sandbox-engine not installed: pip install -e '.[nse]')\n" "Zero-leak Ruleset"
+    fi
+else
+    printf " ${YELLOW}[SKIP] %-35s${NC} (needs root; run with passwordless sudo or as root)\n" "Zero-leak Ruleset"
+fi
+
 run_step "Integration (Debian)" "make integration-debian"
 run_step "Integration (Fedora)" "make integration-fedora"
 run_step "Integration (Arch)" "make integration-arch"
