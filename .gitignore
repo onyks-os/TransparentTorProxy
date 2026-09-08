@@ -277,3 +277,5 @@ env/
 
 # Other
 .claude
+# Internal working notes (never committed)
+.internal/
