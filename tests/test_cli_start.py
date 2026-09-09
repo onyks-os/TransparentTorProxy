@@ -1,10 +1,16 @@
 # Copyright (c) 2026 onyks-os
 # SPDX-License-Identifier: MIT
 
-"""Tests for ttp.cli - CLI entry point.
+"""Behavioural tests for `ttp start`.
 
-All external calls (firewall, DNS, Tor, network) are fully mocked.
-Tests verify command orchestration logic, not system interactions.
+Mocks sit at the system boundary - `subprocess`, `pwd`, the filesystem, the Tor
+control port - and the assertions are on what was *produced*: the generated
+nftables ruleset, the lock file contents, the rendered CLI output.
+
+That distinction is the whole point of this file. Its predecessor asserted on
+the sequence of internal calls, which is how `ttp restart` shipped broken with a
+dedicated passing test: the test encoded what the code did, so when the code was
+wrong the test agreed with it.
 """
 
 from __future__ import annotations
@@ -115,7 +121,6 @@ def test_start_requires_root(mock_euid):
     result = runner.invoke(app, ["start"])
     assert result.exit_code == 1
     assert "root" in result.output
-    assert mock_euid.call_count == 1
 
 
 @patch("ttp.firewall.runner._run_nft_string")
