@@ -101,6 +101,25 @@ When writing code for TTP, please adhere to these core principles:
 4. **Crash-Safety**: Always consider what happens if the power goes out mid-operation. Use the lock file system in `state.py` to track changes that need rolling back.
 5. **TDD (Test Driven Development)**: Every new feature or bug fix should include a corresponding unit test in `tests/`.
 
+## Finding your way around
+
+Two commands exist because this codebase grew faster than any one person's model
+of it, and `git grep` answers the wrong question.
+
+```bash
+make explain FILE=ttp/state.py    # what does it expose, who breaks, what goes red
+make debt                          # rank modules: wide blast radius, thin guard
+```
+
+`make explain` reads per-test coverage contexts, so it can tell you which test
+suites actually *execute* a file - not which ones mention it. That distinction
+matters: `ttp/state.py` is imported by 15 modules and executed by 2 suites,
+because the CLI tests mock it out. That gap is where a change breaks something
+far away with nothing going red.
+
+Add `REFRESH=1` to re-measure first. Use it before you touch an unfamiliar
+module, and again after, to check the tests you expected to go red actually did.
+
 ## Testing
 
 - **Unit Tests**: Must pass on every PR. They are fully mocked and run without root.

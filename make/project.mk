@@ -7,7 +7,7 @@
 # than redefining a recipe, which keeps `make` from overriding the fragment.
 # ---------------------------------------------------------------------------
 
-.PHONY: integration-debian integration-fedora integration-arch integration-all \
+.PHONY: explain debt integration-debian integration-fedora integration-arch integration-all \
         chaos-monkey test-leak-ip test-leak-dns test-leak-webrtc check-leak \
         test-nse packages clean-packages verify-full tarball testpypi pypi
 
@@ -98,3 +98,19 @@ verify-full: ## The 8-minute pre-release suite (lint + unit + integration + pack
 # Names kept from the pre-template Makefile so muscle memory still works.
 testpypi: publish-test ## Alias for publish-test
 pypi: publish ## Alias for publish
+
+
+##@ Knowledge
+
+# `git grep` answers "where is this string". These answer the question you
+# actually have when you open a module you did not write yesterday: what does it
+# expose, who breaks if I break it, and what would go red.
+#
+# REFRESH=1 re-measures per-test coverage first (a few seconds).
+
+explain: ## What is this file, and what happens if I break it? make explain FILE=ttp/state.py
+	@test -n "$(FILE)" || { echo "usage: make explain FILE=ttp/state.py [REFRESH=1]"; exit 2; }
+	@$(PYTHON) scripts/explain.py "$(FILE)" $(if $(REFRESH),--refresh,)
+
+debt: ## Rank modules by blast radius against how thinly they are guarded
+	@$(PYTHON) scripts/explain.py --debt $(if $(REFRESH),--refresh,)
