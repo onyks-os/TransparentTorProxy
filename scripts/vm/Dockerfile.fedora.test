@@ -1,5 +1,8 @@
 # TTP Integration Test Environment (Fedora)
-FROM fedora:41
+# Pinned by digest. These images decide which nftables and kernel headers the
+# integration suite runs against, so a moving tag silently changes the
+# environment a passing test was measured in. Bump deliberately.
+FROM docker.io/library/fedora:41@sha256:68bb1ba893be0c05991b2df55bc6571862bab7526fd6053b1ebacd53a2a75366
 
 ENV container docker
 

@@ -5,10 +5,10 @@
 
 import logging
 import re
-import shutil
 import subprocess
 
 from ttp import firewall
+from ttp.paths import resolve_optional
 
 logger = logging.getLogger("ttp")
 
@@ -43,13 +43,19 @@ def trigger_emergency_killswitch(failed_component: str, err_msg: str) -> None:
         f"[TTP EMERGENCY] Tor session integrity failure detected on '{failed_component}' "
         f"({err_msg})! Network has been completely isolated to prevent cleartext leaks."
     )
-    subprocess.run(["wall", alert_msg], check=False, timeout=10)
+    wall = resolve_optional("wall")
+    if wall:
+        subprocess.run([wall, alert_msg], check=False, timeout=10)
 
-    # 3. Desktop Notification (if notify-send is present)
-    if shutil.which("notify-send"):
+    # 3. Desktop Notification (if notify-send is present).
+    # resolve_optional, not shutil.which: `which` consults $PATH, so on a host
+    # without notify-send in a trusted directory it would report a caller-chosen
+    # binary as present and we would then refuse to run it - or worse, run it.
+    notify_send = resolve_optional("notify-send")
+    if notify_send:
         subprocess.run(
             [
-                "notify-send",
+                notify_send,
                 "TTP EMERGENCY",
                 f"Failure detected on '{failed_component}'! Network isolated to prevent leaks.",
                 "-u",

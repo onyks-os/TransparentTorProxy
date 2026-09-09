@@ -16,6 +16,7 @@ import pytest
 
 from ttp.exceptions import FirewallError
 from ttp.firewall import apply_rules, destroy_rules
+from ttp.paths import resolve
 
 
 @pytest.fixture(autouse=True)
@@ -49,7 +50,7 @@ def test_apply_rules_is_a_single_atomic_transaction(mock_run, mock_pwd, mock_loc
     # Exactly one nft invocation, and it is a file-driven (atomic) one.
     assert mock_run.call_count == 1
     argv = mock_run.call_args.args[0]
-    assert argv[:2] == ["nft", "-f"]
+    assert argv[:2] == [resolve("nft"), "-f"]
 
     # The script itself carries the reset, ahead of the table definition.
     script = mock_rules_path.write_text.call_args.args[0]
@@ -243,8 +244,8 @@ def test_destroy_rules(mock_run, mock_rules_path):
 
     # Verify both flush and destroy are called
     calls = [c.args[0] for c in mock_run.call_args_list]
-    assert ["nft", "flush", "table", "inet", "ttp"] in calls
-    assert ["nft", "destroy", "table", "inet", "ttp"] in calls
+    assert [resolve("nft"), "flush", "table", "inet", "ttp"] in calls
+    assert [resolve("nft"), "destroy", "table", "inet", "ttp"] in calls
     mock_rules_path.unlink.assert_called_once_with(missing_ok=True)
 
 
@@ -636,7 +637,7 @@ class TestEmergencyTeardown:
         apply_emergency_killswitch()
 
         assert mock_run.call_count == 1
-        assert mock_run.call_args.args[0][:2] == ["nft", "-f"]
+        assert mock_run.call_args.args[0][:2] == [resolve("nft"), "-f"]
 
         script = mock_rules_path.write_text.call_args.args[0]
         assert "add table inet ttp" in script

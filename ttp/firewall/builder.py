@@ -5,6 +5,8 @@
 
 import subprocess
 
+from ttp.paths import resolve
+
 
 def _has_cgroup_bypass_support() -> bool:
     """Check if the kernel supports cgroupv2 socket bypass by testing a dummy rule.
@@ -30,7 +32,7 @@ def _has_cgroup_bypass_support() -> bool:
     """
     try:
         res = subprocess.run(
-            ["nft", "--check", "-f", "-"],
+            [resolve("nft"), "--check", "-f", "-"],
             input=test_ruleset,
             capture_output=True,
             text=True,

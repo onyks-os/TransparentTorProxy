@@ -106,7 +106,7 @@ if _nse_version() < MIN_NSE_VERSION:
 pytestmark = pytest.mark.nse
 
 # Monkey-patch subprocess.run and subprocess.Popen to transparently convert
-#   ["ip", "netns", "exec", <name>, ...]
+#   [resolve("ip"), "netns", "exec", <name>, ...]
 # into
 #   ["nsenter", "--net=/var/run/netns/<name>", ...]
 #

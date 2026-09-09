@@ -1,5 +1,8 @@
 # TTP Integration Test Environment
-FROM debian:13-slim
+# Pinned by digest. These images decide which nftables and kernel headers the
+# integration suite runs against, so a moving tag silently changes the
+# environment a passing test was measured in. Bump deliberately.
+FROM docker.io/library/debian:13-slim@sha256:abc9cb88a5587630d7f915f47b23b0668fe250fbfc6457aa4d52b534c1bbf73f
 
 ENV container docker
 

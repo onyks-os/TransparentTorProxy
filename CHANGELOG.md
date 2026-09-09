@@ -77,6 +77,39 @@ regardless.
   only by running the daemon. It is now a pure function with 14 tests, including
   the truncated-read case that would have raised inside the loop.
 
+### Security
+
+- **PATH hijacking closed (`ruff S607` x47).** `nft`, `ip`, `systemctl` and
+  fifteen other binaries were invoked **by name** from a process running as
+  root, so the kernel resolved them through `$PATH`. Anyone able to influence
+  the environment of the `sudo` invocation could put their own `nft` earlier in
+  the search order and have it executed with full privileges - a local privilege
+  escalation in a tool whose whole job is to be trusted with the network stack.
+
+  `sudo` usually blunts this with `secure_path`, but that is a distribution
+  default an administrator can switch off, not a property TTP is entitled to
+  assume.
+
+  New `ttp/paths.py` resolves every binary against a fixed list of root-owned
+  system directories, never `$PATH`, and refuses to execute one that is
+  group- or world-writable, or that sits in a writable directory - write access
+  there is enough to replace the file by rename. `resolve_optional()` covers the
+  binaries TTP uses when they happen to exist (`notify-send`, the SELinux
+  tools), so a missing nicety cannot turn into a failed teardown while the
+  killswitch is firing; a *replaceable* one still raises.
+
+  21 tests, the load-bearing one being `test_a_hostile_nft_on_path_is_not_executed`
+  and its end-to-end sibling, which plants a hostile `nft` first on `$PATH` and
+  asserts the argv TTP hands to `subprocess` still names the trusted absolute
+  path. Without those this would be a refactor, not a fix. A further test keeps
+  `S607` selected in `make lint`, because a rule silently dropped from the
+  config is how 47 call sites appear in the first place.
+
+- **Container base images pinned by digest** (`scripts/vm/Dockerfile.*.test`).
+  These images decide which nftables and kernel headers the integration suite
+  runs against, so a moving tag silently changes the environment a passing test
+  was measured in.
+
 ### Fixed
 
 - **`make coverage` could not run.** It invokes `pytest --cov`, but `pytest-cov`

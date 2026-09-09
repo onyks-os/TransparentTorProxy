@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from ttp.paths import resolve
 from ttp.tor_detect import (
     is_fedora_family,
     is_selinux_enforcing,
@@ -123,11 +124,11 @@ def test_setup_selinux_if_needed_installs_when_missing():
         # Verify 3 subprocess calls were made: checkmodule, semodule_package, semodule -i
         assert mock_run.call_count == 3
         args1, _ = mock_run.call_args_list[0]
-        assert args1[0][0] == "checkmodule"
+        assert args1[0][0] == resolve("checkmodule")
         args2, _ = mock_run.call_args_list[1]
-        assert args2[0][0] == "semodule_package"
+        assert args2[0][0] == resolve("semodule_package")
         args3, _ = mock_run.call_args_list[2]
-        assert args3[0][0] == "semodule"
+        assert args3[0][0] == resolve("semodule")
         assert args3[0][1] == "-i"
 
 
@@ -156,4 +157,4 @@ def test_remove_selinux_module_calls_semodule_r():
         patch("ttp.selinux.subprocess.run") as mock_run,
     ):
         remove_selinux_module()
-        mock_run.assert_any_call(["semodule", "-r", "ttp_tor_policy"], check=True)
+        mock_run.assert_any_call([resolve("semodule"), "-r", "ttp_tor_policy"], check=True)

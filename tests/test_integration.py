@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from ttp.paths import resolve
+
 # Ensure the virtual environment's bin directory is at the front of PATH,
 # so that the development version of "ttp" is executed rather than any system-wide one.
 project_root = Path(__file__).resolve().parent.parent
@@ -63,7 +65,7 @@ def test_full_ttp_flow():
     # 1. Start TTP
     res = subprocess.run(["ttp", "start", "--bootstrap-timeout", "300"], capture_output=True, text=True)
     if res.returncode != 0:
-        status_res = subprocess.run(["systemctl", "status", "ttp-tor.service"], capture_output=True, text=True)
+        status_res = subprocess.run([resolve("systemctl"), "status", "ttp-tor.service"], capture_output=True, text=True)
         journal_res = subprocess.run(
             ["journalctl", "-xeu", "ttp-tor.service", "--no-pager"],
             capture_output=True,
@@ -144,7 +146,7 @@ def test_custom_ports_flow():
         text=True,
     )
     if res.returncode != 0:
-        status_res = subprocess.run(["systemctl", "status", "ttp-tor.service"], capture_output=True, text=True)
+        status_res = subprocess.run([resolve("systemctl"), "status", "ttp-tor.service"], capture_output=True, text=True)
         journal_res = subprocess.run(
             ["journalctl", "-xeu", "ttp-tor.service", "--no-pager"],
             capture_output=True,

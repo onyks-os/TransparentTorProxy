@@ -17,6 +17,7 @@ import typer
 
 from ttp import tor_config, tor_install, tor_service
 from ttp.exceptions import TorError
+from ttp.paths import resolve
 from ttp.tor_detect import is_selinux_module_installed
 from ttp.tor_install import (
     TTP_SERVICE_NAME,
@@ -81,13 +82,13 @@ def test_start_tor_service(mock_generate, mock_write_unit, mock_label, mock_run)
     mock_write_unit.assert_called_once_with("tor")
     assert mock_run.call_count == 2
     mock_run.assert_any_call(
-        ["systemctl", "daemon-reload"],
+        [resolve("systemctl"), "daemon-reload"],
         capture_output=True,
         text=True,
         check=True,
     )
     mock_run.assert_any_call(
-        ["systemctl", "restart", TTP_SERVICE_NAME],
+        [resolve("systemctl"), "restart", TTP_SERVICE_NAME],
         capture_output=True,
         text=True,
         check=True,
@@ -174,13 +175,13 @@ def test_stop_tor_service(mock_run, tmp_path: Path):
         assert not fake_path.exists()
         assert mock_run.call_count == 2
         mock_run.assert_any_call(
-            ["systemctl", "stop", TTP_SERVICE_NAME],
+            [resolve("systemctl"), "stop", TTP_SERVICE_NAME],
             capture_output=True,
             text=True,
             check=False,
         )
         mock_run.assert_any_call(
-            ["systemctl", "daemon-reload"],
+            [resolve("systemctl"), "daemon-reload"],
             capture_output=True,
             text=True,
             check=False,
@@ -237,9 +238,9 @@ def test_setup_selinux_if_needed_installs(
     mock_tempdir.return_value.__enter__.return_value = "/tmp/fake"
     setup_selinux_if_needed()
 
-    assert any("checkmodule" in str(c) for c in mock_run.call_args_list)
-    assert any("semodule_package" in str(c) for c in mock_run.call_args_list)
-    assert any("semodule" in str(c) and "-i" in str(c) for c in mock_run.call_args_list)
+    assert any(resolve("checkmodule") in str(c) for c in mock_run.call_args_list)
+    assert any(resolve("semodule_package") in str(c) for c in mock_run.call_args_list)
+    assert any(resolve("semodule") in str(c) and "-i" in str(c) for c in mock_run.call_args_list)
 
 
 @patch("ttp.tor_detect.is_selinux_module_installed", return_value=True)
@@ -264,7 +265,7 @@ def test_remove_selinux_module(mock_run, mock_which, mock_installed):
     """
     mock_run.return_value = MagicMock(returncode=0)
     remove_selinux_module()
-    assert any("semodule" in str(c) and "-r" in str(c) for c in mock_run.call_args_list)
+    assert any(resolve("semodule") in str(c) and "-r" in str(c) for c in mock_run.call_args_list)
 
 
 @patch("ttp.tor_detect.is_selinux_module_installed", return_value=False)

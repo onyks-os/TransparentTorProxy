@@ -17,6 +17,7 @@ import pytest
 
 from ttp import dns, dns_resolved
 from ttp.exceptions import DNSError
+from ttp.paths import resolve
 
 
 @pytest.fixture(autouse=True)
@@ -56,7 +57,7 @@ def test_apply_dns_overlay(_mock_resolv_conf):
 
         # Check mount command
         mock_run.assert_any_call(
-            ["mount", "--bind", str(fake_runtime), str(fake_resolv)],
+            [resolve("mount"), "--bind", str(fake_runtime), str(fake_resolv)],
             capture_output=True,
             text=True,
             check=True,
@@ -83,7 +84,7 @@ def test_apply_dns_symlink_overlay(_mock_resolv_conf):
         assert backup["mount_target"] == str(fake_target)
 
         mock_run.assert_any_call(
-            ["mount", "--bind", str(fake_runtime), str(fake_target)],
+            [resolve("mount"), "--bind", str(fake_runtime), str(fake_target)],
             capture_output=True,
             text=True,
             check=True,
@@ -110,7 +111,7 @@ def test_restore_dns_overlay(_mock_resolv_conf):
 
         # Check umount -l
         mock_run.assert_called_once_with(
-            ["umount", "-l", str(fake_resolv)],
+            [resolve("umount"), "-l", str(fake_resolv)],
             capture_output=True,
             text=True,
             check=True,
@@ -128,7 +129,7 @@ def test_apply_dns_failure():
     """apply_dns raises DNSError if mount fails."""
 
     def mock_run(args, **kwargs):
-        if "mount" in args:
+        if resolve("mount") in args:
             raise subprocess.CalledProcessError(1, "mount", stderr="error")
         return MagicMock(returncode=0)
 
@@ -174,7 +175,7 @@ def test_clear_stale_mounts_removes_layers():
 
         assert mock_run.call_count == 2
         mock_run.assert_called_with(
-            ["umount", "-l", "/etc/resolv.conf"],
+            [resolve("umount"), "-l", "/etc/resolv.conf"],
             capture_output=True,
             text=True,
             check=False,
@@ -203,7 +204,7 @@ def test_apply_dns_clears_stale_before_mount(_mock_resolv_conf):
     original_run = MagicMock(returncode=0)
 
     def track_run(args, *extra_args, **kwargs):
-        if "mount" in args:
+        if resolve("mount") in args:
             call_order.append("mount")
         return original_run
 
@@ -306,8 +307,8 @@ class TestDnsResolved:
 
         # Check restart and flush commands
         calls = mock_run.call_args_list
-        assert ["systemctl", "restart", "systemd-resolved"] in [c.args[0] for c in calls]
-        assert ["resolvectl", "flush-caches"] in [c.args[0] for c in calls]
+        assert [resolve("systemctl"), "restart", "systemd-resolved"] in [c.args[0] for c in calls]
+        assert [resolve("resolvectl"), "flush-caches"] in [c.args[0] for c in calls]
 
     @patch("ttp.dns_resolved.is_resolved_active", return_value=True)
     @patch("ttp.dns_resolved.RESOLVED_CONF_FILE")
@@ -344,5 +345,5 @@ class TestDnsResolved:
 
         mock_file.unlink.assert_called_once()
         calls = mock_run.call_args_list
-        assert ["systemctl", "restart", "systemd-resolved"] in [c.args[0] for c in calls]
-        assert ["resolvectl", "flush-caches"] in [c.args[0] for c in calls]
+        assert [resolve("systemctl"), "restart", "systemd-resolved"] in [c.args[0] for c in calls]
+        assert [resolve("resolvectl"), "flush-caches"] in [c.args[0] for c in calls]

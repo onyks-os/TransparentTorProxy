@@ -26,6 +26,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from ttp.paths import resolve
+
 # Volatile runtime config path
 TORRC_PATH = Path("/run/tor/ttp/torrc")
 
@@ -39,7 +41,7 @@ def _get_version() -> str:
     """Return the Tor version string, or ``""`` if unavailable."""
     try:
         result = subprocess.run(
-            ["tor", "--version"],
+            [resolve("tor"), "--version"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -55,7 +57,7 @@ def _check_running() -> bool:
     """Return ``True`` if a tor process is currently running."""
     try:
         result = subprocess.run(
-            ["pgrep", "-x", "tor"],
+            [resolve("pgrep"), "-x", "tor"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -116,7 +118,7 @@ def _detect_tor_user() -> str:
     #    ``debian-tor`` (10 chars) to ``debian-+`` (8 chars).
     try:
         result = subprocess.run(
-            ["ps", "-eo", "user:32,comm"],
+            [resolve("ps"), "-eo", "user:32,comm"],
             capture_output=True,
             text=True,
             timeout=10,

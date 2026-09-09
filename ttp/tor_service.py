@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from ttp.exceptions import TorError
+from ttp.paths import resolve
 from ttp.selinux import label_ports_selinux
 from ttp.tor_config import TOR_CACHE_DIR, TOR_RUNTIME_DIR, generate_torrc
 
@@ -113,13 +114,13 @@ def start_tor_service(
 
     try:
         subprocess.run(
-            ["systemctl", "daemon-reload"],
+            [resolve("systemctl"), "daemon-reload"],
             capture_output=True,
             text=True,
             check=True,
         )
         subprocess.run(
-            ["systemctl", "restart", TTP_SERVICE_NAME],
+            [resolve("systemctl"), "restart", TTP_SERVICE_NAME],
             capture_output=True,
             text=True,
             check=True,
@@ -132,7 +133,7 @@ def start_tor_service(
 def stop_tor_service() -> None:
     """Stop the dedicated TTP Tor service and remove the volatile systemd unit."""
     subprocess.run(
-        ["systemctl", "stop", TTP_SERVICE_NAME],
+        [resolve("systemctl"), "stop", TTP_SERVICE_NAME],
         capture_output=True,
         text=True,
         check=False,
@@ -140,7 +141,7 @@ def stop_tor_service() -> None:
     # Clean up the volatile unit
     TTP_SERVICE_PATH.unlink(missing_ok=True)
     subprocess.run(
-        ["systemctl", "daemon-reload"],
+        [resolve("systemctl"), "daemon-reload"],
         capture_output=True,
         text=True,
         check=False,

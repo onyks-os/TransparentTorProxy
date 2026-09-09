@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from ttp.paths import resolve
 from ttp.tor_detect import (
     _check_config,
     _detect_tor_user,
@@ -27,10 +28,10 @@ def _make_subprocess_side_effect(running: bool = True):
 
     def side_effect(cmd, **kwargs):
         m = MagicMock()
-        if cmd == ["pgrep", "-x", "tor"]:
+        if cmd == [resolve("pgrep"), "-x", "tor"]:
             m.stdout = "1234\n" if running else ""
             m.returncode = 0 if running else 1
-        elif cmd == ["tor", "--version"]:
+        elif cmd == [resolve("tor"), "--version"]:
             m.stdout = "Tor version 0.4.8.10.\n"
             m.returncode = 0
         else:
@@ -230,7 +231,7 @@ def test_is_firewalld_active_true():
         mock_run.return_value.returncode = 0
         assert is_firewalld_active() is True
         mock_run.assert_called_with(
-            ["pgrep", "-x", "firewalld"],
+            [resolve("pgrep"), "-x", "firewalld"],
             capture_output=True,
             text=True,
             timeout=5,

@@ -21,6 +21,7 @@ import pytest
 
 from ttp import ux
 from ttp.firewall.builder import _has_cgroup_bypass_support
+from ttp.paths import resolve
 from ttp.watchdog.inotify import (
     IN_DELETE_SELF,
     IN_MOVE_SELF,
@@ -187,7 +188,7 @@ def test_cgroup_support_detected_when_nft_accepts_the_rule() -> None:
         patch("pathlib.Path.mkdir"),
     ):
         assert _has_cgroup_bypass_support() is True
-    assert run.call_args[0][0][:2] == ["nft", "--check"]
+    assert run.call_args[0][0][:2] == [resolve("nft"), "--check"]
     assert "socket cgroupv2" in run.call_args.kwargs["input"]
 
 

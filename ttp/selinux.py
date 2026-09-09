@@ -10,6 +10,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from ttp.paths import resolve
+
 logger = logging.getLogger("ttp")
 
 
@@ -52,16 +54,16 @@ def setup_selinux_if_needed() -> None:
 
                 logger.debug(f"Compiling {te_path.name}...")
                 subprocess.run(
-                    ["checkmodule", "-M", "-m", "-o", str(mod_path), str(te_path)],
+                    [resolve("checkmodule"), "-M", "-m", "-o", str(mod_path), str(te_path)],
                     check=True,
                 )
                 subprocess.run(
-                    ["semodule_package", "-o", str(pp_path), "-m", str(mod_path)],
+                    [resolve("semodule_package"), "-o", str(pp_path), "-m", str(mod_path)],
                     check=True,
                 )
 
                 logger.debug(f"Installing {pp_path.name}...")
-                subprocess.run(["semodule", "-i", str(pp_path)], check=True)
+                subprocess.run([resolve("semodule"), "-i", str(pp_path)], check=True)
 
             logger.info("SELinux policy module installed successfully.")
         except (subprocess.CalledProcessError, OSError) as e:
@@ -79,7 +81,7 @@ def label_ports_selinux(transport_port: int, dns_port: int) -> None:
             logger.debug("Adding SELinux port label tor_port_t for %s/%s", port, proto)
             subprocess.run(
                 [
-                    "semanage",
+                    resolve("semanage"),
                     "port",
                     "-a",
                     "-t",
@@ -97,7 +99,7 @@ def label_ports_selinux(transport_port: int, dns_port: int) -> None:
             try:
                 subprocess.run(
                     [
-                        "semanage",
+                        resolve("semanage"),
                         "port",
                         "-m",
                         "-t",
@@ -128,7 +130,7 @@ def unlabel_ports_selinux(transport_port: int, dns_port: int) -> None:
         try:
             logger.debug("Removing SELinux port label for %s/%s", port, proto)
             subprocess.run(
-                ["semanage", "port", "-d", "-p", proto, str(port)],
+                [resolve("semanage"), "port", "-d", "-p", proto, str(port)],
                 capture_output=True,
                 check=True,
                 timeout=10,
@@ -153,7 +155,7 @@ def remove_selinux_module() -> None:
 
     logger.info("Removing TTP Tor policy module...")
     try:
-        subprocess.run(["semodule", "-r", "ttp_tor_policy"], check=True)
+        subprocess.run([resolve("semodule"), "-r", "ttp_tor_policy"], check=True)
         logger.info("SELinux policy module removed.")
     except (subprocess.CalledProcessError, OSError) as e:
         logger.warning(f"Failed to remove SELinux policy module: {e}")
