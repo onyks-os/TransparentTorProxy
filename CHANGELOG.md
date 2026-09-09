@@ -105,6 +105,17 @@ regardless.
   `S607` selected in `make lint`, because a rule silently dropped from the
   config is how 47 call sites appear in the first place.
 
+- **Four more PATH lookups `ruff S607` could not see.** The rule only flags a
+  bare name in an argv list, so it missed `shutil.which()` results that are then
+  executed: the `tor` path written into the systemd unit's `ExecStart` (the worst
+  of them - it decides what systemd launches as root for the lifetime of the unit
+  file, not just the current process), `systemd-run` for `ttp bypass`, `dig` for
+  leak checking, and `conntrack` during teardown. Plus the pluggable-transport
+  path written into `torrc`, which Tor itself executes. All now go through the
+  trusted lookup, and a test asserts `shutil.which` does not come back anywhere
+  its result would be run - the only surviving use picks which package-manager
+  hint to print, and is never executed.
+
 - **Container base images pinned by digest** (`scripts/vm/Dockerfile.*.test`).
   These images decide which nftables and kernel headers the integration suite
   runs against, so a moving tag silently changes the environment a passing test

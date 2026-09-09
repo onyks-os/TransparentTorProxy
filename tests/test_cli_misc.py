@@ -120,7 +120,7 @@ def test_check_failure(mock_verify_tor):
 
 
 @patch("subprocess.run")
-@patch("shutil.which", return_value="/usr/bin/dig")
+@patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig")
 @patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_success(mock_read, mock_verify, mock_which, mock_run):
@@ -143,7 +143,7 @@ def test_check_leak_success(mock_read, mock_verify, mock_which, mock_run):
 
 
 @patch("subprocess.run")
-@patch("shutil.which", return_value="/usr/bin/dig")
+@patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig")
 @patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_akahelp_txt_ip_not_a_leak(mock_read, mock_verify, mock_which, mock_run):
@@ -170,7 +170,7 @@ def test_check_leak_akahelp_txt_ip_not_a_leak(mock_read, mock_verify, mock_which
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_detected_istor_false(mock_read, mock_verify):
     with (
-        patch("shutil.which", return_value="/usr/bin/dig"),
+        patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig"),
         patch("subprocess.run") as mock_run,
     ):
 
@@ -192,7 +192,7 @@ def test_check_leak_detected_istor_false(mock_read, mock_verify):
 
 
 @patch("ttp.tor_control.verify_tor", return_value=(False, "unknown"))
-@patch("shutil.which", return_value="/usr/bin/dig")
+@patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig")
 @patch("subprocess.run")
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_tor_api_error(mock_read, mock_run, mock_which, mock_verify):
@@ -209,7 +209,7 @@ def test_check_leak_tor_api_error(mock_read, mock_run, mock_which, mock_verify):
 
 
 @patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
-@patch("shutil.which", return_value=None)
+@patch("ttp.commands.session.resolve_optional", return_value=None)
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_no_dig_binary(mock_read, mock_which, mock_verify):
     result = runner.invoke(app, ["check-leak"])
@@ -219,7 +219,7 @@ def test_check_leak_no_dig_binary(mock_read, mock_which, mock_verify):
 
 
 @patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
-@patch("shutil.which", return_value="/usr/bin/dig")
+@patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig")
 @patch("subprocess.run")
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_empty_dig_a(mock_read, mock_run, mock_which, mock_verify):

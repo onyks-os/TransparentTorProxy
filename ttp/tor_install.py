@@ -18,6 +18,7 @@ from typing import Any, Optional
 import typer
 from rich.panel import Panel
 
+from ttp.paths import resolve_optional
 from ttp.selinux import (
     label_ports_selinux as label_ports_selinux,
 )
@@ -122,7 +123,7 @@ def ensure_pluggable_transports(required_transports: list[str]) -> None:
         pt_info = PT_MAP[pt]
         binary = pt_info["binary"]
 
-        if not shutil.which(binary):
+        if not resolve_optional(binary):
             cmd = _get_distro_install_command(
                 pkg_debian=pt_info["apt-get"],
                 pkg_fedora=pt_info["dnf"],

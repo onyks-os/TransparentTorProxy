@@ -20,12 +20,11 @@ from __future__ import annotations
 import json
 import platform
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
 from ttp import state, tor_control
-from ttp.paths import resolve
+from ttp.paths import resolve, resolve_optional
 
 # ---------------------------------------------------------------------------
 # OS-level inspection helpers (moved from tor_detect.py)
@@ -34,7 +33,7 @@ from ttp.paths import resolve
 
 def is_selinux_enforcing() -> bool:
     """Return ``True`` if SELinux is in Enforcing mode."""
-    if not shutil.which("getenforce"):
+    if not resolve_optional("getenforce"):
         return False
     try:
         result = subprocess.run([resolve("getenforce")], capture_output=True, text=True, timeout=5)
@@ -58,7 +57,7 @@ def is_fedora_family() -> bool:
 
 def is_selinux_module_installed() -> bool:
     """Return ``True`` if the ``ttp_tor_policy`` module is already loaded."""
-    if not shutil.which("semodule"):
+    if not resolve_optional("semodule"):
         return False
     try:
         result = subprocess.run([resolve("semodule"), "-l"], capture_output=True, text=True, timeout=10)

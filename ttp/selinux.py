@@ -5,12 +5,11 @@
 
 import importlib.resources
 import logging
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
-from ttp.paths import resolve
+from ttp.paths import resolve, resolve_optional
 
 logger = logging.getLogger("ttp")
 
@@ -39,7 +38,7 @@ def setup_selinux_if_needed() -> None:
             logger.warning(f"SELinux policy source missing at {te_path}. Skipping.")
             return
 
-        if not shutil.which("checkmodule") or not shutil.which("semodule_package"):
+        if not resolve_optional("checkmodule") or not resolve_optional("semodule_package"):
             logger.warning(
                 "checkmodule or semodule_package not found. Cannot compile SELinux policy. "
                 "Please install checkpolicy and policycoreutils manually."
@@ -72,7 +71,7 @@ def setup_selinux_if_needed() -> None:
 
 def label_ports_selinux(transport_port: int, dns_port: int) -> None:
     """Label our specific TransPort and DNSPort as tor_port_t in SELinux if semanage is available."""
-    if not shutil.which("semanage"):
+    if not resolve_optional("semanage"):
         logger.debug("semanage not available, skipping dynamic SELinux port labeling.")
         return
 
@@ -123,7 +122,7 @@ def label_ports_selinux(transport_port: int, dns_port: int) -> None:
 
 def unlabel_ports_selinux(transport_port: int, dns_port: int) -> None:
     """Remove our specific TransPort and DNSPort labels from SELinux if semanage is available."""
-    if not shutil.which("semanage"):
+    if not resolve_optional("semanage"):
         return
 
     for port, proto in [(transport_port, "tcp"), (dns_port, "udp")]:
@@ -145,7 +144,7 @@ def remove_selinux_module() -> None:
     # PATH lookup, not a hardcoded /usr/sbin: semodule sits in different places
     # across distributions, and this matches how the module probes checkmodule
     # and semodule_package above.
-    if not shutil.which("semodule"):
+    if not resolve_optional("semodule"):
         return
 
     from ttp.tor_detect import is_selinux_module_installed

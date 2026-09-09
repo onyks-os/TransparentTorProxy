@@ -258,17 +258,34 @@ def test_every_trusted_directory_is_absolute() -> None:
         assert directory.startswith("/"), directory
 
 
-def test_no_trusted_directory_is_writable_by_others() -> None:
+def test_resolution_never_returns_a_path_from_a_writable_directory() -> None:
     """
-    A sanity check on the host as much as on the list: if /usr/bin is group
-    writable here, every other assumption in this module is void.
+    The invariant that matters, asserted on behaviour rather than on the host.
+
+    An earlier version of this test asserted that no entry in TRUSTED_DIRS is
+    writable by others, and failed on GitHub's runners - where /usr/local/bin is
+    world-writable so the runner user can install tools. That is a fact about the
+    host, and the right response is not to fail the build: it is to make sure
+    resolution never hands back a binary from such a directory. It does not, and
+    this is where that is checked.
     """
-    for directory in TRUSTED_DIRS:
-        path = Path(directory)
-        if not path.exists():
-            continue
-        mode = path.stat().st_mode
-        assert not mode & (stat.S_IWGRP | stat.S_IWOTH), directory
+    for binary in ("nft", "ip", "systemctl"):
+        parent = Path(resolve(binary)).parent
+        mode = parent.stat().st_mode
+        assert not mode & (stat.S_IWGRP | stat.S_IWOTH), parent
+        assert parent.stat().st_uid == 0, parent
+
+
+def test_a_missing_binary_is_also_a_file_not_found_error() -> None:
+    """
+    A dozen call sites already caught FileNotFoundError to mean "this tool is not
+    installed, carry on without it" - getenforce on a non-SELinux host, pgrep in
+    a minimal container. If BinaryNotFoundError were not one, every one of those
+    would crash instead of degrading. The first CI run of this migration failed
+    on Ubuntu for exactly that reason.
+    """
+    with pytest.raises(FileNotFoundError):
+        resolve("definitely-not-a-real-binary")
 
 
 def test_the_binaries_ttp_actually_needs_are_resolvable() -> None:
@@ -296,3 +313,88 @@ def test_no_source_file_still_invokes_a_bare_binary() -> None:
     if result.returncode == 127:  # pragma: no cover - ruff not installed
         pytest.skip("ruff is not available")
     assert result.returncode == 0, result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Graceful degradation on a host that lacks an optional tool
+# ---------------------------------------------------------------------------
+
+
+def test_selinux_probes_degrade_on_a_host_without_selinux() -> None:
+    """
+    The CI failure that motivated making BinaryNotFoundError a FileNotFoundError.
+
+    `getenforce` and `semodule` do not exist on Ubuntu. These probes already
+    caught FileNotFoundError to mean "not an SELinux system"; a resolver that
+    raised something else turned that into a crash on every non-SELinux host -
+    which is most of the distributions TTP supports.
+    """
+    from ttp.system_info import is_selinux_enforcing, is_selinux_module_installed
+
+    with patch("ttp.paths.TRUSTED_DIRS", ()):
+        clear_cache()
+        assert is_selinux_enforcing() is False
+        assert is_selinux_module_installed() is False
+
+
+def test_tor_probes_degrade_when_the_binary_is_absent() -> None:
+    """Same contract for a container image that ships no `tor` and no `pgrep`."""
+    from ttp.tor_detect import _check_installed, _check_running
+
+    with patch("ttp.paths.TRUSTED_DIRS", ()):
+        clear_cache()
+        assert _check_installed() is False
+        assert _check_running() is False
+
+
+def test_the_systemd_unit_never_takes_its_exec_path_from_path(tmp_path: Path, monkeypatch) -> None:
+    """
+    The worst of the PATH lookups `ruff S607` could not see.
+
+    `_write_service_unit` used `shutil.which("tor")` and wrote the result into
+    the unit's ExecStart, which systemd then runs as root - so a caller-chosen
+    PATH decided which program the unit launches, for the lifetime of the unit
+    file rather than just the current process. S607 never flagged it because the
+    name was not a bare literal in an argv list.
+    """
+    from ttp import tor_service
+
+    _plant(tmp_path, "tor", "#!/bin/sh\necho OWNED\n")
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+
+    unit_path = tmp_path / "ttp-tor.service"
+    with patch.object(tor_service, "TTP_SERVICE_PATH", unit_path):
+        tor_service._write_service_unit("debian-tor")
+
+    exec_start = next(line for line in unit_path.read_text().splitlines() if line.startswith("ExecStart="))
+    assert str(tmp_path) not in exec_start
+    assert exec_start.startswith("ExecStart=/")
+
+
+def test_no_source_file_resolves_an_executed_binary_through_path() -> None:
+    """
+    `shutil.which` consults $PATH, so it must not decide anything TTP then runs.
+
+    The only surviving uses are in `tor_install`, where the answer selects which
+    *installation instructions* to print and is never executed. This asserts that
+    stays true, because the four call sites this test was written for - the
+    systemd ExecStart, systemd-run, dig and conntrack - were all invisible to
+    `ruff S607`.
+    """
+    import subprocess as sp
+
+    result = sp.run(
+        ["git", "grep", "-l", "-E", r"^[^#]*shutil\.which\(", "--", "ttp"],
+        cwd=Path(__file__).resolve().parent.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    offenders = {f for f in result.stdout.split() if f}
+    allowed = {
+        "ttp/tor_install.py",  # picks the apt/dnf/pacman/zypper hint to print
+    }
+    assert offenders <= allowed, (
+        f"shutil.which reappeared in {sorted(offenders - allowed)}. If the result is "
+        f"executed, use ttp.paths.resolve/resolve_optional instead."
+    )

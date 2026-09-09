@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import shutil
 import signal
 import subprocess
 import sys
@@ -18,6 +17,7 @@ from ttp.commands._common import (
     get_uid_from_port,
     logger,
 )
+from ttp.paths import resolve_optional
 
 
 def do_stop() -> None:
@@ -72,7 +72,7 @@ def do_stop() -> None:
     console.print(f"{_PREFIX} Waiting 300ms for pending connections to crash...")
     time.sleep(0.3)
 
-    conntrack_path = shutil.which("conntrack")
+    conntrack_path = resolve_optional("conntrack")
     if conntrack_path:
         console.print(f"{_PREFIX} Flushing connection tracking table...")
         try:

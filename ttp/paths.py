@@ -57,8 +57,17 @@ TRUSTED_DIRS: tuple[str, ...] = (
 )
 
 
-class BinaryNotFoundError(TTPError):
-    """A required external binary is absent from every trusted directory."""
+class BinaryNotFoundError(TTPError, FileNotFoundError):
+    """
+    A required external binary is absent from every trusted directory.
+
+    Deliberately also a :class:`FileNotFoundError`. "The binary is not there" is
+    exactly what that means, and TTP already had a dozen call sites catching it
+    to degrade gracefully - `getenforce` on a host without SELinux, `pgrep` in a
+    minimal container. Making this a plain TTPError would have turned every one
+    of those into a crash on any system that does not ship the tool, which is how
+    the first CI run of the resolve() migration failed on Ubuntu.
+    """
 
 
 class UnsafeBinaryError(TTPError):

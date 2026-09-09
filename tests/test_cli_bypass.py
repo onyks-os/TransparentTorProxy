@@ -94,7 +94,7 @@ def test_bypass_requires_sudo_env(mock_read, mock_exists):
 @patch("os.path.exists", return_value=True)
 @patch("ttp.state.read_lock", return_value={"pid": 123})
 @patch.dict("os.environ", {"SUDO_UID": "1000", "SUDO_GID": "1000"})
-@patch("shutil.which", return_value=None)
+@patch("ttp.commands.admin.resolve_optional", return_value=None)
 def test_bypass_requires_systemd_run(mock_which, mock_read, mock_exists):
     """bypass fails if systemd-run is missing."""
     result = runner.invoke(app, ["bypass", "curl"])
@@ -106,7 +106,7 @@ def test_bypass_requires_systemd_run(mock_which, mock_read, mock_exists):
 @patch("os.path.exists", return_value=True)
 @patch("ttp.state.read_lock", return_value={"pid": 123})
 @patch.dict("os.environ", {"SUDO_UID": "1000", "SUDO_GID": "1000"})
-@patch("shutil.which", return_value="/usr/bin/systemd-run")
+@patch("ttp.commands.admin.resolve_optional", return_value="/usr/bin/systemd-run")
 @patch("subprocess.run")
 def test_bypass_happy_path(mock_run, mock_which, mock_read, mock_exists):
     """bypass runs systemd-run and returns its exit code."""

@@ -273,17 +273,37 @@ def test_attempt_auto_healing_tor(mock_run, mock_read):
 # 6. trigger_emergency_killswitch
 @patch("ttp.firewall.apply_emergency_killswitch")
 @patch("subprocess.run")
-@patch("shutil.which", return_value="/usr/bin/notify-send")
-def test_trigger_emergency_killswitch(mock_which, mock_run, mock_apply_ks):
-    """trigger_emergency_killswitch isolates network, sends wall alert, and desktop notification."""
+@patch(
+    "ttp.watchdog.alerts.resolve_optional",
+    side_effect=lambda b: {"wall": "/usr/bin/wall", "notify-send": "/usr/bin/notify-send"}.get(b),
+)
+def test_trigger_emergency_killswitch(mock_resolve, mock_run, mock_apply_ks):
+    """trigger_emergency_killswitch isolates the network, broadcasts, and notifies."""
     wd.trigger_emergency_killswitch("firewall", "nftables table deleted")
 
     mock_apply_ks.assert_called_once()
+    # resolve_optional is stubbed so this asserts the killswitch's own logic
+    # rather than which notification tools this particular host happens to ship;
+    # a CI runner without `wall` used to make this fail for no useful reason.
     assert mock_run.call_count == 2
-    # Ensure wall and notify-send were called
     calls = [call[0][0] for call in mock_run.call_args_list]
-    assert any(resolve("wall") in cmd for cmd in calls)
-    assert any(resolve_optional("notify-send") in cmd for cmd in calls)
+    assert any("/usr/bin/wall" in cmd for cmd in calls)
+    assert any("/usr/bin/notify-send" in cmd for cmd in calls)
+
+
+@patch("ttp.firewall.apply_emergency_killswitch")
+@patch("subprocess.run")
+@patch("ttp.watchdog.alerts.resolve_optional", return_value=None)
+def test_killswitch_still_isolates_without_notification_tools(mock_resolve, mock_run, mock_apply_ks):
+    """
+    The network must be isolated even on a host with no `wall` and no
+    `notify-send`. Telling the user is desirable; cutting the traffic is the
+    point, and it must not be conditional on a nicety being installed.
+    """
+    wd.trigger_emergency_killswitch("dns", "overlay unmounted")
+
+    mock_apply_ks.assert_called_once()
+    assert mock_run.call_count == 0
 
 
 # 7. run_watchdog_loop

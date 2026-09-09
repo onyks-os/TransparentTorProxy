@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 
 import typer
@@ -22,6 +21,7 @@ from ttp.commands._common import (
     require_root as _require_root,
 )
 from ttp.commands.lifecycle import do_stop as _do_stop
+from ttp.paths import resolve_optional
 
 
 def diagnose_command() -> None:
@@ -160,7 +160,7 @@ def bypass_command(
         raise typer.Exit(code=1)
 
     # Resolve systemd-run path
-    systemd_run_bin = shutil.which("systemd-run")
+    systemd_run_bin = resolve_optional("systemd-run")
     if not systemd_run_bin:
         _print_error(
             "systemd-run Missing",

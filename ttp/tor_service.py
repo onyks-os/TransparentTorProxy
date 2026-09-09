@@ -6,13 +6,12 @@
 from __future__ import annotations
 
 import logging
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
 
 from ttp.exceptions import TorError
-from ttp.paths import resolve
+from ttp.paths import resolve, resolve_optional
 from ttp.selinux import label_ports_selinux
 from ttp.tor_config import TOR_CACHE_DIR, TOR_RUNTIME_DIR, generate_torrc
 
@@ -64,7 +63,11 @@ def _write_service_unit(tor_user: str) -> None:
     Args:
         tor_user: Username running the Tor process.
     """
-    tor_bin = shutil.which("tor") or "/usr/bin/tor"
+    # This path is written into the systemd unit's ExecStart and then run as
+    # root by systemd. `shutil.which` consults $PATH, so a caller-controlled
+    # environment could have decided which program the unit launches - for the
+    # lifetime of the unit file, not just the current process.
+    tor_bin = resolve_optional("tor") or "/usr/bin/tor"
     unit = _build_service_unit_content(tor_user, tor_bin)
     TTP_SERVICE_PATH.parent.mkdir(parents=True, exist_ok=True)
     TTP_SERVICE_PATH.write_text(unit, encoding="utf-8")

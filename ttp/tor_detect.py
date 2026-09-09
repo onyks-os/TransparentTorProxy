@@ -21,20 +21,24 @@ re-exported here for backward compatibility.
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from ttp.paths import resolve
+from ttp.paths import resolve, resolve_optional
 
 # Volatile runtime config path
 TORRC_PATH = Path("/run/tor/ttp/torrc")
 
 
 def _check_installed() -> bool:
-    """Return ``True`` if the ``tor`` binary is found in ``$PATH``."""
-    return shutil.which("tor") is not None
+    """Return ``True`` if a trusted ``tor`` binary is installed.
+
+    Deliberately not ``shutil.which``: that consults ``$PATH``, so a caller could
+    make TTP believe Tor is installed by putting anything named ``tor`` on it -
+    and the answer feeds decisions about a privacy session.
+    """
+    return resolve_optional("tor") is not None
 
 
 def _get_version() -> str:

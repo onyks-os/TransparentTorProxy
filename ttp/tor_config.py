@@ -11,6 +11,8 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
+from ttp.paths import resolve_optional
+
 # Runtime paths (volatile, stored on tmpfs)
 TOR_RUNTIME_DIR = Path("/run/tor/ttp")
 
@@ -127,7 +129,11 @@ def _build_torrc_content(
 
         for pt in required_transports:
             binary = PT_MAP[pt]["binary"]
-            binary_path = shutil.which(binary)
+            # This path is written into torrc and Tor then *executes* it, so it
+            # must come from the trusted lookup rather than from $PATH - a
+            # PATH-derived value here would let a caller choose the program Tor
+            # runs as the pluggable transport.
+            binary_path = resolve_optional(binary)
             if binary_path:
                 lines.append(f"ClientTransportPlugin {pt} exec {binary_path}")
             else:
