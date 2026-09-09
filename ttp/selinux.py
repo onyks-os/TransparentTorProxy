@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ttp.paths import resolve, resolve_optional
+from ttp.paths import resolve_optional
 
 logger = logging.getLogger("ttp")
 
@@ -38,7 +38,10 @@ def setup_selinux_if_needed() -> None:
             logger.warning(f"SELinux policy source missing at {te_path}. Skipping.")
             return
 
-        if not resolve_optional("checkmodule") or not resolve_optional("semodule_package"):
+        checkmodule = resolve_optional("checkmodule")
+        semodule_package = resolve_optional("semodule_package")
+        semodule = resolve_optional("semodule")
+        if not checkmodule or not semodule_package or not semodule:
             logger.warning(
                 "checkmodule or semodule_package not found. Cannot compile SELinux policy. "
                 "Please install checkpolicy and policycoreutils manually."
@@ -53,16 +56,16 @@ def setup_selinux_if_needed() -> None:
 
                 logger.debug(f"Compiling {te_path.name}...")
                 subprocess.run(
-                    [resolve("checkmodule"), "-M", "-m", "-o", str(mod_path), str(te_path)],
+                    [checkmodule, "-M", "-m", "-o", str(mod_path), str(te_path)],
                     check=True,
                 )
                 subprocess.run(
-                    [resolve("semodule_package"), "-o", str(pp_path), "-m", str(mod_path)],
+                    [semodule_package, "-o", str(pp_path), "-m", str(mod_path)],
                     check=True,
                 )
 
                 logger.debug(f"Installing {pp_path.name}...")
-                subprocess.run([resolve("semodule"), "-i", str(pp_path)], check=True)
+                subprocess.run([semodule, "-i", str(pp_path)], check=True)
 
             logger.info("SELinux policy module installed successfully.")
         except (subprocess.CalledProcessError, OSError) as e:
@@ -71,7 +74,8 @@ def setup_selinux_if_needed() -> None:
 
 def label_ports_selinux(transport_port: int, dns_port: int) -> None:
     """Label our specific TransPort and DNSPort as tor_port_t in SELinux if semanage is available."""
-    if not resolve_optional("semanage"):
+    semanage = resolve_optional("semanage")
+    if not semanage:
         logger.debug("semanage not available, skipping dynamic SELinux port labeling.")
         return
 
@@ -80,7 +84,7 @@ def label_ports_selinux(transport_port: int, dns_port: int) -> None:
             logger.debug("Adding SELinux port label tor_port_t for %s/%s", port, proto)
             subprocess.run(
                 [
-                    resolve("semanage"),
+                    semanage,
                     "port",
                     "-a",
                     "-t",
@@ -98,7 +102,7 @@ def label_ports_selinux(transport_port: int, dns_port: int) -> None:
             try:
                 subprocess.run(
                     [
-                        resolve("semanage"),
+                        semanage,
                         "port",
                         "-m",
                         "-t",
@@ -122,14 +126,15 @@ def label_ports_selinux(transport_port: int, dns_port: int) -> None:
 
 def unlabel_ports_selinux(transport_port: int, dns_port: int) -> None:
     """Remove our specific TransPort and DNSPort labels from SELinux if semanage is available."""
-    if not resolve_optional("semanage"):
+    semanage = resolve_optional("semanage")
+    if not semanage:
         return
 
     for port, proto in [(transport_port, "tcp"), (dns_port, "udp")]:
         try:
             logger.debug("Removing SELinux port label for %s/%s", port, proto)
             subprocess.run(
-                [resolve("semanage"), "port", "-d", "-p", proto, str(port)],
+                [semanage, "port", "-d", "-p", proto, str(port)],
                 capture_output=True,
                 check=True,
                 timeout=10,
@@ -144,7 +149,8 @@ def remove_selinux_module() -> None:
     # PATH lookup, not a hardcoded /usr/sbin: semodule sits in different places
     # across distributions, and this matches how the module probes checkmodule
     # and semodule_package above.
-    if not resolve_optional("semodule"):
+    semodule = resolve_optional("semodule")
+    if not semodule:
         return
 
     from ttp.tor_detect import is_selinux_module_installed
@@ -154,7 +160,7 @@ def remove_selinux_module() -> None:
 
     logger.info("Removing TTP Tor policy module...")
     try:
-        subprocess.run([resolve("semodule"), "-r", "ttp_tor_policy"], check=True)
+        subprocess.run([semodule, "-r", "ttp_tor_policy"], check=True)
         logger.info("SELinux policy module removed.")
     except (subprocess.CalledProcessError, OSError) as e:
         logger.warning(f"Failed to remove SELinux policy module: {e}")

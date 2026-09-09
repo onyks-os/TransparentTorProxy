@@ -52,7 +52,12 @@ def _stub_lookup(value):
         "ttp.tor_config",
     ):
         try:
-            stack.enter_context(patch(f"{module}.resolve_optional", return_value=value))
+            stack.enter_context(
+                patch(
+                    f"{module}.resolve_optional",
+                    side_effect=((lambda binary: None) if value is None else (lambda binary: f"/usr/sbin/{binary}")),
+                )
+            )
         except AttributeError:
             pass
     return stack

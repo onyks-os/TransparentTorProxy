@@ -43,9 +43,12 @@ def _check_installed() -> bool:
 
 def _get_version() -> str:
     """Return the Tor version string, or ``""`` if unavailable."""
+    tor_bin = resolve_optional("tor")
+    if not tor_bin:
+        return ""
     try:
         result = subprocess.run(
-            [resolve("tor"), "--version"],
+            [tor_bin, "--version"],
             capture_output=True,
             text=True,
             timeout=10,

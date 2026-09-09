@@ -33,10 +33,15 @@ from ttp.paths import resolve, resolve_optional
 
 def is_selinux_enforcing() -> bool:
     """Return ``True`` if SELinux is in Enforcing mode."""
-    if not resolve_optional("getenforce"):
+    # Resolved once and reused. Looking it up twice - optionally for the guard,
+    # strictly for the argv - lets the two answers disagree on a host that does
+    # not ship the binary, which is how these probes crashed on Ubuntu while
+    # passing on Fedora.
+    getenforce = resolve_optional("getenforce")
+    if not getenforce:
         return False
     try:
-        result = subprocess.run([resolve("getenforce")], capture_output=True, text=True, timeout=5)
+        result = subprocess.run([getenforce], capture_output=True, text=True, timeout=5)
         return result.stdout.strip() == "Enforcing"
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
@@ -57,10 +62,11 @@ def is_fedora_family() -> bool:
 
 def is_selinux_module_installed() -> bool:
     """Return ``True`` if the ``ttp_tor_policy`` module is already loaded."""
-    if not resolve_optional("semodule"):
+    semodule = resolve_optional("semodule")
+    if not semodule:
         return False
     try:
-        result = subprocess.run([resolve("semodule"), "-l"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run([semodule, "-l"], capture_output=True, text=True, timeout=10)
         return bool(re.search(r"ttp_tor_policy\s+1\.1\b", result.stdout))
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
