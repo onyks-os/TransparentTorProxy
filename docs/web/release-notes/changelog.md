@@ -55,6 +55,7 @@ regardless.
 
 ### Changed
 
+- **Behavioural CLI Test Suite**: Rewrote `tests/test_cli_*.py` (`test_cli_stop.py`, `test_cli_start.py`, `test_cli_bypass.py`, `test_cli_misc.py`) to move mocking out of CLI logic to system boundaries (`_run_nft_string`, `sys.exit`, `os.geteuid`), asserting on rendered `nftables` rulesets, produced lock files, and CLI outputs instead of internal call sequences.
 - **Test coverage 80% → 86%**, 295 tests → 428. The modules that were least
   covered were the ones handling state and input, exactly as `ROADMAP.md` noted:
   `_ports.py` 45% → 100%, `_validation.py` 58% → 98%, `tor_install.py` 64% → 100%,

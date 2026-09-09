@@ -20,13 +20,13 @@ Before starting, ensure your system meets these prerequisites:
 === "Debian / Ubuntu (.deb)"
 
     ```bash
-    sudo apt install ./packaging/transparent-tor-proxy_0.4.7_all.deb
+    sudo apt install ./packaging/transparent-tor-proxy_*_all.deb
     ```
 
 === "Fedora / RHEL (.rpm)"
 
     ```bash
-    sudo dnf install ./packaging/transparent-tor-proxy-0.4.7-1.fc43.noarch.rpm
+    sudo dnf install ./packaging/transparent-tor-proxy-*.noarch.rpm
     ```
 
 === "Arch Linux"
