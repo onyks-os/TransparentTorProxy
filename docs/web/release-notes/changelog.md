@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Publication was a manual step, so the site drifted behind the code with
   nothing to report it.
 
+### Fixed
+
+- **The `S607` migration guard had no positive control, and could not find ruff
+  off `$PATH`.** It invoked a bare `ruff` and skipped on exit code 127, a shell
+  convention `subprocess.run` never produces — a missing bare name raises
+  `FileNotFoundError`, so the skip could not run. NSE carried the same test and
+  all four of its unit jobs errored on it. Ruff is now invoked as
+  `sys.executable -m ruff`, the lint target is asserted to exist (`ruff check` on
+  a missing path still prints "All checks passed!" and exits 0), and a new test
+  feeds ruff a bare-binary call site so the rule is shown to fire.
+
 ## [0.4.8] - 2026-09-11 (Verification Debt)
 
 The theme of this cycle is one defect repeated across the project: **a check that

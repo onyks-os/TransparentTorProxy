@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -301,22 +302,80 @@ def test_the_binaries_ttp_actually_needs_are_resolvable() -> None:
         assert resolve(binary).startswith("/")
 
 
+def _ruff(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    """
+    Run the ruff that belongs to the interpreter running these tests.
+
+    A bare `"ruff"` argv resolves through $PATH. ruff is installed into the
+    project virtualenv, which a CI job need not put on $PATH, and a bare name
+    that is absent raises FileNotFoundError rather than returning an exit code -
+    so the guard below would error out instead of skipping. NSE carried the same
+    test and went red for exactly that reason.
+    """
+    return subprocess.run(
+        [sys.executable, "-m", "ruff", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _skip_without_ruff(result: subprocess.CompletedProcess[str]) -> None:
+    if "No module named ruff" in result.stderr:  # pragma: no cover - ruff installed
+        pytest.skip("ruff is not installed in this environment")
+
+
 def test_no_source_file_still_invokes_a_bare_binary() -> None:
     """
     The migration guard. `ruff --select S607` is the real check and it runs in
     `make lint`; this asserts it stays selected, because a rule silently dropped
     from the config is how 47 call sites came back.
+
+    The lint target is asserted to exist first: `ruff check` on a path that is
+    not there warns on stderr, prints "All checks passed!" and exits 0, so a
+    guard pointed at the wrong directory reports success while reading nothing.
     """
-    result = subprocess.run(
-        ["ruff", "check", "--select", "S607", "ttp/", "--output-format", "concise"],
-        cwd=Path(__file__).resolve().parent.parent,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode == 127:  # pragma: no cover - ruff not installed
-        pytest.skip("ruff is not available")
+    package = Path(__file__).resolve().parent.parent / "ttp"
+    assert package.is_dir(), f"{package} does not exist, so this guard would lint nothing"
+
+    result = _ruff("check", "--select", "S607", package.name, "--output-format", "concise", cwd=package.parent)
+    _skip_without_ruff(result)
+
+    assert "Failed to lint" not in result.stderr, result.stderr
     assert result.returncode == 0, result.stdout
+
+
+def test_the_s607_guard_would_report_a_bare_binary(tmp_path: Path) -> None:
+    """
+    The positive control for the guard above.
+
+    "All checks passed!" means nothing unless the rule would have said otherwise,
+    and the rule can stop firing without anyone noticing: dropped from `select`,
+    silenced by a broadened `ignore`, or renamed upstream. This feeds ruff a call
+    site of exactly the shape the migration removed and asserts it is reported.
+    """
+    offender = tmp_path / "offender.py"
+    offender.write_text("import subprocess\n\nsubprocess.run(['ip', 'link'], check=False)\n")
+
+    # --isolated so the repository's own ruff configuration cannot decide the
+    # outcome of its own positive control.
+    result = _ruff(
+        "check",
+        "--select",
+        "S607",
+        "--isolated",
+        "--no-cache",
+        offender.name,
+        "--output-format",
+        "concise",
+        cwd=tmp_path,
+    )
+    _skip_without_ruff(result)
+
+    assert "S607" in result.stdout, (
+        f"S607 did not fire on a bare-binary call, so the guard above cannot fail: {result.stdout!r} {result.stderr!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
