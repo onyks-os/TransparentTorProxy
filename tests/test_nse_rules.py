@@ -103,7 +103,7 @@ if _nse_version() < MIN_NSE_VERSION:
         f"suite green against an instrument that was not measuring."
     )
 
-pytestmark = pytest.mark.nse
+pytestmark = [pytest.mark.nse, pytest.mark.real_binary_lookup]
 
 # Monkey-patch subprocess.run and subprocess.Popen to transparently convert
 #   [resolve("ip"), "netns", "exec", <name>, ...]

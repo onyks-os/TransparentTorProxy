@@ -33,6 +33,10 @@ from ttp.paths import (
     resolve_optional,
 )
 
+# This module is the unit test for the real resolver, so it opts out of the
+# conftest fixture that replaces it everywhere else.
+pytestmark = pytest.mark.real_binary_lookup
+
 
 @pytest.fixture(autouse=True)
 def _clear_cache():

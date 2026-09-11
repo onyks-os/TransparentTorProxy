@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from tests.conftest import stub_path
 from ttp.paths import resolve
 from ttp.tor_detect import (
     is_fedora_family,
@@ -46,7 +47,7 @@ def _stub_lookup(value):
             stack.enter_context(
                 patch(
                     f"{module}.resolve_optional",
-                    side_effect=((lambda binary: None) if value is None else (lambda binary: f"/usr/sbin/{binary}")),
+                    side_effect=((lambda binary: None) if value is None else (lambda binary: stub_path(binary))),
                 )
             )
         except AttributeError:

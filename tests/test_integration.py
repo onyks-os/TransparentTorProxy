@@ -20,6 +20,8 @@ import pytest
 
 from ttp.paths import resolve
 
+pytestmark = pytest.mark.real_binary_lookup
+
 # Ensure the virtual environment's bin directory is at the front of PATH,
 # so that the development version of "ttp" is executed rather than any system-wide one.
 project_root = Path(__file__).resolve().parent.parent

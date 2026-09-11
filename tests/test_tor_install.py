@@ -552,7 +552,7 @@ def test_missing_transport_binary_exits_zero_without_installing() -> None:
     And nothing may be installed - that is the documented policy.
     """
     with (
-        patch("shutil.which", return_value=None),
+        patch("ttp.tor_install.resolve_optional", return_value=None),
         patch("subprocess.run") as run,
         pytest.raises(typer.Exit) as exc,
     ):
@@ -563,17 +563,17 @@ def test_missing_transport_binary_exits_zero_without_installing() -> None:
 
 def test_unknown_transport_exits_without_touching_the_filesystem() -> None:
     with (
-        patch("shutil.which") as which,
+        patch("ttp.tor_install.resolve_optional") as lookup,
         pytest.raises(typer.Exit) as exc,
     ):
         ensure_pluggable_transports(["wireguard"])
     assert exc.value.exit_code == 0
-    which.assert_not_called()
+    lookup.assert_not_called()
 
 
 def test_the_first_missing_transport_stops_the_check() -> None:
     with (
-        patch("shutil.which", return_value=None),
+        patch("ttp.tor_install.resolve_optional", return_value=None),
         pytest.raises(typer.Exit),
     ):
         ensure_pluggable_transports(["obfs4", "snowflake"])
@@ -588,6 +588,7 @@ def test_the_guidance_names_the_missing_binary_and_the_transport() -> None:
             printed.append(str(getattr(renderable, "renderable", renderable)))
 
     with (
+        patch("ttp.tor_install.resolve_optional", return_value=None),
         patch("shutil.which", side_effect=_only("apt-get")),
         patch("ttp.commands._common.console", _Console()),
         pytest.raises(typer.Exit),

@@ -53,6 +53,7 @@ markers = [
     "integration: marks tests as integration tests that require root and a real Tor instance",
     "leak: marks tests as offensive leak verification tests",
     "nse: marks tests that require root, NSE, and network namespace privileges",
+    "real_binary_lookup: use the real ttp.paths resolver instead of the deterministic test stub",
 ]
 # --strict-markers: a typo in a marker name silently deselects the test it was
 # meant to tag, which is how a suite quietly stops running.
