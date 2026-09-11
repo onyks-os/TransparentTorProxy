@@ -164,9 +164,16 @@ def _python_in_ns(ns_name: str, script: str, uid: int | None = None) -> None:
     """
     Run a short Python program inside the namespace, optionally as another user.
 
-    A stimulus that fails to run produces no packet, and a positive control that
-    sees no packet reports a broken harness - true, but it does not say why.
-    Raising here names the cause at the point it happens.
+    A stimulus that fails to *run* produces no packet, and a positive control
+    that sees no packet reports a broken harness - true, but it does not say
+    why. Raising here names the cause at the point it happens.
+
+    A stimulus whose send is *refused* is a different thing entirely: with
+    TTP's rules loaded, nftables answers a rejected packet with EPERM on the
+    local socket, which is the firewall working. Each script therefore
+    suppresses OSError around the send, so a non-zero exit means the probe
+    could not run at all - no interpreter, a broken script - and never means
+    the traffic was blocked.
     """
     prelude = f"import os; os.setuid({uid});\n" if uid is not None else ""
     result = _exec_in_ns(ns_name, "python3", "-c", prelude + script)
@@ -186,9 +193,10 @@ def udp_to(host: str, port: int, uid: int | None = None) -> Callable[[str], None
         family = "AF_INET6" if ":" in host else "AF_INET"
         _python_in_ns(
             ns_name,
-            "import socket\n"
+            "import socket, contextlib\n"
             f"s = socket.socket(socket.{family}, socket.SOCK_DGRAM)\n"
-            f"s.sendto(b'ttp-leak-probe', ({host!r}, {port}))\n",
+            "with contextlib.suppress(OSError):\n"
+            f"    s.sendto(b'ttp-leak-probe', ({host!r}, {port}))\n",
             uid=uid,
         )
 
@@ -231,16 +239,17 @@ def icmp_to(host: str) -> Callable[[str], None]:
             # The kernel computes the checksum for raw ICMPv6 sockets.
             _python_in_ns(
                 ns_name,
-                "import socket\n"
+                "import socket, contextlib\n"
                 "s = socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_ICMPV6)\n"
                 "echo = b'\\x80\\x00\\x00\\x00\\x00\\x01\\x00\\x01' + b'ttp-leak-probe'\n"
-                f"s.sendto(echo, ({host!r}, 0))\n",
+                "with contextlib.suppress(OSError):\n"
+                f"    s.sendto(echo, ({host!r}, 0))\n",
             )
             return
         # For IPv4 it does not, so the probe computes its own.
         _python_in_ns(
             ns_name,
-            "import socket, struct\n"
+            "import socket, struct, contextlib\n"
             "def csum(data):\n"
             "    if len(data) % 2:\n"
             "        data += b'\\x00'\n"
@@ -252,7 +261,8 @@ def icmp_to(host: str) -> Callable[[str], None]:
             "echo = struct.pack('!BBHHH', 8, 0, 0, 1, 1) + payload\n"
             "echo = struct.pack('!BBHHH', 8, 0, csum(echo), 1, 1) + payload\n"
             "s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)\n"
-            f"s.sendto(echo, ({host!r}, 0))\n",
+            "with contextlib.suppress(OSError):\n"
+            f"    s.sendto(echo, ({host!r}, 0))\n",
         )
 
     return stimulus
