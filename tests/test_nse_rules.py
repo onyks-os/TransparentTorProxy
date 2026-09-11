@@ -161,9 +161,17 @@ def _exec_in_ns(ns_name: str, *args: str, check: bool = False) -> subprocess.Com
 
 
 def _python_in_ns(ns_name: str, script: str, uid: int | None = None) -> None:
-    """Run a short Python program inside the namespace, optionally as another user."""
+    """
+    Run a short Python program inside the namespace, optionally as another user.
+
+    A stimulus that fails to run produces no packet, and a positive control that
+    sees no packet reports a broken harness - true, but it does not say why.
+    Raising here names the cause at the point it happens.
+    """
     prelude = f"import os; os.setuid({uid});\n" if uid is not None else ""
-    _exec_in_ns(ns_name, "python3", "-c", prelude + script)
+    result = _exec_in_ns(ns_name, "python3", "-c", prelude + script)
+    if result.returncode != 0:
+        raise RuntimeError(f"stimulus failed to run inside {ns_name}: {result.stderr.strip() or result.stdout.strip()}")
 
 
 # ---------------------------------------------------------------------------
@@ -206,11 +214,46 @@ def tcp_to(host: str, port: int, uid: int | None = None) -> Callable[[str], None
 
 
 def icmp_to(host: str) -> Callable[[str], None]:
-    """An ICMP echo request, i.e. traffic Tor cannot carry at all."""
+    """
+    An ICMP echo request, i.e. traffic Tor cannot carry at all.
+
+    Built on a raw socket rather than by calling ``ping``. This used to shell
+    out, and the Debian test image does not ship iputils-ping: the command
+    failed silently, no packet was generated, and the positive control failed
+    with "the instrument is not measuring" - which was true, and which is
+    exactly what it is there to catch. Every other stimulus in this file already
+    speaks to the kernel directly; this one now does too, so the suite depends
+    on nothing but python3 inside the namespace.
+    """
 
     def stimulus(ns_name: str) -> None:
-        flag = "-6" if ":" in host else "-4"
-        _exec_in_ns(ns_name, "ping", flag, "-c", "1", "-W", "1", host)
+        if ":" in host:
+            # The kernel computes the checksum for raw ICMPv6 sockets.
+            _python_in_ns(
+                ns_name,
+                "import socket\n"
+                "s = socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_ICMPV6)\n"
+                "echo = b'\\x80\\x00\\x00\\x00\\x00\\x01\\x00\\x01' + b'ttp-leak-probe'\n"
+                f"s.sendto(echo, ({host!r}, 0))\n",
+            )
+            return
+        # For IPv4 it does not, so the probe computes its own.
+        _python_in_ns(
+            ns_name,
+            "import socket, struct\n"
+            "def csum(data):\n"
+            "    if len(data) % 2:\n"
+            "        data += b'\\x00'\n"
+            "    total = sum(struct.unpack('!%dH' % (len(data) // 2), data))\n"
+            "    total = (total >> 16) + (total & 0xffff)\n"
+            "    total += total >> 16\n"
+            "    return ~total & 0xffff\n"
+            "payload = b'ttp-leak-probe'\n"
+            "echo = struct.pack('!BBHHH', 8, 0, 0, 1, 1) + payload\n"
+            "echo = struct.pack('!BBHHH', 8, 0, csum(echo), 1, 1) + payload\n"
+            "s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)\n"
+            f"s.sendto(echo, ({host!r}, 0))\n",
+        )
 
     return stimulus
 
