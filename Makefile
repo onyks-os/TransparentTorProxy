@@ -23,7 +23,7 @@ PROJECT_SLUG  := TransparentTorProxy
 PROJECT_PKG   := ttp
 PROJECT_DIST  := transparent-tor-proxy
 GITHUB_OWNER  := onyks-os
-VERSION       := 0.4.7
+VERSION       := 0.4.8
 
 # Directories that hold first-party source, tests, and shell scripts.
 SRC_DIRS     := ttp

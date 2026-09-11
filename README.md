@@ -99,8 +99,8 @@ Installing via native packages ensures that all system dependencies (`tor`, `nft
 
 Download the `.deb` or `.rpm` for the version you want from the [latest release](https://github.com/onyks-os/TransparentTorProxy/releases/latest) - the packages are release assets and are not checked into the repository - then install it:
 
-* **Debian / Ubuntu**: `sudo apt install ./transparent-tor-proxy_0.4.7_all.deb`
-* **Fedora / RHEL**: `sudo dnf install ./transparent-tor-proxy-0.4.7-1.noarch.rpm`
+* **Debian / Ubuntu**: `sudo apt install ./transparent-tor-proxy_0.4.8_all.deb`
+* **Fedora / RHEL**: `sudo dnf install ./transparent-tor-proxy-0.4.8-1.noarch.rpm`
 * **Arch Linux**: build from the repository with `cd packaging && makepkg -si`
 
 For instructions on how to verify the integrity and authenticity of the release assets, see the [Release Verification Guide](docs/verification.md).

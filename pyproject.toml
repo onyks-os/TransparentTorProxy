@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "transparent-tor-proxy"
-version = "0.4.7"
+version = "0.4.8"
 description = "Transparent Tor Proxy - route all system traffic through Tor"
 readme = "README.md"
 license = {text = "MIT"}
@@ -88,7 +88,7 @@ exclude = [
 packages = ["ttp"]
 
 [tool.bumpversion]
-current_version = "0.4.7"
+current_version = "0.4.8"
 commit = false
 tag = false
 
@@ -101,6 +101,11 @@ replace = "version = \"{new_version}\""
 filename = "ttp/__init__.py"
 search = "__version__ = \"{current_version}\""
 replace = "__version__ = \"{new_version}\""
+
+[[tool.bumpversion.files]]
+filename = "Makefile"
+search = "VERSION       := {current_version}"
+replace = "VERSION       := {new_version}"
 
 [[tool.bumpversion.files]]
 filename = "packaging/PKGBUILD"
