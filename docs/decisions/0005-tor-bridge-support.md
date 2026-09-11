@@ -20,6 +20,7 @@ To support this natively in TTP, we need to handle:
 ## Decision
 
 We integrated native support for Tor bridges and pluggable transports:
+
 * Added `--use-bridges`, `--bridge-file`, and `--bridge` CLI options.
 * TTP parses, cleans, and validates bridge lines at startup.
 * We map transports (e.g. `obfs4`, `snowflake`) to package names (`obfs4proxy`, `snowflake-client`). TTP detects if they are installed in the host's `$PATH`. If missing, TTP displays distro-specific installation guidance and official Tor documentation links, then exits gracefully with status code `0`. **TTP never auto-installs packages.**

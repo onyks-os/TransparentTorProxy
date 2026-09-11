@@ -39,13 +39,17 @@ stateDiagram-v2
 Every 5 seconds, the watchdog daemon executes 3 independent integrity checks:
 
 ### 1. Tor Process and Control Socket Verification
+
 Asserts that `ttp-tor.service` (or the system Tor PID) is active and that the ControlPort socket `/run/tor/ttp/control` responds to `GETINFO status/circuit-established`.
 
 ### 2. Kernel `nftables` Ruleset Verification
+
 Executes netfilter atomic queries asserting that the `inet ttp` table, `output` chain, and `filter_out` chain are loaded in the kernel. If another process or `firewalld` reload flushes the table, the watchdog transitions to `DEGRADED` and re-applies the ruleset.
 
 ### 3. Inotify Double-Watch DNS Overlay Verification
+
 Monitors `/etc/resolv.conf` using Linux `inotify`:
+
 * **Symlink Target Watch**: Detects external modifications to `/etc/resolv.conf` target path.
 * **VFS Mount Point Watch**: Asserts that the active mount overlay (`mountpoint -q /etc/resolv.conf`) remains mounted.
 

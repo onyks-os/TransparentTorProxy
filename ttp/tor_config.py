@@ -11,6 +11,8 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
+from ttp.paths import resolve_optional
+
 # Runtime paths (volatile, stored on tmpfs)
 TOR_RUNTIME_DIR = Path("/run/tor/ttp")
 
@@ -43,6 +45,31 @@ PT_MAP = {
         "zypper": "snowflake-client",
     },
 }
+
+
+def _write_private(path: Path, content: str) -> None:
+    """
+    Write *content* to *path*, readable by root only, with no window.
+
+    ``write_text`` followed by ``chmod`` leaves the file world-readable for the
+    time between the two calls. A torrc is not innocuous in that window: with
+    bridges configured it carries the obfs4 certificate, which identifies the
+    bridge the user chose to reach. Opening with the mode already set closes
+    the gap - and O_TRUNC rather than O_EXCL because regenerating the config
+    over a previous run is the normal path.
+
+    The explicit mode only applies when the file is created, so an existing
+    file is chmod'd too rather than trusting whatever it had.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+    except BaseException:
+        os.close(fd)
+        raise
+    # fdopen takes ownership of the descriptor; closing the handle closes it.
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(content)
 
 
 def _build_torrc_content(
@@ -127,7 +154,11 @@ def _build_torrc_content(
 
         for pt in required_transports:
             binary = PT_MAP[pt]["binary"]
-            binary_path = shutil.which(binary)
+            # This path is written into torrc and Tor then *executes* it, so it
+            # must come from the trusted lookup rather than from $PATH - a
+            # PATH-derived value here would let a caller choose the program Tor
+            # runs as the pluggable transport.
+            binary_path = resolve_optional(binary)
             if binary_path:
                 lines.append(f"ClientTransportPlugin {pt} exec {binary_path}")
             else:
@@ -208,10 +239,6 @@ def generate_torrc(
     )
 
     torrc_path = TOR_RUNTIME_DIR / "torrc"
-    torrc_path.write_text(torrc_content, encoding="utf-8")
-    try:
-        os.chmod(torrc_path, 0o600)
-    except OSError:
-        pass
+    _write_private(torrc_path, torrc_content)
     logger.info("Generated runtime torrc at %s", torrc_path)
     return torrc_path

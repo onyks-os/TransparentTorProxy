@@ -1,5 +1,8 @@
 # TTP Integration Test Environment (Arch Linux)
-FROM archlinux:latest
+# Pinned by digest. These images decide which nftables and kernel headers the
+# integration suite runs against, so a moving tag silently changes the
+# environment a passing test was measured in. Bump deliberately.
+FROM docker.io/library/archlinux:latest@sha256:522dd24e4a16f41afe71c7561febe519f7575404c291565e9f0be823d1794ca4
 
 ENV container docker
 

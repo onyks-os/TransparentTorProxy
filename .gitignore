@@ -279,3 +279,8 @@ env/
 .claude
 # Internal working notes (never committed)
 .internal/
+
+# Local VM images and installer ISOs used by scripts/vm/*.sh. Currently ~39 GB,
+# untracked and - until now - not ignored, which put one `git add -A` between the
+# repository and an unrecoverable mistake.
+scripts/vms/

@@ -57,8 +57,14 @@ lang-clean:
 
 ##@ Python extras
 
-coverage: ## Run the test suite with a coverage report
-	@$(PYTHON) -m pytest $(TEST_DIRS) --cov=$(PROJECT_PKG) --cov-report=term-missing --cov-report=html
+# A ratchet, not a target. Raise it when you add tests; never lower it to make a
+# build pass. The floor sits just under the measured number so an accidental
+# regression is caught while a deliberate improvement is not punished.
+COV_FAIL_UNDER ?= 86
+
+coverage: ## Run the test suite with a coverage report and enforce the floor
+	@$(PYTHON) -m pytest $(TEST_DIRS) --cov=$(PROJECT_PKG) --cov-report=term-missing \
+		--cov-report=html --cov-report=xml --cov-fail-under=$(COV_FAIL_UNDER)
 
 # Manual escape hatches only. Publication is normally performed by
 # .github/workflows/release.yml on a tag push, which uploads the exact wheel and

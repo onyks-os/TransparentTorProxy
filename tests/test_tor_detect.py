@@ -12,12 +12,45 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from tests.conftest import stub_path
+from ttp.paths import resolve
 from ttp.tor_detect import (
     _check_config,
     _detect_tor_user,
     detect_tor,
     is_firewalld_active,
 )
+
+
+def _stub_lookup(value):
+    """
+    Patch the trusted binary lookup in every module that performs one.
+
+    These tests used to patch ``shutil.which`` on the shared ``shutil`` module,
+    which happened to affect all callers at once. Each module now binds
+    ``resolve_optional`` locally, so the equivalent is an explicit set.
+    """
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    for module in (
+        "ttp.system_info",
+        "ttp.selinux",
+        "ttp.tor_detect",
+        "ttp.tor_install",
+        "ttp.tor_config",
+    ):
+        try:
+            stack.enter_context(
+                patch(
+                    f"{module}.resolve_optional",
+                    side_effect=((lambda binary: None) if value is None else (lambda binary: stub_path(binary))),
+                )
+            )
+        except AttributeError:
+            pass
+    return stack
+
 
 # Helper: canonical subprocess side_effect
 
@@ -27,10 +60,10 @@ def _make_subprocess_side_effect(running: bool = True):
 
     def side_effect(cmd, **kwargs):
         m = MagicMock()
-        if cmd == ["pgrep", "-x", "tor"]:
+        if cmd == [resolve("pgrep"), "-x", "tor"]:
             m.stdout = "1234\n" if running else ""
             m.returncode = 0 if running else 1
-        elif cmd == ["tor", "--version"]:
+        elif cmd == [resolve("tor"), "--version"]:
             m.stdout = "Tor version 0.4.8.10.\n"
             m.returncode = 0
         else:
@@ -50,7 +83,7 @@ def test_full_detection_all_true(tmp_path: Path):
     torrc.write_text("TransPort 9041\nDNSPort 9054\nControlSocket /run/tor/ttp/control.sock\n")
 
     with (
-        patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/tor"),
+        _stub_lookup("/usr/bin/tor"),
         patch("ttp.tor_detect.subprocess.run") as mock_run,
         patch("ttp.tor_detect.TORRC_PATH", torrc),
         patch("ttp.tor_detect._detect_tor_user", return_value="debian-tor"),
@@ -101,7 +134,7 @@ def test_custom_ports_configured(tmp_path: Path):
 
 def test_tor_not_installed():
     """which tor returns None -> is_installed = False."""
-    with patch("ttp.tor_detect.shutil.which", return_value=None):
+    with _stub_lookup(None):
         result = detect_tor()
 
     assert result["is_installed"] is False
@@ -119,7 +152,7 @@ def test_tor_not_running(tmp_path: Path):
     torrc.write_text("TransPort 9041\nDNSPort 9054\n")
 
     with (
-        patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/tor"),
+        _stub_lookup("/usr/bin/tor"),
         patch("ttp.tor_detect.subprocess.run") as mock_run,
         patch("ttp.tor_detect.TORRC_PATH", torrc),
     ):
@@ -230,7 +263,7 @@ def test_is_firewalld_active_true():
         mock_run.return_value.returncode = 0
         assert is_firewalld_active() is True
         mock_run.assert_called_with(
-            ["pgrep", "-x", "firewalld"],
+            [resolve("pgrep"), "-x", "firewalld"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -270,11 +303,10 @@ def test_is_ipv6_supported_false():
         assert is_ipv6_supported() is False
 
 
-@patch("ttp.tor_detect.shutil.which", return_value="/usr/bin/tor")
 @patch("ttp.tor_detect.subprocess.run")
 @patch("ttp.tor_detect._detect_tor_user", return_value="tor")
 @patch("ttp.tor_detect.is_ipv6_supported")
-def test_detect_tor_ipv6_propagation(mock_ipv6, mock_user, mock_run, mock_which):
+def test_detect_tor_ipv6_propagation(mock_ipv6, mock_user, mock_run):
     """detect_tor correctly propagates the return value of is_ipv6_supported."""
     mock_run.side_effect = _make_subprocess_side_effect(running=True)
 

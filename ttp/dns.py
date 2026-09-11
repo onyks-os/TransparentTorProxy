@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from ttp.exceptions import DNSError
+from ttp.paths import resolve
 
 logger = logging.getLogger("ttp")
 
@@ -27,7 +28,7 @@ def detect_active_interface() -> str:
     """Detect the primary network interface using 'ip route'."""
     try:
         result = subprocess.run(
-            ["ip", "route", "show", "default"],
+            [resolve("ip"), "route", "show", "default"],
             capture_output=True,
             text=True,
             check=True,
@@ -77,7 +78,7 @@ def _clear_stale_mounts(target: str) -> None:
             return
         logger.debug("Removing stale TTP mount layer %d on %s", i + 1, target)
         subprocess.run(
-            ["umount", "-l", target],
+            [resolve("umount"), "-l", target],
             capture_output=True,
             text=True,
             check=False,
@@ -122,7 +123,7 @@ def apply_dns(interface: str, disable_ipv6: bool = False, dns_port: int = 9054) 
 
         # 4. Overlay via mount --bind (non-destructive)
         subprocess.run(
-            ["mount", "--bind", str(RUNTIME_RESOLV), str(target)],
+            [resolve("mount"), "--bind", str(RUNTIME_RESOLV), str(target)],
             capture_output=True,
             text=True,
             check=True,
@@ -165,7 +166,7 @@ def restore_dns(backup: dict[str, Any] | None) -> None:
         try:
             # Lazy unmount ensures immediate release even if busy
             subprocess.run(
-                ["umount", "-l", mount_target],
+                [resolve("umount"), "-l", mount_target],
                 capture_output=True,
                 text=True,
                 check=True,

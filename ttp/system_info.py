@@ -20,11 +20,11 @@ from __future__ import annotations
 import json
 import platform
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
 from ttp import state, tor_control
+from ttp.paths import resolve, resolve_optional
 
 # ---------------------------------------------------------------------------
 # OS-level inspection helpers (moved from tor_detect.py)
@@ -33,10 +33,15 @@ from ttp import state, tor_control
 
 def is_selinux_enforcing() -> bool:
     """Return ``True`` if SELinux is in Enforcing mode."""
-    if not shutil.which("getenforce"):
+    # Resolved once and reused. Looking it up twice - optionally for the guard,
+    # strictly for the argv - lets the two answers disagree on a host that does
+    # not ship the binary, which is how these probes crashed on Ubuntu while
+    # passing on Fedora.
+    getenforce = resolve_optional("getenforce")
+    if not getenforce:
         return False
     try:
-        result = subprocess.run(["getenforce"], capture_output=True, text=True, timeout=5)
+        result = subprocess.run([getenforce], capture_output=True, text=True, timeout=5)
         return result.stdout.strip() == "Enforcing"
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
@@ -57,10 +62,11 @@ def is_fedora_family() -> bool:
 
 def is_selinux_module_installed() -> bool:
     """Return ``True`` if the ``ttp_tor_policy`` module is already loaded."""
-    if not shutil.which("semodule"):
+    semodule = resolve_optional("semodule")
+    if not semodule:
         return False
     try:
-        result = subprocess.run(["semodule", "-l"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run([semodule, "-l"], capture_output=True, text=True, timeout=10)
         return bool(re.search(r"ttp_tor_policy\s+1\.1\b", result.stdout))
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
@@ -73,7 +79,7 @@ def is_firewalld_active() -> bool:
     """
     try:
         result = subprocess.run(
-            ["pgrep", "-x", "firewalld"],
+            [resolve("pgrep"), "-x", "firewalld"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -129,7 +135,7 @@ def collect_diagnostics() -> dict[str, str]:
     # 2. Tor Service (ttp-tor)
     try:
         svc_status = subprocess.run(
-            ["systemctl", "status", "ttp-tor"],
+            [resolve("systemctl"), "status", "ttp-tor"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -143,7 +149,7 @@ def collect_diagnostics() -> dict[str, str]:
     # 3. Tor Config (Volatile runtime config)
     try:
         torrc = subprocess.run(
-            ["grep", "-v", r"^\s*#\|^\s*$", "/run/tor/ttp/torrc"],
+            [resolve("grep"), "-v", r"^\s*#\|^\s*$", "/run/tor/ttp/torrc"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -157,7 +163,7 @@ def collect_diagnostics() -> dict[str, str]:
     # 4. nftables
     try:
         nft = subprocess.run(
-            ["nft", "list", "ruleset"],
+            [resolve("nft"), "list", "ruleset"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -173,7 +179,7 @@ def collect_diagnostics() -> dict[str, str]:
     try:
         # Check if /etc/resolv.conf is a mount point (our overlay)
         mount_check = subprocess.run(
-            ["findmnt", "-n", "/etc/resolv.conf"],
+            [resolve("findmnt"), "-n", "/etc/resolv.conf"],
             capture_output=True,
             text=True,
             timeout=10,

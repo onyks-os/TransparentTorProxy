@@ -22,6 +22,7 @@ To support these use cases, TTP separates network routing orchestration from Tor
 ## Decision
 
 We introduced the **Bring Your Own Daemon (BYOD)** mode:
+
 * Added the `--external-daemon` CLI option to `start` and `restart` commands.
 * In BYOD mode, TTP delegates Tor startup, supervision, and lifecycle to the host or container environment.
 * TTP performs **Passive Health Checks** at startup to verify that Tor is actively listening on the target ports (TCP TransPort and UDP/TCP DNSPort).

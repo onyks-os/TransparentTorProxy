@@ -66,12 +66,14 @@ By participating in this project, you agree to maintain a professional and respe
 
    > [!NOTE]
    > To run the firewall ruleset validation tests (`tests/test_nse_rules.py`), you must also install the `nse` extras:
+>
    > ```bash
    > pip install -e ".[nse]"
    > ```
+>
    > `network-sandbox-engine` provides the namespace/nftables orchestration API. `pyroute2` enables netlink-based route setup inside namespaces without requiring `/sys` mount permissions (needed for Docker compatibility).
 
-4. **Run tests**:
+1. **Run tests**:
 
    ```bash
    pytest tests/ -v
@@ -98,6 +100,25 @@ When writing code for TTP, please adhere to these core principles:
 3. **Atomic Operations**: System changes (like firewall rules) must be atomic. We use `nft -f` to ensure the firewall is never in a half-configured state.
 4. **Crash-Safety**: Always consider what happens if the power goes out mid-operation. Use the lock file system in `state.py` to track changes that need rolling back.
 5. **TDD (Test Driven Development)**: Every new feature or bug fix should include a corresponding unit test in `tests/`.
+
+## Finding your way around
+
+Two commands exist because this codebase grew faster than any one person's model
+of it, and `git grep` answers the wrong question.
+
+```bash
+make explain FILE=ttp/state.py    # what does it expose, who breaks, what goes red
+make debt                          # rank modules: wide blast radius, thin guard
+```
+
+`make explain` reads per-test coverage contexts, so it can tell you which test
+suites actually *execute* a file - not which ones mention it. That distinction
+matters: `ttp/state.py` is imported by 15 modules and executed by 2 suites,
+because the CLI tests mock it out. That gap is where a change breaks something
+far away with nothing going red.
+
+Add `REFRESH=1` to re-measure first. Use it before you touch an unfamiliar
+module, and again after, to check the tests you expected to go red actually did.
 
 ## Testing
 
@@ -127,6 +148,7 @@ A change is considered **major** if it:
 - Alters the crash-safety architecture.
 
 In these cases, the contributor **must**:
+
 - Add new unit tests to cover the functionality.
 - Update existing tests if the expected behavior changes.
 - Manually run integration tests in a virtual machine (VM).
@@ -139,7 +161,7 @@ By contributing to TTP, you certify that you have the right to submit the contri
 
 **Every commit must include a `Signed-off-by` line** with your real name and email:
 
-```
+```text
 Signed-off-by: Jane Doe <jane@example.com>
 ```
 
@@ -160,7 +182,7 @@ git rebase --signoff HEAD~<number-of-commits>
 <details>
 <summary>Full DCO text</summary>
 
-```
+```text
 Developer Certificate of Origin
 Version 1.1
 

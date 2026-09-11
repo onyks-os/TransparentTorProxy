@@ -108,11 +108,14 @@ table inet ttp {
 System DNS resolution is isolated through a dual-mechanism approach:
 
 ### VFS Bind-Mount Overlay
+
 TTP creates a temporary RAM-backed `resolv.conf` file containing `nameserver 127.0.0.1` and overlays `/etc/resolv.conf` using a VFS kernel bind-mount (`mount --bind`).
-* **Disk Integrity**: The physical `/etc/resolv.conf` file on host storage is untouched.
-* **Teardown**: Upon session termination, `umount -l /etc/resolv.conf` unmounts the overlay instantly.
+
+- **Disk Integrity**: The physical `/etc/resolv.conf` file on host storage is untouched.
+- **Teardown**: Upon session termination, `umount -l /etc/resolv.conf` unmounts the overlay instantly.
 
 ### `systemd-resolved` Volatile Integration
+
 If `systemd-resolved` is active, TTP writes a volatile drop-in configuration at `/run/systemd/resolved.conf.d/ttp.conf` setting `DNS=127.0.0.1:5353` and `Domains=~.` before issuing a reload signal. This prevents `systemd-resolved` from querying upstream ISP resolvers.
 
 ---

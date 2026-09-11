@@ -26,6 +26,7 @@ SPDX-License-Identifier: MIT
   <a href="#installation">Installation</a> •
   <a href="#usage">Usage</a> •
   <a href="#how-it-works">How It Works</a> •
+  <a href="#verification">Verification</a> •
   <a href="#obtain-feedback--contributions">Contribute</a>
 </p>
 
@@ -41,30 +42,45 @@ No per-application setup needed - just `sudo ttp start` and **every connection**
 
 > [!CAUTION]
 > TTP is a tool designed to aid privacy by routing traffic through Tor. However, no tool can guarantee 100% anonymity. Your safety also depends on your behavior (e.g., using a regular browser vs. Tor Browser, signing into accounts, etc.). Always use TTP as part of a multi-layered security strategy.
-
+>
 > [!WARNING]
 > **If you are a whistleblower or are engaging in high-risk activities, DO NOT use TTP.** Instead, use officially audited and reliable tools like [TailsOS](https://tails.net/) or the [Tor Browser](https://www.torproject.org/) directly. The authors and contributors of TTP assume no responsibility for your safety or the consequences of using this software.
 
 ## Why TTP?
 
-Unlike legacy transparent proxy scripts (e.g., TorGhost, Anonsurf) that rely on destructive configuration file overrides and outdated iptables rulesets, TTP is engineered as a systemd-native, fail-closed solution for modern Linux distributions.
+Legacy transparent proxy scripts (TorGhost, Anonsurf) overwrite configuration
+files and build iptables rulesets that fail *open*: when they break, traffic
+leaves in cleartext. TTP is built the other way round - it fails closed, and
+keeps nothing on disk.
 
-Key architectural advantages:
-
-* **No Per-Application Configuration**: Intercepts all TCP and DNS traffic globally at the network layer, eliminating the need to configure SOCKS5 settings in individual applications.
-* **Zero DNS Leaks**: Reroutes DNS queries via a kernel-level bind-mount overlay on `/etc/resolv.conf` (with automated cleanup on teardown), resolving leaks natively without altering persistent files.
-* **Systemd-Native Fail-Closed Design**: Leverages isolated `inet ttp` nftables tables and dedicated systemd units. In the event of a crash, watchdog trigger, or unclean termination, the network is either securely routed via Tor or blocked entirely (fail-closed), preventing cleartext leaks.
-* **Volatile Core**: The entire session state, temporary configurations, lockfiles, and logs reside exclusively in volatile memory (`tmpfs`), ensuring zero persistent configuration state or residue is left on the host storage.
+| | |
+| :--- | :--- |
+| **Fail-closed by construction** | An isolated `inet ttp` nftables table with a catch-all reject and `policy drop` on forwarding. On a crash, a watchdog trigger or an unclean exit, traffic is either routed through Tor or blocked - never released. |
+| **Nothing persists** | Session state, torrc, lock file and logs live only in `tmpfs` (`/run/ttp/`, `/run/tor/ttp/`). A reboot leaves no residue and no stale lock. |
+| **No per-application setup** | TCP and DNS are intercepted at the network layer. No SOCKS5 settings, no proxy environment variables, no application support required. |
+| **DNS without rewriting your system** | A `mount --bind` overlay on `/etc/resolv.conf` rather than an edit, plus a volatile drop-in that neutralises `systemd-resolved`, backed by a kernel-level drop on any non-loopback resolver traffic. |
+| **The leak claim is measured** | Every containment rule is tested in an isolated network namespace against the real generated ruleset, and each test first proves it can *see* a leak before asserting there is none. See [Verification](#verification). |
 
 ## Features
 
-* **Volatile Core**: Stores the entire session state, lockfiles, and logs exclusively in volatile `tmpfs` (`/run/ttp/` and `/run/tor/ttp/`), ensuring zero persistent configuration state or residue is left on the host storage, with all state disappearing automatically on reboot.
-* **Stateless Overlay & systemd-resolved Intercept**: Transparently routes DNS requests using a kernel-level `mount --bind` overlay on `/etc/resolv.conf` without modifying the original file on disk. Hijacks active `systemd-resolved` configurations using a volatile drop-in to prevent leaks via D-Bus or NSS, backed by a strict kernel-level firewall drop policy on non-localhost outbound resolved queries.
-* **Continuous Integrity Protection (FSM Watchdog & Killswitch)**: Runs an active background monitor governed by a formal Finite State Machine (FSM) utilizing the `transitions` library. It monitors Tor status, nftables chains, and the DNS overlay mount via a double-watch inotify check on `/etc/resolv.conf` (detecting symlink target swapping). Automatically triggers single-strike repairs or a hard network lockout (emergency drop-all killswitch with sanitized notifications) on persistent integrity failure.
-* **Preserved LAN Access & Segmented Traffic (LAN Bypass & Split Tunneling)**: Dynamically excludes local subnets (RFC 1918 and Link-Local) from Tor routing to preserve access to local devices. Supports user- or group-specific exemptions (`--bypass-user` / `--bypass-group`) using native `nftables` UID/GID checks.
-* **Zero IPv6 Leaks (Dual-Stack Redirection)**: Dynamically detects IPv6 routing availability, building dual-stack redirect chains or applying drop rules to outgoing IPv6 traffic when loopback routing is not available.
-* **Block Secure DNS Bypasses (DoT/DoH Mitigation)**: Rejects outbound DoT (port 853) and well-known public DoH resolver IPs (port 443) to force fallback to Tor DNS, mapping canary domains in `torrc` to disable browser-level DoH.
-* **Coexistence with System Tor (Native Tor Service Management)**: Manages Tor via a dedicated, volatile `ttp-tor.service` systemd unit running on non-standard ports, coexisting with standard system Tor instances.
+* **Continuous integrity protection** - a watchdog governed by a formal FSM
+  (`transitions`) monitors Tor, the nftables chains and the DNS overlay via a
+  double inotify watch that catches symlink-target swapping. It repairs once,
+  then applies an emergency killswitch.
+* **Split tunnelling** - exempt users or groups (`--bypass-user`,
+  `--bypass-group`) with native nftables UID/GID matching, or run a single
+  command outside Tor with `ttp bypass <cmd>` via a cgroups v2 slice.
+* **LAN preserved** - RFC 1918 and link-local subnets stay reachable, so your
+  printer and NAS keep working.
+* **Dual-stack, or no stack** - IPv6 is routed through Tor when loopback
+  routing is available, and dropped outright when it is not. There is no third
+  option where it leaks.
+* **DoT and DoH blocked** - port 853 rejected, known public DoH resolvers
+  rejected on 443 (TCP and QUIC), and browser canary domains poisoned in
+  `torrc`.
+* **Coexists with your system Tor** - runs its own volatile `ttp-tor.service`
+  on non-standard ports, leaving an existing Tor instance untouched.
+* **Bridges** - obfs4 and snowflake, with BYOD (bring your own daemon) mode.
 
 ## Requirements
 
@@ -118,29 +134,38 @@ TTP is designed to be simple and lightweight. For the complete list of CLI comma
 Most network-modifying commands require root privileges (`sudo`):
 
 * **Start the proxy**:
+
   ```bash
   sudo ttp start
   ```
+
 * **Stop the proxy**:
+
   ```bash
   sudo ttp stop
   ```
+
 * **Check current session status**:
+
   ```bash
   ttp status
   ```
+
 * **Verify Tor routing and latency**:
+
   ```bash
   ttp check
   ```
+
 * **Request a new exit IP (rotate circuits)**:
+
   ```bash
   sudo ttp refresh
   ```
 
 For more advanced setups and circumvention profiles, see the [Advanced Security & Usage Profiles Reference](docs/profiles.md) or consult the [External Interfaces Reference](docs/interfaces.md).
 
-## Manual Leak Verification
+## Checking Your Session
 
 <details>
 <summary>Click to expand manual verification steps</summary>
@@ -248,13 +273,37 @@ TTP uses a **Makefile** to automate and standardize the testing pipeline. This e
 | `make build`              | Generates native `.deb` and `.rpm` packages.                              |
 | `make clean`              | Removes all build artifacts, caches, and temp files.                      |
 
-### Ruleset Verification via Network Sandbox Engine (NSE)
-TTP integrates the **Network Sandbox Engine (NSE)**, a development dependency, to run programmatic validation of TTP's `nftables` rulesets inside isolated network namespaces:
-* **Zero-Leak PCAP Assertion**: Tests apply the actual firewall rules and inject test packets (TCP connections, DNS lookups, bypassed identities). A Scapy sniffer runs on the boundary virtual interface (`veth`) and asserts that no cleartext packets escape to the WAN.
-* **To run ruleset tests**: Install NSE (`pip install -e ".[nse]"`) and run:
-  ```bash
-  sudo pytest tests/test_nse_rules.py -v
-  ```
+## Verification
+
+TTP's zero-leak claim is measured, not asserted. The
+[Network Sandbox Engine](https://github.com/onyks-os/NetworkSandboxEngine) builds
+an isolated network namespace, loads TTP's *real* generated ruleset into it,
+generates the traffic a leak would consist of, and watches the boundary `veth`
+interface with a Scapy sniffer.
+
+**Every containment test runs twice.** `assert no leaks` is also true when the
+sniffer never started, when the interface name is wrong, or when the traffic
+never left the process, so each test first runs the same stimulus with the
+ruleset **flushed** and requires the packet to be seen. Only then does it assert
+that TTP's ruleset stops it. A harness that cannot observe a leak fails the
+test rather than passing it.
+
+Covered: plain DNS (UDP and TCP), ordinary TCP, DoT on 853, QUIC DoH on UDP/443,
+ICMP, arbitrary UDP, IPv6 — plus the other direction, that a bypassed UID can
+still reach the LAN. A firewall that blocked everything would pass the first
+seven and fail the eighth.
+
+```bash
+# libpcap is required: the sniffer compiles a BPF filter, and Scapy dlopen()s
+# the unversioned libpcap.so that only the -devel/-dev package ships.
+sudo apt install nftables iproute2 conntrack libpcap0.8 libpcap-dev   # Debian/Ubuntu
+sudo dnf install nftables iproute2 conntrack libpcap libpcap-devel    # Fedora/RHEL
+pip install -e ".[nse]"
+make test-nse            # runs as root; TTP_REQUIRE_NSE=1 so it cannot skip itself
+```
+
+This runs in CI on every push (the **Zero-leak ruleset verification** job) and as
+a step in `scripts/verify.sh` before a release.
 
 ### Advanced: Real-World VM Testing
 
@@ -295,39 +344,32 @@ sudo ttp diagnose
 └── docs/                   # Technical documentation, threat models, and ADRs
 ```
 
-## Call for Contributors
+## Contributing
 
-We are actively looking for developers to join the TTP project! Whether you are a student looking to learn or a seasoned professional, your help is welcome.
+Contributions are welcome, and the areas where help matters most are narrow and
+specific:
 
-**We are particularly seeking Senior Developers** with expertise in:
+1. **Linux networking** - nftables, routing tables, network namespaces, VPN
+   interface detection.
+2. **Tor internals** - daemon configuration, Stem, bridges, bootstrap edge cases.
+3. **CI/CD** - keeping the privileged test suites fast and reliable on GitHub
+   Actions.
 
-* **Linux Networking** (nftables, routing tables, network namespaces).
-* **Tor Internals** (daemon configuration, Stem library, circuit management).
-* **System-level Python** (asynchronous I/O, process management, security best practices).
+Start with [CONTRIBUTING.md](CONTRIBUTING.md), which documents the two rules this
+codebase is built on: never fix a bug without adding the check that would have
+caught it, and a test that asserts an absence must first prove it can detect a
+presence.
 
-If you want to contribute to making transparent proxying safer and more robust, please check out our [Contributing Guidelines](CONTRIBUTING.md) or dive right into the [Issues](https://github.com/onyks-os/TransparentTorProxy/issues).
+| | |
+| :--- | :--- |
+| Bugs and feature requests | [GitHub Issues](https://github.com/onyks-os/TransparentTorProxy/issues) |
+| Security vulnerabilities | [SECURITY.md](SECURITY.md) - please do not open a public issue |
+| Version support and EOL | [SUPPORT.md](SUPPORT.md) |
+| Releases and packages | [GitHub Releases](https://github.com/onyks-os/TransparentTorProxy/releases) · [PyPI](https://pypi.org/project/transparent-tor-proxy/) |
 
-## Obtain, Feedback & Contributions
-
-- **Obtain**: TTP is available on [PyPI](https://pypi.org/project/transparent-tor-proxy/) and can also be downloaded from the [GitHub Releases](https://github.com/onyks-os/TransparentTorProxy/releases) page. For installation methods, see the [Installation](#installation) section.
-- **Feedback**: Report bugs, suggest enhancements, or request features by opening a ticket on the [GitHub Issues](https://github.com/onyks-os/TransparentTorProxy/issues) tracker.
-- **Contribute**: Contributions are always welcome! Review our [Contributing Guidelines](CONTRIBUTING.md) to learn how to submit code, follow coding standards, and run tests.
-- **Security**: Please review our [Security Policy](SECURITY.md) before reporting any vulnerabilities or security concerns.
-
-## Support
-
-For version support status, EOL information, and support channels, please refer to the [Support Policy](SUPPORT.md).
-
-This project is maintained in my free time, and donations are highly appreciated.
-
-<div align="center">
-
-Also, if you find **TTP** useful, please consider giving it a **Star**!  
-It helps others discover the tool and motivates further development.
-
-[![GitHub stars](https://img.shields.io/github/stars/onyks-os/TransparentTorProxy?style=social)](https://github.com/onyks-os/TransparentTorProxy)
-
-</div>
+This project is maintained in free time. A [star](https://github.com/onyks-os/TransparentTorProxy)
+helps others find it; [sponsorship](https://github.com/sponsors/onyks-os) helps
+it keep going.
 
 ## License
 

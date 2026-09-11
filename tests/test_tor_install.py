@@ -8,6 +8,8 @@ All tests mock subprocess.run, shutil.which, and system paths.
 
 from __future__ import annotations
 
+import os
+import stat
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -17,10 +19,14 @@ import typer
 
 from ttp import tor_config, tor_install, tor_service
 from ttp.exceptions import TorError
+from ttp.paths import resolve
 from ttp.tor_detect import is_selinux_module_installed
 from ttp.tor_install import (
     TTP_SERVICE_NAME,
+    _get_distro_install_command,
     _write_service_unit,
+    ensure_pluggable_transports,
+    ensure_tor_ready,
     generate_torrc,
     remove_selinux_module,
     setup_selinux_if_needed,
@@ -28,12 +34,49 @@ from ttp.tor_install import (
     stop_tor_service,
 )
 
+
+def _stub_lookup(value):
+    """
+    Patch the trusted binary lookup in every module that performs one.
+
+    These tests used to patch ``shutil.which`` on the shared ``shutil`` module,
+    which happened to affect all callers at once. Each module now binds
+    ``resolve_optional`` locally, so the equivalent is an explicit set.
+    """
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    for module in (
+        "ttp.system_info",
+        "ttp.selinux",
+        "ttp.tor_detect",
+        "ttp.tor_install",
+        "ttp.tor_config",
+    ):
+        try:
+            stack.enter_context(
+                patch(
+                    f"{module}.resolve_optional",
+                    side_effect=((lambda binary: None) if value is None else (lambda binary: f"/usr/sbin/{binary}")),
+                )
+            )
+        except AttributeError:
+            pass
+    return stack
+
+
 # Volatile Service Unit
 
 
-@patch("ttp.tor_service.shutil.which", return_value="/usr/bin/tor")
-def test_write_service_unit(mock_which, tmp_path: Path):
-    """_write_service_unit writes a valid systemd unit to the expected path."""
+@patch("ttp.tor_service.resolve_optional", return_value="/usr/bin/tor")
+def test_write_service_unit(mock_resolve, tmp_path: Path):
+    """
+    _write_service_unit writes a valid systemd unit to the expected path.
+
+    resolve_optional is stubbed rather than left live: the ExecStart path is
+    whatever the host has, and asserting on /usr/bin/tor would make this test
+    fail on a distribution that ships it in /usr/sbin.
+    """
     fake_path = tmp_path / "ttp-tor.service"
 
     with patch.object(tor_service, "TTP_SERVICE_PATH", fake_path):
@@ -78,13 +121,13 @@ def test_start_tor_service(mock_generate, mock_write_unit, mock_label, mock_run)
     mock_write_unit.assert_called_once_with("tor")
     assert mock_run.call_count == 2
     mock_run.assert_any_call(
-        ["systemctl", "daemon-reload"],
+        [resolve("systemctl"), "daemon-reload"],
         capture_output=True,
         text=True,
         check=True,
     )
     mock_run.assert_any_call(
-        ["systemctl", "restart", TTP_SERVICE_NAME],
+        [resolve("systemctl"), "restart", TTP_SERVICE_NAME],
         capture_output=True,
         text=True,
         check=True,
@@ -171,13 +214,13 @@ def test_stop_tor_service(mock_run, tmp_path: Path):
         assert not fake_path.exists()
         assert mock_run.call_count == 2
         mock_run.assert_any_call(
-            ["systemctl", "stop", TTP_SERVICE_NAME],
+            [resolve("systemctl"), "stop", TTP_SERVICE_NAME],
             capture_output=True,
             text=True,
             check=False,
         )
         mock_run.assert_any_call(
-            ["systemctl", "daemon-reload"],
+            [resolve("systemctl"), "daemon-reload"],
             capture_output=True,
             text=True,
             check=False,
@@ -196,7 +239,7 @@ def test_stop_tor_service(mock_run, tmp_path: Path):
 def test_is_selinux_module_installed_true():
     """is_selinux_module_installed returns True if module listed in semodule -l."""
     with (
-        patch("ttp.tor_detect.shutil.which", return_value="/usr/sbin/semodule"),
+        _stub_lookup("/usr/sbin/semodule"),
         patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
         mock_run.return_value = MagicMock(returncode=0, stdout="ttp_tor_policy  1.1\nother_mod 2.1")
@@ -206,7 +249,7 @@ def test_is_selinux_module_installed_true():
 def test_is_selinux_module_installed_false():
     """is_selinux_module_installed returns False if module not listed."""
     with (
-        patch("ttp.tor_detect.shutil.which", return_value="/usr/sbin/semodule"),
+        _stub_lookup("/usr/sbin/semodule"),
         patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
         mock_run.return_value = MagicMock(returncode=0, stdout="other_mod 2.1")
@@ -217,13 +260,11 @@ def test_is_selinux_module_installed_false():
 @patch("ttp.tor_detect.is_selinux_enforcing", return_value=True)
 @patch("ttp.tor_detect.is_fedora_family", return_value=True)
 @patch("ttp.selinux.Path.exists", return_value=True)
-@patch("ttp.selinux.shutil.which", return_value="/usr/bin/cmd")
 @patch("ttp.selinux.tempfile.TemporaryDirectory")
 @patch("ttp.selinux.subprocess.run")
 def test_setup_selinux_if_needed_installs(
     mock_run,
     mock_tempdir,
-    mock_which,
     mock_exists,
     mock_fedora,
     mock_enforcing,
@@ -234,9 +275,9 @@ def test_setup_selinux_if_needed_installs(
     mock_tempdir.return_value.__enter__.return_value = "/tmp/fake"
     setup_selinux_if_needed()
 
-    assert any("checkmodule" in str(c) for c in mock_run.call_args_list)
-    assert any("semodule_package" in str(c) for c in mock_run.call_args_list)
-    assert any("semodule" in str(c) and "-i" in str(c) for c in mock_run.call_args_list)
+    assert any(resolve("checkmodule") in str(c) for c in mock_run.call_args_list)
+    assert any(resolve("semodule_package") in str(c) for c in mock_run.call_args_list)
+    assert any(resolve("semodule") in str(c) and "-i" in str(c) for c in mock_run.call_args_list)
 
 
 @patch("ttp.tor_detect.is_selinux_module_installed", return_value=True)
@@ -250,9 +291,8 @@ def test_setup_selinux_if_needed_skips_if_installed(mock_fedora, mock_enforcing,
 
 
 @patch("ttp.tor_detect.is_selinux_module_installed", return_value=True)
-@patch("ttp.selinux.shutil.which", return_value="/usr/sbin/semodule")
 @patch("ttp.selinux.subprocess.run")
-def test_remove_selinux_module(mock_run, mock_which, mock_installed):
+def test_remove_selinux_module(mock_run, mock_installed):
     """remove_selinux_module runs semodule -r if installed.
 
     The which() mock must target ttp.selinux, not ttp.tor_detect: patching the
@@ -261,7 +301,7 @@ def test_remove_selinux_module(mock_run, mock_which, mock_installed):
     """
     mock_run.return_value = MagicMock(returncode=0)
     remove_selinux_module()
-    assert any("semodule" in str(c) and "-r" in str(c) for c in mock_run.call_args_list)
+    assert any(resolve("semodule") in str(c) and "-r" in str(c) for c in mock_run.call_args_list)
 
 
 @patch("ttp.tor_detect.is_selinux_module_installed", return_value=False)
@@ -292,7 +332,7 @@ def test_generate_torrc_with_bridges(mock_chmod, mock_chown, mock_makedirs, tmp_
     with (
         patch.object(tor_config, "TOR_RUNTIME_DIR", runtime_dir),
         patch.object(tor_config, "TOR_CACHE_DIR", cache_dir),
-        patch("ttp.tor_config.shutil.which") as mock_which,
+        patch("ttp.tor_config.resolve_optional") as mock_which,
     ):
         mock_which.side_effect = lambda binary: f"/usr/bin/{binary}"
         generate_torrc("debian-tor", use_bridges=True, bridges=bridges)
@@ -306,26 +346,23 @@ def test_generate_torrc_with_bridges(mock_chmod, mock_chown, mock_makedirs, tmp_
         assert "Bridge snowflake 192.0.2.2:4321 601234567890ABCDEF" in content
 
 
-@patch("ttp.tor_install.shutil.which")
-def test_ensure_pluggable_transports_already_installed(mock_which):
-    """ensure_pluggable_transports does nothing if transport helper is already in PATH."""
-    mock_which.return_value = "/usr/bin/obfs4proxy"
+@patch("ttp.tor_install.resolve_optional", return_value="/usr/bin/obfs4proxy")
+def test_ensure_pluggable_transports_already_installed(mock_resolve):
+    """ensure_pluggable_transports does nothing when the helper is already present."""
     with patch("subprocess.run") as mock_run:
         tor_install.ensure_pluggable_transports(["obfs4"])
         mock_run.assert_not_called()
 
 
-@patch("ttp.tor_install.shutil.which")
-def test_ensure_pluggable_transports_missing_raises(mock_which):
-    """ensure_pluggable_transports exits with code 0 if transport binary is missing under No Auto-Install policy."""
-    mock_which.return_value = None
+@patch("ttp.tor_install.resolve_optional", return_value=None)
+def test_ensure_pluggable_transports_missing_raises(mock_resolve):
+    """ensure_pluggable_transports exits 0 when the transport binary is missing (No Auto-Install)."""
     with pytest.raises(typer.Exit) as exc_info:
         tor_install.ensure_pluggable_transports(["obfs4"])
     assert exc_info.value.exit_code == 0
 
 
-@patch("ttp.tor_install.shutil.which", return_value=None)
-def test_ensure_pluggable_transports_unsupported_pt(mock_which):
+def test_ensure_pluggable_transports_unsupported_pt():
     """ensure_pluggable_transports exits with code 0 for unsupported transports under No Auto-Install policy."""
     with pytest.raises(typer.Exit) as exc_info:
         tor_install.ensure_pluggable_transports(["shadow"])
@@ -388,9 +425,9 @@ def test_build_torrc_content_block_doh():
     assert "MapAddress dns.google 0.0.0.0" in content
 
 
-@patch("ttp.tor_install.shutil.which")
-def test_build_torrc_content_with_bridges(mock_which):
-    mock_which.side_effect = lambda binary: f"/usr/bin/{binary}" if "obfs4" in binary or "snowflake" in binary else None
+@patch("ttp.tor_config.resolve_optional")
+def test_build_torrc_content_with_bridges(mock_resolve):
+    mock_resolve.side_effect = lambda b: f"/usr/bin/{b}" if "obfs4" in b or "snowflake" in b else None
     content = _build_torrc_content(
         tor_user="debian-tor",
         transport_port=9041,
@@ -429,3 +466,268 @@ def test_build_service_unit_content():
     assert "ExecStartPre=+/bin/mkdir -p" in content
     assert "ExecStart=/usr/sbin/tor -f" in content
     assert "LimitNOFILE=32768" in content
+
+
+# ---------------------------------------------------------------------------
+# _get_distro_install_command — the no-auto-install policy in practice
+#
+# TTP never installs packages itself, so this string IS the remediation. A wrong
+# package manager here leaves the user with a command that does not work on
+# their machine, at the exact moment they cannot proxy their traffic.
+# ---------------------------------------------------------------------------
+
+
+def _only(*present: str):
+    """A shutil.which that finds only the named binaries."""
+    return lambda name: f"/usr/bin/{name}" if name in present else None
+
+
+def test_install_command_prefers_apt_get() -> None:
+    with patch("shutil.which", side_effect=_only("apt-get")):
+        assert _get_distro_install_command("tor", "tor") == "sudo apt install tor"
+
+
+def test_install_command_accepts_apt_without_apt_get() -> None:
+    with patch("shutil.which", side_effect=_only("apt")):
+        assert _get_distro_install_command("tor", "tor") == "sudo apt install tor"
+
+
+def test_install_command_uses_dnf_on_fedora() -> None:
+    with patch("shutil.which", side_effect=_only("dnf")):
+        assert _get_distro_install_command("obfs4proxy", "obfs4") == "sudo dnf install obfs4"
+
+
+def test_install_command_uses_pacman_on_arch() -> None:
+    with patch("shutil.which", side_effect=_only("pacman")):
+        got = _get_distro_install_command("obfs4proxy", "obfs4", pkg_arch="obfs4proxy-git")
+        assert got == "sudo pacman -S obfs4proxy-git"
+
+
+def test_arch_falls_back_to_the_debian_package_name() -> None:
+    with patch("shutil.which", side_effect=_only("pacman")):
+        assert _get_distro_install_command("tor", "tor") == "sudo pacman -S tor"
+
+
+def test_install_command_uses_zypper_on_suse() -> None:
+    with patch("shutil.which", side_effect=_only("zypper")):
+        got = _get_distro_install_command("tor", "tor", pkg_suse="tor-suse")
+        assert got == "sudo zypper install tor-suse"
+
+
+def test_suse_falls_back_to_the_debian_package_name() -> None:
+    with patch("shutil.which", side_effect=_only("zypper")):
+        assert _get_distro_install_command("tor", "tor") == "sudo zypper install tor"
+
+
+def test_unknown_distro_offers_both_common_commands() -> None:
+    """On a distro we do not recognise, guess nothing and show the two likely forms."""
+    with patch("shutil.which", side_effect=_only()):
+        got = _get_distro_install_command("tor", "tor")
+    assert "apt install tor" in got
+    assert "dnf install tor" in got
+
+
+def test_apt_wins_when_several_managers_are_present() -> None:
+    """Containers often carry more than one; the first match must be deterministic."""
+    with patch("shutil.which", side_effect=_only("apt-get", "dnf", "pacman")):
+        assert _get_distro_install_command("tor", "tor").startswith("sudo apt")
+
+
+# ---------------------------------------------------------------------------
+# ensure_pluggable_transports
+# ---------------------------------------------------------------------------
+
+
+def test_present_transport_binaries_are_accepted() -> None:
+    with patch("ttp.tor_install.resolve_optional", return_value="/usr/bin/obfs4proxy"):
+        ensure_pluggable_transports(["obfs4"])  # must not raise
+
+
+def test_transport_names_are_case_insensitive() -> None:
+    with patch("ttp.tor_install.resolve_optional", return_value="/usr/bin/obfs4proxy"):
+        ensure_pluggable_transports(["OBFS4"])
+
+
+def test_missing_transport_binary_exits_zero_without_installing() -> None:
+    """
+    Exit code 0, not 1: a missing optional dependency is guidance, not a crash.
+    And nothing may be installed - that is the documented policy.
+    """
+    with (
+        patch("ttp.tor_install.resolve_optional", return_value=None),
+        patch("subprocess.run") as run,
+        pytest.raises(typer.Exit) as exc,
+    ):
+        ensure_pluggable_transports(["obfs4"])
+    assert exc.value.exit_code == 0
+    run.assert_not_called()
+
+
+def test_unknown_transport_exits_without_touching_the_filesystem() -> None:
+    with (
+        patch("ttp.tor_install.resolve_optional") as lookup,
+        pytest.raises(typer.Exit) as exc,
+    ):
+        ensure_pluggable_transports(["wireguard"])
+    assert exc.value.exit_code == 0
+    lookup.assert_not_called()
+
+
+def test_the_first_missing_transport_stops_the_check() -> None:
+    with (
+        patch("ttp.tor_install.resolve_optional", return_value=None),
+        pytest.raises(typer.Exit),
+    ):
+        ensure_pluggable_transports(["obfs4", "snowflake"])
+
+
+def test_the_guidance_names_the_missing_binary_and_the_transport() -> None:
+    """A message that does not say what is missing sends the user to a search engine."""
+    printed: list[str] = []
+
+    class _Console:
+        def print(self, renderable):  # type: ignore[no-untyped-def]
+            printed.append(str(getattr(renderable, "renderable", renderable)))
+
+    with (
+        patch("ttp.tor_install.resolve_optional", return_value=None),
+        patch("shutil.which", side_effect=_only("apt-get")),
+        patch("ttp.commands._common.console", _Console()),
+        pytest.raises(typer.Exit),
+    ):
+        ensure_pluggable_transports(["obfs4"])
+
+    blob = " ".join(printed)
+    assert "obfs4proxy" in blob
+    assert "obfs4" in blob
+    assert "apt install" in blob
+
+
+# ---------------------------------------------------------------------------
+# ensure_tor_ready
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_tor_ready_exits_zero_when_tor_is_absent() -> None:
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": False}),
+        patch("ttp.tor_install.start_tor_service") as start,
+        patch("shutil.which", side_effect=_only("apt-get")),
+        pytest.raises(typer.Exit) as exc,
+    ):
+        ensure_tor_ready()
+    assert exc.value.exit_code == 0
+    start.assert_not_called()
+
+
+def test_ensure_tor_ready_starts_the_service_and_returns_the_detection() -> None:
+    info = {"is_installed": True, "tor_user": "toranon", "version": "0.4.8.12"}
+    with (
+        patch("ttp.tor_install.detect_tor", return_value=info),
+        patch("ttp.tor_install.start_tor_service") as start,
+    ):
+        assert ensure_tor_ready(transport_port=9051, dns_port=9053) is info
+
+    assert start.call_args[0][0] == "toranon"
+    assert start.call_args.kwargs["transport_port"] == 9051
+    assert start.call_args.kwargs["dns_port"] == 9053
+
+
+def test_ensure_tor_ready_defaults_the_tor_user() -> None:
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),
+        patch("ttp.tor_install.start_tor_service") as start,
+    ):
+        ensure_tor_ready()
+    assert start.call_args[0][0] == "debian-tor"
+
+
+def test_bridges_trigger_a_transport_check() -> None:
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),
+        patch("ttp.tor_install.start_tor_service"),
+        patch("ttp.tor_install.ensure_pluggable_transports") as ensure_pt,
+    ):
+        ensure_tor_ready(use_bridges=True, bridges=["obfs4 192.0.2.1:9001 CERT=x"])
+    ensure_pt.assert_called_once_with(["obfs4"])
+
+
+def test_duplicate_transports_are_only_checked_once() -> None:
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),
+        patch("ttp.tor_install.start_tor_service"),
+        patch("ttp.tor_install.ensure_pluggable_transports") as ensure_pt,
+    ):
+        ensure_tor_ready(
+            use_bridges=True,
+            bridges=["obfs4 192.0.2.1:9001", "obfs4 192.0.2.2:9001", "snowflake 192.0.2.3:1"],
+        )
+    ensure_pt.assert_called_once_with(["obfs4", "snowflake"])
+
+
+def test_plain_ip_bridges_need_no_transport() -> None:
+    """A vanilla bridge is just an address; requiring obfs4proxy for it would be wrong."""
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),
+        patch("ttp.tor_install.start_tor_service"),
+        patch("ttp.tor_install.ensure_pluggable_transports") as ensure_pt,
+    ):
+        ensure_tor_ready(use_bridges=True, bridges=["192.0.2.1:9001"])
+    ensure_pt.assert_not_called()
+
+
+def test_bridges_without_the_flag_are_ignored() -> None:
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),
+        patch("ttp.tor_install.start_tor_service"),
+        patch("ttp.tor_install.ensure_pluggable_transports") as ensure_pt,
+    ):
+        ensure_tor_ready(use_bridges=False, bridges=["obfs4 192.0.2.1:9001"])
+    ensure_pt.assert_not_called()
+
+
+def test_ensure_tor_ready_forwards_every_tor_option() -> None:
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),
+        patch("ttp.tor_install.start_tor_service") as start,
+    ):
+        ensure_tor_ready(block_doh=False, disable_ipv6=True, use_bridges=False)
+    assert start.call_args.kwargs["block_doh"] is False
+    assert start.call_args.kwargs["disable_ipv6"] is True
+
+
+@patch("ttp.tor_config.os.makedirs")
+@patch("ttp.tor_config.shutil.chown")
+def test_the_torrc_is_never_briefly_world_readable(mock_chown, mock_makedirs, tmp_path: Path):
+    """
+    The file must be root-only from the instant it exists.
+
+    Writing then chmod'ing leaves a window, and a torrc is not innocuous in it:
+    with bridges configured it carries the obfs4 certificate, which identifies
+    the bridge the user picked. This asserts on the mode the file is *created*
+    with, not the mode it ends up with, so restoring the write-then-chmod
+    sequence fails here even though the final permissions would look correct.
+    """
+    runtime_dir = tmp_path / "run/tor"
+    cache_dir = tmp_path / "lib/cache"
+    runtime_dir.mkdir(parents=True)
+    cache_dir.mkdir(parents=True)
+
+    modes_at_creation: list[int] = []
+    real_open = os.open
+
+    def recording_open(path, flags, mode=0o777, **kwargs):
+        if str(path).endswith("torrc"):
+            modes_at_creation.append(mode)
+        return real_open(path, flags, mode, **kwargs)
+
+    with (
+        patch.object(tor_config, "TOR_RUNTIME_DIR", runtime_dir),
+        patch.object(tor_config, "TOR_CACHE_DIR", cache_dir),
+        patch("ttp.tor_config.os.open", side_effect=recording_open),
+    ):
+        generate_torrc("debian-tor", use_bridges=True, bridges=["obfs4 1.2.3.4:443 CERT=secret"])
+
+    assert modes_at_creation == [0o600], "the torrc was created with a permissive mode and narrowed afterwards"
+    assert stat.S_IMODE((runtime_dir / "torrc").stat().st_mode) == 0o600
+    assert "CERT=secret" in (runtime_dir / "torrc").read_text()

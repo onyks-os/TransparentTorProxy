@@ -10,6 +10,134 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 0.4.8 (Verification Debt)
+
+The theme of this cycle is one defect repeated across the project: **a check that
+could not fail.** A green suite is only worth what it excludes, and several of
+TTP's loudest guarantees were being checked by things that would have passed
+regardless.
+
+### Added
+
+- **The zero-leak suite actually runs.** `tests/test_nse_rules.py` — the evidence
+  behind the README's strongest claim — had no make target, no CI job, no step in
+  `scripts/verify.sh`, and its `nse` marker is excluded from the default pytest
+  run. It now has `make test-nse`, a **Zero-leak ruleset verification** CI job on
+  every push, and a step in the pre-release pipeline.
+- **Positive controls in every containment test.** `assert len(leaks) == 0` is
+  also true when the sniffer never started, when the interface name is wrong, or
+  when the traffic never left the process. Each test now runs its stimulus twice:
+  once with the ruleset **flushed**, where the packet MUST be observed, and then
+  with TTP's ruleset, where it must not. A harness that cannot see a leak fails
+  the test instead of passing it.
+- **Wider leak coverage**: plain DNS over UDP *and* TCP, ordinary TCP, DoT on
+  853, QUIC DoH on UDP/443 (the path NAT cannot redirect), ICMP, arbitrary UDP,
+  and IPv6 — plus the reverse assertion that a bypassed UID still reaches the
+  LAN, so a firewall that blocked everything cannot pass.
+- **`TTP_REQUIRE_NSE=1`**: turns a missing, shadowed or too-old NSE into a hard
+  error instead of a skip. `nse` is a short import name that an unrelated PyPI
+  package can shadow, which looked identical to "NSE is not installed" and
+  silently skipped the whole module.
+- **Deterministic sandbox**: permanent neighbour entries for the veth gateway, so
+  the first packet of a run is not held for ARP/NDP resolution — which the
+  sniffer's `not arp` filter hid, making the positive control fail for reasons
+  unrelated to the firewall.
+- **Coverage ratchet**: `make coverage` enforces a floor (currently 85%) and runs
+  in CI.
+- **ShellCheck and markdownlint now run.** `make lint` invoked them when present
+  and printed "skipping" when not, and they had never been installed on the
+  runner — so two of the four linters in the gate did nothing. Both are installed
+  in CI, the job asserts they are on PATH, and the ~440 markdown findings they had
+  accumulated are fixed.
+- **`--strict-markers`**: a typo in a pytest marker silently deselects the test it
+  was meant to tag.
+- **Release rehearsal in CI**: `make packages` runs on every push, asserting that
+  every artifact the release job signs was actually produced and that `twine
+  check` passes on the distributions. `packaging/release.sh` skips the `.rpm`
+  when `rpmbuild` is absent and still exits 0, so a missing build tool used to
+  produce a silently incomplete release - discovered only at tag time, when the
+  tag already existed.
+
+### Changed
+
+- **Behavioural CLI Test Suite**: Rewrote `tests/test_cli_*.py` (`test_cli_stop.py`, `test_cli_start.py`, `test_cli_bypass.py`, `test_cli_misc.py`) to move mocking out of CLI logic to system boundaries (`_run_nft_string`, `sys.exit`, `os.geteuid`), asserting on rendered `nftables` rulesets, produced lock files, and CLI outputs instead of internal call sequences.
+- **Test coverage 80% → 86%**, 295 tests → 428. The modules that were least
+  covered were the ones handling state and input, exactly as `ROADMAP.md` noted:
+  `_ports.py` 45% → 100%, `_validation.py` 58% → 98%, `tor_install.py` 64% → 100%,
+  `state.py` 66% → 99%, `firewall/builder.py` 79% → 100%, `ux.py` 57% → 100%.
+- **`network-sandbox-engine` pinned to `>=2.1.0,<3`** (was `>=1.1.1`, open across
+  a major that had already rewritten `run_test_pipeline`'s signature). 2.1.0 is a
+  floor and not a preference: before it, the NSE runner reported PASSED when its
+  oracle observed nothing, and its trace monitor could stop reading mid-run
+  without saying so. A green leak suite against an older engine would not have
+  been evidence of anything.
+- **`inotify_watch_lost()` extracted** from the watchdog's `while True` loop. It
+  decides whether `/etc/resolv.conf` was unmounted or replaced under the DNS
+  overlay — the moment a leak becomes possible — and was previously reachable
+  only by running the daemon. It is now a pure function with 14 tests, including
+  the truncated-read case that would have raised inside the loop.
+
+### Security
+
+- **The runtime `torrc` is no longer briefly world-readable.** It was written
+  with `write_text` and restricted with `chmod` immediately after, leaving a
+  window in which any local user could read it. That file is not innocuous in
+  that window: with bridges configured it carries the obfs4 certificate, which
+  identifies the bridge the user chose to reach. It is now created with mode
+  `0600` by `os.open`, so the permissions are in place before any content
+  exists. Found by CodeQL (`py/clear-text-storage-sensitive-data`).
+
+- **PATH hijacking closed (`ruff S607` x47).** `nft`, `ip`, `systemctl` and
+  fifteen other binaries were invoked **by name** from a process running as
+  root, so the kernel resolved them through `$PATH`. Anyone able to influence
+  the environment of the `sudo` invocation could put their own `nft` earlier in
+  the search order and have it executed with full privileges - a local privilege
+  escalation in a tool whose whole job is to be trusted with the network stack.
+
+  `sudo` usually blunts this with `secure_path`, but that is a distribution
+  default an administrator can switch off, not a property TTP is entitled to
+  assume.
+
+  New `ttp/paths.py` resolves every binary against a fixed list of root-owned
+  system directories, never `$PATH`, and refuses to execute one that is
+  group- or world-writable, or that sits in a writable directory - write access
+  there is enough to replace the file by rename. `resolve_optional()` covers the
+  binaries TTP uses when they happen to exist (`notify-send`, the SELinux
+  tools), so a missing nicety cannot turn into a failed teardown while the
+  killswitch is firing; a *replaceable* one still raises.
+
+  21 tests, the load-bearing one being `test_a_hostile_nft_on_path_is_not_executed`
+  and its end-to-end sibling, which plants a hostile `nft` first on `$PATH` and
+  asserts the argv TTP hands to `subprocess` still names the trusted absolute
+  path. Without those this would be a refactor, not a fix. A further test keeps
+  `S607` selected in `make lint`, because a rule silently dropped from the
+  config is how 47 call sites appear in the first place.
+
+- **Four more PATH lookups `ruff S607` could not see.** The rule only flags a
+  bare name in an argv list, so it missed `shutil.which()` results that are then
+  executed: the `tor` path written into the systemd unit's `ExecStart` (the worst
+  of them - it decides what systemd launches as root for the lifetime of the unit
+  file, not just the current process), `systemd-run` for `ttp bypass`, `dig` for
+  leak checking, and `conntrack` during teardown. Plus the pluggable-transport
+  path written into `torrc`, which Tor itself executes. All now go through the
+  trusted lookup, and a test asserts `shutil.which` does not come back anywhere
+  its result would be run - the only surviving use picks which package-manager
+  hint to print, and is never executed.
+
+- **Container base images pinned by digest** (`scripts/vm/Dockerfile.*.test`).
+  These images decide which nftables and kernel headers the integration suite
+  runs against, so a moving tag silently changes the environment a passing test
+  was measured in.
+
+### Fixed
+
+- **`make coverage` could not run.** It invokes `pytest --cov`, but `pytest-cov`
+  was in neither the `dev` extra nor any environment, so the target failed with
+  `unrecognized arguments: --cov=ttp`. The 80% figure in the roadmap was not
+  reproducible by the documented command.
+- **`docs/architecture.md`**: a table-of-contents link pointed at an anchor that
+  does not exist.
+
 ## [0.4.7] - 2026-09-08
 
 ### Added
@@ -55,7 +183,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stale `twine` Floor Broke the Local Release Build**: `packaging/release.sh` aborted at step 0 with `InvalidDistribution: '2.5' is not a valid metadata version`. hatchling >=1.32 emits `Metadata-Version: 2.5`, and `twine` only learned to validate it in 7.0.0; the dev extra floor was `twine>=6.2.0`, so any environment holding an older resolved twine failed the build. Raised to `twine>=7.0.0` and added an explicit `hatchling>=1.27` floor to `[build-system]`.
 - **Package Builds Inherited the Operator's umask**: `build_deb.sh`, `build_rpm.sh` and `release.sh` created their staging trees with whatever umask the operator happened to have. Under a hardened `umask 027` the `DEBIAN/` control directory came out `750` and `dpkg-deb` refused to build at all (`control directory has bad permissions 750`), making local release builds impossible on such machines; more subtly, the file modes inside the published packages varied with who ran the build. All three scripts now set `umask 022` explicitly.
 - **README Native Package Paths**: the installation instructions pointed at `./packaging/transparent-tor-proxy_<version>_all.deb`, a path that never exists in a fresh clone because the built packages are gitignored release assets. The instructions now direct users to the GitHub release assets.
-
 
 ## [0.4.6] - unreleased
 
@@ -104,7 +231,6 @@ above. The version number is recorded here so the history has no silent gap.
 ## [0.4.0] - 2026-06-09
 
 ### Added
-
 
 - **Native Transparent IPv6 Support**: Implemented dynamic IPv6 loopback detection, generating dual-stack or IPv4-only configurations depending on system availability. Added comprehensive IPv6 `nftables` rules for DNS/TCP redirection, loopback exemptions, and RFC 4193/RFC 3927 local range bypassing.
 - **Network Resilient Watchdog**: Watchdog service now detects physical network carrier drops and default route removal. Under network offline states, watchdog checks are safely suspended to prevent false-positive emergency lockouts, automatically resuming after link reconnection and circuit stabilization.

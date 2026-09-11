@@ -7,9 +7,9 @@
 # than redefining a recipe, which keeps `make` from overriding the fragment.
 # ---------------------------------------------------------------------------
 
-.PHONY: integration-debian integration-fedora integration-arch integration-all \
+.PHONY: explain debt integration-debian integration-fedora integration-arch integration-all \
         chaos-monkey test-leak-ip test-leak-dns test-leak-webrtc check-leak \
-        packages clean-packages verify-full tarball testpypi pypi
+        test-nse packages clean-packages verify-full tarball testpypi pypi
 
 ##@ Integration (Docker, privileged)
 
@@ -46,6 +46,31 @@ test-leak-webrtc: ## Offensive WebRTC STUN leak test
 
 check-leak: test-leak-ip test-leak-dns test-leak-webrtc ## The full leak suite
 
+##@ Zero-leak ruleset verification (NSE)
+
+# The suite behind the README's strongest claim. It was written months ago and
+# then run by nothing: no make target, no CI job, no step in verify.sh, and the
+# `nse` marker is excluded from the default pytest run. This target is what
+# turns that assertion into a measurement.
+#
+# TTP_REQUIRE_NSE=1 makes a missing, shadowed, or too-old NSE a hard error
+# instead of a skip. A gate that skips itself is not a gate - and `nse` is a
+# short import name that an unrelated PyPI package can shadow, which would look
+# exactly like "NSE is not installed".
+test-nse: ## Zero-leak nftables verification in a netns (requires root + the nse extra)
+	@echo "==> [$(PROJECT_SHORT)] Zero-leak ruleset verification (NSE)..."
+	@echo "    kernel:   $$(uname -r)"
+	@echo "    nftables: $$(nft --version 2>/dev/null || echo 'MISSING')"
+	@# Scapy compiles the sniffer's BPF filter through libpcap. Without it every
+	@# test in the suite fails at sniffer construction - correctly, but with a
+	@# message about Scapy rather than about the missing library.
+	@if ! ldconfig -p 2>/dev/null | grep -q libpcap; then \
+		echo "    !!! libpcap not found. Install libpcap-dev (Debian) or"; \
+		echo "        libpcap-devel (Fedora) - Scapy needs the unversioned .so - or the"; \
+		echo "        sniffer cannot compile its BPF filter and every test fails."; \
+	fi
+	@sudo -E TTP_REQUIRE_NSE=1 $(VENV)/bin/python -m pytest tests/test_nse_rules.py -m nse -v
+
 ##@ Native packaging
 
 packages: ## Build .deb and .rpm into packaging/ (was `make build` before the template migration)
@@ -73,3 +98,19 @@ verify-full: ## The 8-minute pre-release suite (lint + unit + integration + pack
 # Names kept from the pre-template Makefile so muscle memory still works.
 testpypi: publish-test ## Alias for publish-test
 pypi: publish ## Alias for publish
+
+
+##@ Knowledge
+
+# `git grep` answers "where is this string". These answer the question you
+# actually have when you open a module you did not write yesterday: what does it
+# expose, who breaks if I break it, and what would go red.
+#
+# REFRESH=1 re-measures per-test coverage first (a few seconds).
+
+explain: ## What is this file, and what happens if I break it? make explain FILE=ttp/state.py
+	@test -n "$(FILE)" || { echo "usage: make explain FILE=ttp/state.py [REFRESH=1]"; exit 2; }
+	@$(PYTHON) scripts/explain.py "$(FILE)" $(if $(REFRESH),--refresh,)
+
+debt: ## Rank modules by blast radius against how thinly they are guarded
+	@$(PYTHON) scripts/explain.py --debt $(if $(REFRESH),--refresh,)

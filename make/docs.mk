@@ -31,11 +31,14 @@ docs-serve: ## Serve the documentation with live reload on :8000
 
 docs-sync: ## Mirror the root CHANGELOG into the documentation site
 	@echo "==> [$(PROJECT_SHORT)] Syncing CHANGELOG into the docs site..."
+	@# `sed -e '1,/^# Changelog$$/d'` leaves the blank line that followed the
+	@# heading, which lands next to the one echoed here and trips markdownlint's
+	@# MD012. `cat -s` squeezes runs of blank lines to one.
 	@{ \
 		echo "# Release Notes & Changelog"; \
 		echo ""; \
 		sed -e '1,/^# Changelog$$/d' CHANGELOG.md; \
-	} > docs/web/release-notes/changelog.md
+	} | cat -s > docs/web/release-notes/changelog.md
 
 adr: ## Scaffold a new ADR — make adr TITLE="Short decision title"
 	@if [ -z "$(TITLE)" ]; then \

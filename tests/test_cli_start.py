@@ -1,14 +1,21 @@
 # Copyright (c) 2026 onyks-os
 # SPDX-License-Identifier: MIT
 
-"""Tests for ttp.cli - CLI entry point.
+"""Behavioural tests for `ttp start`.
 
-All external calls (firewall, DNS, Tor, network) are fully mocked.
-Tests verify command orchestration logic, not system interactions.
+Mocks sit at the system boundary - `subprocess`, `pwd`, the filesystem, the Tor
+control port - and the assertions are on what was *produced*: the generated
+nftables ruleset, the lock file contents, the rendered CLI output.
+
+That distinction is the whole point of this file. Its predecessor asserted on
+the sequence of internal calls, which is how `ttp restart` shipped broken with a
+dedicated passing test: the test encoded what the code did, so when the code was
+wrong the test agreed with it.
 """
 
 from __future__ import annotations
 
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -41,46 +48,71 @@ def _mock_tmpfs_preflight():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _mock_root_euid():
+    """Most CLI commands require root; mock geteuid to 0 by default."""
+    with patch("os.geteuid", return_value=0):
+        yield
+
+
+@pytest.fixture
+def mock_base_start():
+    """Standard preflight/tor mocks for happy-path ttp start commands."""
+    with (
+        patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4")),
+        patch("ttp.dns.apply_dns", return_value={"interface": "eth0"}),
+        patch("ttp.dns.detect_active_interface", return_value="eth0"),
+        patch(
+            "ttp.tor_install.ensure_tor_ready",
+            return_value={
+                "is_installed": True,
+                "is_running": True,
+                "is_configured": True,
+                "tor_user": "debian-tor",
+                "version": "0.4.8.10",
+            },
+        ),
+        patch("ttp.tor_install.setup_selinux_if_needed"),
+        patch("ttp.state.read_lock", return_value=None),
+        patch("ttp.state.is_orphan", return_value=False),
+    ):
+        yield
+
+
 # start
 
 
-@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.firewall.apply_rules")
-@patch(
-    "ttp.tor_install.ensure_tor_ready",
-    return_value={
-        "is_installed": True,
-        "is_running": True,
-        "is_configured": True,
-        "tor_user": "debian-tor",
-        "version": "0.4.8.10",
-    },
-)
-@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
 @patch("ttp.state.write_lock")
-@patch("ttp.state.read_lock", return_value=None)
-@patch("ttp.state.is_orphan", return_value=False)
-@patch("os.geteuid", return_value=0)
 def test_start_happy_path(
-    mock_euid,
-    mock_orphan,
-    mock_read,
     mock_write,
-    mock_selinux,
-    mock_ensure,
-    mock_apply_fw,
-    mock_iface,
-    mock_apply_dns,
-    mock_verify,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
+    mock_base_start,
 ):
-    """start with all systems go -> session active."""
+    """start with all systems go -> session active, ruleset generated, lock written."""
     result = runner.invoke(app, ["start"])
     assert result.exit_code == 0
     assert "Session active" in result.output
-    mock_write.assert_called_once()
-    mock_apply_fw.assert_called_once()
+
+    # Assert produced artifact: generated nftables script
+    assert mock_nft_str.call_count == 1
+    ruleset = mock_nft_str.call_args[0][0]
+    assert "127.0.0.1:9041" in ruleset
+    assert "127.0.0.1:9054" in ruleset
+    assert "meta skuid 110" in ruleset
+    assert "policy drop" in ruleset
+
+    # Assert lock artifact contents
+    assert mock_write.call_count == 1
+    lock_kwargs = mock_write.call_args.kwargs
+    assert lock_kwargs["transport_port"] == 9041
+    assert lock_kwargs["dns_port"] == 9054
+    assert lock_kwargs["interface"] == "eth0"
+    assert lock_kwargs["external_daemon"] is False
 
 
 @patch("os.geteuid", return_value=1000)
@@ -91,165 +123,110 @@ def test_start_requires_root(mock_euid):
     assert "root" in result.output
 
 
-@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.firewall.apply_rules")
-@patch(
-    "ttp.tor_install.ensure_tor_ready",
-    return_value={
-        "is_installed": True,
-        "is_running": True,
-        "is_configured": True,
-        "tor_user": "debian-tor",
-        "version": "0.4.8.10",
-    },
-)
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
 @patch("ttp.tor_install.setup_selinux_if_needed")
 @patch("ttp.state.write_lock")
 @patch("ttp.state.attempt_recovery")
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 @patch("ttp.state.is_orphan", return_value=True)
-@patch("os.geteuid", return_value=0)
 def test_start_orphan_recovery(
-    mock_euid,
     mock_orphan,
     mock_read,
     mock_recovery,
     mock_write,
     mock_selinux,
-    mock_ensure,
-    mock_apply_fw,
-    mock_iface,
-    mock_apply_dns,
-    mock_verify,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
+    mock_base_start,
 ):
     """start with orphaned session (PID dead) -> auto-recovers and continues."""
     result = runner.invoke(app, ["start"])
     assert result.exit_code == 0
-    mock_recovery.assert_called_once()
     assert "recovering" in result.output.lower()
+    assert mock_recovery.call_count == 1
+    assert mock_nft_str.call_count == 1
+    assert "127.0.0.1:9041" in mock_nft_str.call_args[0][0]
 
 
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 @patch("ttp.state.is_orphan", return_value=False)
-@patch("os.geteuid", return_value=0)
-def test_start_concurrency_error(mock_euid, mock_orphan, mock_read):
+def test_start_concurrency_error(mock_orphan, mock_read):
     """start with another TTP instance running (PID alive) -> error."""
     result = runner.invoke(app, ["start"])
     assert result.exit_code == 1
     assert "concurrency error" in result.output.lower()
+    assert mock_read.call_count == 1
 
 
 # stop
 
 
-@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
 @patch("ttp.dns.apply_dns", return_value={"interface": "wlan0"})
-@patch("ttp.firewall.apply_rules")
-@patch(
-    "ttp.tor_install.ensure_tor_ready",
-    return_value={
-        "is_installed": True,
-        "is_running": True,
-        "is_configured": True,
-        "tor_user": "debian-tor",
-        "version": "0.4.8.10",
-    },
-)
-@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
 @patch("ttp.state.write_lock")
-@patch("ttp.state.read_lock", return_value=None)
-@patch("ttp.state.is_orphan", return_value=False)
-@patch("os.geteuid", return_value=0)
 def test_start_with_interface_flag(
-    mock_euid,
-    mock_orphan,
-    mock_read,
     mock_write,
-    mock_selinux,
-    mock_ensure,
-    mock_apply_fw,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
     mock_apply_dns,
-    mock_verify,
+    mock_base_start,
 ):
     """start --interface wlan0 -> uses wlan0 instead of auto-detect."""
     result = runner.invoke(app, ["start", "--interface", "wlan0"])
     assert result.exit_code == 0
-    mock_apply_dns.assert_called_once_with("wlan0", disable_ipv6=False, dns_port=9054)
+    assert mock_apply_dns.call_args.args[0] == "wlan0"
+    assert mock_apply_dns.call_args.kwargs["dns_port"] == 9054
+    assert mock_write.call_args.kwargs["interface"] == "wlan0"
 
 
 # health check warning
 
 
 @patch("ttp.commands.start._verify_tor", return_value=(False, "1.2.3.4"))
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.firewall.apply_rules")
-@patch(
-    "ttp.tor_install.ensure_tor_ready",
-    return_value={
-        "is_installed": True,
-        "is_running": True,
-        "is_configured": True,
-        "tor_user": "debian-tor",
-        "version": "0.4.8.10",
-    },
-)
-@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
 @patch("ttp.state.write_lock")
-@patch("ttp.state.read_lock", return_value=None)
-@patch("ttp.state.is_orphan", return_value=False)
-@patch("os.geteuid", return_value=0)
 def test_start_tor_verification_fails(
-    mock_euid,
-    mock_orphan,
-    mock_read,
     mock_write,
-    mock_selinux,
-    mock_ensure,
-    mock_apply_fw,
-    mock_iface,
-    mock_apply_dns,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
     mock_verify,
+    mock_base_start,
 ):
     """start with Tor not verified -> shows warning."""
     result = runner.invoke(app, ["start"])
     assert result.exit_code == 0
     assert "verification failed" in result.output
+    assert mock_verify.call_count == 1
 
 
 # uninstall
 
 
 @patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.firewall.apply_rules")
-@patch(
-    "ttp.tor_install.ensure_tor_ready",
-    return_value={"is_installed": True, "version": "0.4.8.10"},
-)
-@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
 @patch("ttp.state.write_lock")
-@patch("ttp.state.read_lock", return_value=None)
-@patch("ttp.state.is_orphan", return_value=False)
-@patch("os.geteuid", return_value=0)
 def test_start_with_bootstrap_timeout(
-    mock_euid,
-    mock_orphan,
-    mock_read,
     mock_write,
-    mock_selinux,
-    mock_ensure,
-    mock_apply_fw,
-    mock_iface,
-    mock_apply_dns,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
     mock_verify,
+    mock_base_start,
 ):
     result = runner.invoke(app, ["start", "--bootstrap-timeout", "300"])
     assert result.exit_code == 0
-    mock_verify.assert_called_once_with(timeout=300)
+    assert mock_verify.call_args.kwargs["timeout"] == 300
 
 
 # stop --restore-only
@@ -257,8 +234,7 @@ def test_start_with_bootstrap_timeout(
 
 @patch("ttp.state.check_tmpfs_space")
 @patch("ttp.state.read_lock", return_value=None)
-@patch("os.geteuid", return_value=0)
-def test_start_tmpfs_check_fails(mock_euid, mock_read, mock_check):
+def test_start_tmpfs_check_fails(mock_read, mock_check):
     """start aborts cleanly when /run has no space, without touching system state."""
     from ttp.exceptions import StateError
 
@@ -268,79 +244,42 @@ def test_start_tmpfs_check_fails(mock_euid, mock_read, mock_check):
     assert result.exit_code == 1
     assert "Pre-flight Failed" in result.output
     assert "Insufficient space" in result.output
+    assert mock_check.call_count == 1
 
 
 # Custom Ports and Validation Tests
 
 
 @patch("ttp.commands.start._is_port_in_use", return_value=False)
-@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.firewall.apply_rules")
-@patch(
-    "ttp.tor_install.ensure_tor_ready",
-    return_value={
-        "is_installed": True,
-        "is_running": True,
-        "is_configured": True,
-        "tor_user": "debian-tor",
-        "version": "0.4.8.10",
-    },
-)
-@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
 @patch("ttp.state.write_lock")
-@patch("ttp.state.read_lock", return_value=None)
-@patch("ttp.state.is_orphan", return_value=False)
-@patch("os.geteuid", return_value=0)
 def test_start_custom_ports_success(
-    mock_euid,
-    mock_orphan,
-    mock_read,
     mock_write,
-    mock_selinux,
-    mock_ensure,
-    mock_apply_fw,
-    mock_iface,
-    mock_apply_dns,
-    mock_verify,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
     mock_in_use,
+    mock_base_start,
 ):
-    """start with custom valid ports -> propagates them down correctly."""
+    """start with custom valid ports -> propagates them down into ruleset and lock."""
     result = runner.invoke(app, ["start", "--transport-port", "9080", "--dns-port", "9090"])
     assert result.exit_code == 0
     assert "Session active" in result.output
 
-    mock_ensure.assert_called_once_with(
-        transport_port=9080,
-        dns_port=9090,
-        use_bridges=False,
-        bridges=[],
-        disable_ipv6=False,
-    )
-    mock_apply_fw.assert_called_once_with(
-        tor_user="debian-tor",
-        transport_port=9080,
-        dns_port=9090,
-        allow_root=False,
-        lan_bypass=True,
-        disable_ipv6=False,
-    )
-    mock_write.assert_called_once_with(
-        dns_backup={"interface": "eth0"},
-        transport_port=9080,
-        dns_port=9090,
-        allow_root=False,
-        lan_bypass=True,
-        interface="eth0",
-        external_daemon=False,
-        no_ipv6=False,
-        tor_uid=None,
-    )
+    # Assert ruleset artifact contains custom ports
+    ruleset = mock_nft_str.call_args[0][0]
+    assert "127.0.0.1:9080" in ruleset
+    assert "127.0.0.1:9090" in ruleset
+    assert "127.0.0.1:9041" not in ruleset
+
+    # Assert lock artifact contains custom ports
+    assert mock_write.call_args.kwargs["transport_port"] == 9080
+    assert mock_write.call_args.kwargs["dns_port"] == 9090
 
 
-@patch("os.geteuid", return_value=0)
-def test_start_invalid_transport_port(mock_euid):
+def test_start_invalid_transport_port():
     """start with privileged or invalid transport port -> validation error."""
     # Under 1024
     result = runner.invoke(app, ["start", "-t", "80"])
@@ -355,8 +294,7 @@ def test_start_invalid_transport_port(mock_euid):
     assert "between 1024 and 65535" in result.output
 
 
-@patch("os.geteuid", return_value=0)
-def test_start_invalid_dns_port(mock_euid):
+def test_start_invalid_dns_port():
     """start with privileged or invalid dns port -> validation error."""
     # Under 1024
     result = runner.invoke(app, ["start", "-d", "53"])
@@ -371,8 +309,7 @@ def test_start_invalid_dns_port(mock_euid):
     assert "between 1024 and 65535" in result.output
 
 
-@patch("os.geteuid", return_value=0)
-def test_start_duplicate_ports(mock_euid):
+def test_start_duplicate_ports():
     """start with same port for transport and dns -> validation error."""
     result = runner.invoke(app, ["start", "-t", "9000", "-d", "9000"])
     assert result.exit_code == 1
@@ -381,158 +318,99 @@ def test_start_duplicate_ports(mock_euid):
 
 
 @patch("ttp.commands.start._is_port_in_use", return_value=True)
-@patch("os.geteuid", return_value=0)
-def test_start_port_already_in_use(mock_euid, mock_in_use):
+def test_start_port_already_in_use(mock_in_use):
     """start with port already in use -> pre-flight check error."""
     result = runner.invoke(app, ["start", "-t", "9041"])
     assert result.exit_code == 1
     assert "Port In Use" in result.output
     assert "already in use by another process" in result.output
+    assert mock_in_use.call_count == 1
 
 
-@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.firewall.apply_rules")
-@patch(
-    "ttp.tor_install.ensure_tor_ready",
-    return_value={
-        "is_installed": True,
-        "tor_user": "debian-tor",
-        "version": "0.4.8.10",
-    },
-)
-@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
 @patch("ttp.state.write_lock")
-@patch("ttp.state.read_lock", return_value=None)
-@patch("ttp.state.is_orphan", return_value=False)
-@patch("os.geteuid", return_value=0)
 def test_start_with_allow_root_and_no_lan_bypass(
-    mock_euid,
-    mock_orphan,
-    mock_read,
     mock_write,
-    mock_selinux,
-    mock_ensure,
-    mock_apply_fw,
-    mock_iface,
-    mock_apply_dns,
-    mock_verify,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
+    mock_base_start,
 ):
-    """start with --allow-root and --no-lan-bypass flags -> passes down options."""
+    """start with --allow-root and --no-lan-bypass flags -> ruleset contains root bypass & no LAN bypass."""
     result = runner.invoke(app, ["start", "--allow-root", "--no-lan-bypass"])
     assert result.exit_code == 0
-    mock_apply_fw.assert_called_once_with(
-        tor_user="debian-tor",
-        transport_port=9041,
-        dns_port=9054,
-        allow_root=True,
-        lan_bypass=False,
-        disable_ipv6=False,
-    )
-    mock_write.assert_called_once_with(
-        dns_backup={"interface": "eth0"},
-        transport_port=9041,
-        dns_port=9054,
-        allow_root=True,
-        lan_bypass=False,
-        interface="eth0",
-        external_daemon=False,
-        no_ipv6=False,
-        tor_uid=None,
-    )
+    ruleset = mock_nft_str.call_args[0][0]
+    assert "meta skuid 0 accept" in ruleset
+    assert mock_write.call_args.kwargs["allow_root"] is True
+    assert mock_write.call_args.kwargs["lan_bypass"] is False
 
 
 # watchdog commands
 
 
-@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.firewall.apply_rules")
-@patch(
-    "ttp.tor_install.ensure_tor_ready",
-    return_value={
-        "is_installed": True,
-        "is_running": True,
-        "is_configured": True,
-        "tor_user": "debian-tor",
-        "version": "0.4.8.10",
-    },
-)
-@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
 @patch("ttp.state.write_lock")
-@patch("ttp.state.read_lock", return_value=None)
-@patch("ttp.state.is_orphan", return_value=False)
-@patch("os.geteuid", return_value=0)
 @patch("pwd.getpwnam")
 @patch("grp.getgrnam")
 def test_start_with_bypass_user_and_group(
     mock_grp_nam,
     mock_pwd_nam,
-    mock_euid,
-    mock_orphan,
-    mock_read,
     mock_write,
-    mock_selinux,
-    mock_ensure,
-    mock_apply_fw,
-    mock_iface,
-    mock_apply_dns,
-    mock_verify,
+    mock_run_nft,
+    mock_nft_str,
+    mock_base_start,
 ):
     """Test start command with valid bypass users and groups."""
-    mock_pwd_nam.side_effect = lambda name: MagicMock(pw_uid=1001) if name == "user1" else MagicMock(pw_uid=1002)
+    mock_pwd_nam.side_effect = lambda name: (
+        MagicMock(pw_uid=1001)
+        if name == "user1"
+        else (MagicMock(pw_uid=1002) if name == "user2" else MagicMock(pw_uid=110))
+    )
     mock_grp_nam.return_value = MagicMock(gr_gid=2001)
 
     result = runner.invoke(app, ["start", "--bypass-user", "user1,user2", "--bypass-group", "group1"])
     assert result.exit_code == 0
     assert "Session active" in result.output
 
+    # Assert ruleset artifact includes bypass user/group UIDs
+    ruleset = mock_nft_str.call_args[0][0]
+    assert "meta skuid 1001 accept" in ruleset
+    assert "meta skuid 1002 accept" in ruleset
+    assert "meta skgid 2001 accept" in ruleset
+
     # Check write_lock is called with bypass_users/bypass_groups
-    _, kwargs_write = mock_write.call_args
+    kwargs_write = mock_write.call_args.kwargs
     assert kwargs_write["bypass_users"] == ["user1", "user2"]
     assert kwargs_write["bypass_groups"] == ["group1"]
 
-    # Check apply_rules is called with bypass_uids/bypass_gids
-    _, kwargs_fw = mock_apply_fw.call_args
-    assert kwargs_fw["bypass_uids"] == [1001, 1002]
-    assert kwargs_fw["bypass_gids"] == [2001]
 
-
-@patch("os.geteuid", return_value=0)
 @patch("pwd.getpwnam", side_effect=KeyError)
-def test_start_with_invalid_bypass_user(mock_pwd_nam, mock_euid):
+def test_start_with_invalid_bypass_user(mock_pwd_nam):
     """Test start command with invalid bypass user returns an error."""
     result = runner.invoke(app, ["start", "--bypass-user", "nonexistentuser"])
     assert result.exit_code == 1
     assert "User 'nonexistentuser' does not exist" in result.output
+    assert mock_pwd_nam.call_count >= 1
 
 
 # CLI Bridges Tests
 
 
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=MagicMock(pw_uid=110))
 @patch("ttp.state.write_lock")
-@patch("ttp.tor_install.setup_selinux_if_needed")
 @patch("ttp.tor_install.ensure_tor_ready")
-@patch("ttp.firewall.apply_rules")
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.dns.apply_dns", return_value={"resolv": "conf"})
-@patch("ttp.commands.start._verify_tor", return_value=(True, "198.51.100.1"))
-@patch("ttp.state.read_lock", return_value=None)
-@patch("ttp.state.is_orphan", return_value=False)
-@patch("os.geteuid", return_value=0)
 def test_start_with_bridges_direct(
-    mock_euid,
-    mock_orphan,
-    mock_read,
-    mock_verify,
-    mock_apply_dns,
-    mock_iface,
-    mock_apply_fw,
     mock_ensure,
-    mock_selinux,
     mock_write,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
+    mock_base_start,
 ):
     """Test start command with direct --bridge option."""
     result = runner.invoke(
@@ -549,7 +427,7 @@ def test_start_with_bridges_direct(
     assert "Session active" in result.output
 
     # check ensure_tor_ready arguments
-    _, kwargs_ensure = mock_ensure.call_args
+    kwargs_ensure = mock_ensure.call_args.kwargs
     assert kwargs_ensure["use_bridges"] is True
     assert kwargs_ensure["bridges"] == [
         "obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0",
@@ -557,7 +435,7 @@ def test_start_with_bridges_direct(
     ]
 
     # check write_lock arguments
-    _, kwargs_write = mock_write.call_args
+    kwargs_write = mock_write.call_args.kwargs
     assert kwargs_write["use_bridges"] is True
     assert kwargs_write["bridges"] == [
         "obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0",
@@ -565,27 +443,18 @@ def test_start_with_bridges_direct(
     ]
 
 
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=MagicMock(pw_uid=110))
 @patch("ttp.state.write_lock")
-@patch("ttp.tor_install.setup_selinux_if_needed")
 @patch("ttp.tor_install.ensure_tor_ready")
-@patch("ttp.firewall.apply_rules")
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.dns.apply_dns", return_value={"resolv": "conf"})
-@patch("ttp.commands.start._verify_tor", return_value=(True, "198.51.100.1"))
-@patch("ttp.state.read_lock", return_value=None)
-@patch("ttp.state.is_orphan", return_value=False)
-@patch("os.geteuid", return_value=0)
 def test_start_with_bridge_file(
-    mock_euid,
-    mock_orphan,
-    mock_read,
-    mock_verify,
-    mock_apply_dns,
-    mock_iface,
-    mock_apply_fw,
     mock_ensure,
-    mock_selinux,
     mock_write,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
+    mock_base_start,
     tmp_path,
 ):
     """Test start command with --bridge-file parsing comments and empty lines."""
@@ -602,7 +471,7 @@ def test_start_with_bridge_file(
     assert result.exit_code == 0
     assert "Session active" in result.output
 
-    _, kwargs_ensure = mock_ensure.call_args
+    kwargs_ensure = mock_ensure.call_args.kwargs
     assert kwargs_ensure["use_bridges"] is True
     assert kwargs_ensure["bridges"] == [
         "obfs4 192.0.2.1:1234 501234567890ABCDEF iat-mode=0",
@@ -610,16 +479,14 @@ def test_start_with_bridge_file(
     ]
 
 
-@patch("os.geteuid", return_value=0)
-def test_start_with_invalid_bridge_format(mock_euid):
+def test_start_with_invalid_bridge_format():
     """Test start command with invalid bridge format returns validation error."""
     result = runner.invoke(app, ["start", "--bridge", "obfs4_no_ip_port"])
     assert result.exit_code == 1
     assert "Invalid Bridge Line" in result.output
 
 
-@patch("os.geteuid", return_value=0)
-def test_start_use_bridges_without_bridges(mock_euid):
+def test_start_use_bridges_without_bridges():
     """Test start command with --use-bridges but no bridges specified returns error."""
     result = runner.invoke(app, ["start", "--use-bridges"])
     assert result.exit_code == 1
@@ -629,8 +496,7 @@ def test_start_use_bridges_without_bridges(mock_euid):
 # external-daemon (BYOD) mode tests
 
 
-@patch("os.geteuid", return_value=0)
-def test_start_external_daemon_watchdog_conflict(mock_euid):
+def test_start_external_daemon_watchdog_conflict():
     """Verify that passing --external-daemon and --watchdog raises a conflict error."""
     result = runner.invoke(app, ["start", "--external-daemon", "--watchdog"])
     assert result.exit_code == 1
@@ -638,40 +504,34 @@ def test_start_external_daemon_watchdog_conflict(mock_euid):
     assert "Watchdog daemon cannot be used in external-daemon mode" in result.output
 
 
-@patch("os.geteuid", return_value=0)
 @patch("ttp.commands.start._is_port_listening_tcp", return_value=False)
 @patch("ttp.commands.start._is_port_listening_udp", return_value=False)
-def test_start_external_daemon_inactive(mock_euid, mock_udp, mock_tcp):
+def test_start_external_daemon_inactive(mock_udp, mock_tcp):
     """Verify that starting TTP in BYOD mode when ports are not active fails."""
     result = runner.invoke(app, ["start", "--external-daemon"])
     assert result.exit_code == 1
     assert "Tor Not Running" in result.output
+    assert mock_tcp.call_count == 1
 
 
-@patch("os.geteuid", return_value=0)
 @patch("ttp.commands.start._is_port_listening_tcp", return_value=True)
 @patch("ttp.commands.start._is_port_listening_udp", return_value=True)
 @patch("pwd.getpwnam")
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.firewall.apply_rules")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
 @patch("ttp.state.write_lock")
-@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
 @patch("ttp.tor_install.ensure_tor_ready")
 def test_start_external_daemon_happy_path_manual_uid(
     mock_ensure,
-    mock_verify,
     mock_lock,
-    mock_firewall,
-    mock_active_if,
-    mock_dns,
+    mock_run_nft,
+    mock_nft_str,
     mock_pwnam,
     mock_udp,
     mock_tcp,
-    mock_euid,
+    mock_base_start,
 ):
     """Verify happy path in BYOD mode with manual --tor-uid override."""
-    # Mock user "debian-tor" to have UID 101
     mock_user = MagicMock()
     mock_user.pw_uid = 101
     mock_pwnam.return_value = mock_user
@@ -680,43 +540,32 @@ def test_start_external_daemon_happy_path_manual_uid(
     assert result.exit_code == 0
     assert "Tor daemon detected operating under UID: 101" in result.output
 
-    mock_ensure.assert_not_called()
-    mock_firewall.assert_called_once_with(
-        tor_user="101",
-        transport_port=9041,
-        dns_port=9054,
-        allow_root=False,
-        lan_bypass=True,
-        disable_ipv6=False,
-    )
+    assert mock_ensure.call_count == 0
+    ruleset = mock_nft_str.call_args[0][0]
+    assert "meta skuid 101" in ruleset
 
-    _, kwargs_lock = mock_lock.call_args
+    kwargs_lock = mock_lock.call_args.kwargs
     assert kwargs_lock["external_daemon"] is True
 
 
-@patch("os.geteuid", return_value=0)
 @patch("ttp.commands.start._is_port_listening_tcp", return_value=True)
 @patch("ttp.commands.start._is_port_listening_udp", return_value=True)
 @patch("ttp.commands.start._get_uid_from_port", return_value=105)
 @patch("pwd.getpwuid")
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.firewall.apply_rules")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
 @patch("ttp.state.write_lock")
-@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
 @patch("ttp.tor_install.ensure_tor_ready")
 def test_start_external_daemon_happy_path_auto_uid(
     mock_ensure,
-    mock_verify,
     mock_lock,
-    mock_firewall,
-    mock_active_if,
-    mock_dns,
+    mock_run_nft,
+    mock_nft_str,
     mock_pwuid,
     mock_get_uid,
     mock_udp,
     mock_tcp,
-    mock_euid,
+    mock_base_start,
 ):
     """Verify happy path in BYOD mode with port-owner auto-detected UID."""
     mock_user = MagicMock()
@@ -727,45 +576,31 @@ def test_start_external_daemon_happy_path_auto_uid(
     assert result.exit_code == 0
     assert "Tor daemon detected operating under UID: 105" in result.output
 
-    mock_get_uid.assert_called_once_with(9041)
-    mock_firewall.assert_called_once_with(
-        tor_user="105",
-        transport_port=9041,
-        dns_port=9054,
-        allow_root=False,
-        lan_bypass=True,
-        disable_ipv6=False,
-    )
+    assert mock_get_uid.call_args[0][0] == 9041
+    ruleset = mock_nft_str.call_args[0][0]
+    assert "meta skuid 105" in ruleset
 
 
-@patch("os.geteuid", return_value=0)
 @patch("ttp.commands.start._is_port_listening_tcp", return_value=True)
 @patch("ttp.commands.start._is_port_listening_udp", return_value=True)
 @patch("ttp.commands.start._get_uid_from_port", return_value=None)
 @patch("pwd.getpwnam")
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
 @patch("ttp.firewall.apply_rules")
 @patch("ttp.state.write_lock")
-@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
 @patch("ttp.tor_install.ensure_tor_ready")
 def test_start_external_daemon_happy_path_fallback_user(
     mock_ensure,
-    mock_verify,
     mock_lock,
     mock_firewall,
-    mock_active_if,
-    mock_dns,
     mock_pwnam,
     mock_get_uid,
     mock_udp,
     mock_tcp,
-    mock_euid,
+    mock_base_start,
 ):
     """Verify happy path in BYOD mode with fallback standard system users."""
     mock_user = MagicMock()
     mock_user.pw_uid = 110
-    # Let "tor" lookup succeed, returning user object
     mock_pwnam.return_value = mock_user
 
     result = runner.invoke(app, ["start", "--external-daemon"])
@@ -775,13 +610,10 @@ def test_start_external_daemon_happy_path_fallback_user(
     mock_pwnam.assert_any_call("tor")
 
 
-@patch("os.geteuid", return_value=0)
 @patch("ttp.commands.start._is_port_listening_tcp", return_value=True)
 @patch("ttp.commands.start._is_port_listening_udp", return_value=True)
 @patch("ttp.commands.start._get_uid_from_port", return_value=None)
 @patch("pwd.getpwnam", side_effect=KeyError("Not found"))
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
 @patch("ttp.firewall.apply_rules")
 @patch("ttp.state.write_lock")
 @patch("ttp.tor_install.ensure_tor_ready")
@@ -789,13 +621,11 @@ def test_start_external_daemon_uid_resolution_failure(
     mock_ensure,
     mock_lock,
     mock_firewall,
-    mock_active_if,
-    mock_dns,
     mock_pwnam,
     mock_get_uid,
     mock_udp,
     mock_tcp,
-    mock_euid,
+    mock_base_start,
 ):
     """Verify that startup fails if no Tor UID can be determined."""
     result = runner.invoke(app, ["start", "--external-daemon"])
@@ -803,126 +633,50 @@ def test_start_external_daemon_uid_resolution_failure(
     assert "Tor UID Resolution Failed" in result.output
 
 
-@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.firewall.apply_rules")
-@patch(
-    "ttp.tor_install.ensure_tor_ready",
-    return_value={"is_installed": True, "version": "0.4.8.10"},
-)
-@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=MagicMock(pw_uid=110))
 @patch("ttp.state.write_lock")
-@patch("ttp.state.read_lock", return_value=None)
-@patch("ttp.state.is_orphan", return_value=False)
-@patch("os.geteuid", return_value=0)
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=False)
 def test_start_no_ipv6_unsupported(
     mock_ipv6,
-    mock_euid,
-    mock_orphan,
-    mock_read,
     mock_write,
-    mock_selinux,
-    mock_ensure,
-    mock_apply_fw,
-    mock_iface,
-    mock_apply_dns,
-    mock_verify,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
+    mock_base_start,
 ):
     """Verify superfluous warning is printed when IPv6 is unsupported and --no-ipv6 is passed."""
     result = runner.invoke(app, ["start", "--no-ipv6"])
     assert result.exit_code == 0
     assert "superfluous" in result.output
-    # verify disable_ipv6=True is propagated down
-    mock_ensure.assert_called_once_with(
-        transport_port=9041,
-        dns_port=9054,
-        use_bridges=False,
-        bridges=[],
-        disable_ipv6=True,
-    )
-    mock_apply_fw.assert_called_once_with(
-        tor_user="debian-tor",
-        transport_port=9041,
-        dns_port=9054,
-        allow_root=False,
-        lan_bypass=True,
-        disable_ipv6=True,
-    )
-    mock_apply_dns.assert_called_once_with("eth0", disable_ipv6=True, dns_port=9054)
-    mock_write.assert_called_once_with(
-        dns_backup={"interface": "eth0"},
-        transport_port=9041,
-        dns_port=9054,
-        allow_root=False,
-        lan_bypass=True,
-        interface="eth0",
-        external_daemon=False,
-        no_ipv6=True,
-        tor_uid=None,
-    )
+
+    ruleset = mock_nft_str.call_args[0][0]
+    assert "meta nfproto ipv6 drop" in ruleset
+    assert mock_write.call_args.kwargs["no_ipv6"] is True
 
 
-@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
-@patch("ttp.dns.apply_dns", return_value={"interface": "eth0"})
-@patch("ttp.dns.detect_active_interface", return_value="eth0")
-@patch("ttp.firewall.apply_rules")
-@patch(
-    "ttp.tor_install.ensure_tor_ready",
-    return_value={"is_installed": True, "version": "0.4.8.10"},
-)
-@patch("ttp.tor_install.setup_selinux_if_needed")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=MagicMock(pw_uid=110))
 @patch("ttp.state.write_lock")
-@patch("ttp.state.read_lock", return_value=None)
-@patch("ttp.state.is_orphan", return_value=False)
-@patch("os.geteuid", return_value=0)
 @patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
 def test_start_no_ipv6_supported(
     mock_ipv6,
-    mock_euid,
-    mock_orphan,
-    mock_read,
     mock_write,
-    mock_selinux,
-    mock_ensure,
-    mock_apply_fw,
-    mock_iface,
-    mock_apply_dns,
-    mock_verify,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
+    mock_base_start,
 ):
     """Verify info message is printed when IPv6 is supported and --no-ipv6 is passed."""
     result = runner.invoke(app, ["start", "--no-ipv6"])
     assert result.exit_code == 0
     assert "IPv6 traffic will be dropped" in result.output
-    # verify disable_ipv6=True is propagated down
-    mock_ensure.assert_called_once_with(
-        transport_port=9041,
-        dns_port=9054,
-        use_bridges=False,
-        bridges=[],
-        disable_ipv6=True,
-    )
-    mock_apply_fw.assert_called_once_with(
-        tor_user="debian-tor",
-        transport_port=9041,
-        dns_port=9054,
-        allow_root=False,
-        lan_bypass=True,
-        disable_ipv6=True,
-    )
-    mock_apply_dns.assert_called_once_with("eth0", disable_ipv6=True, dns_port=9054)
-    mock_write.assert_called_once_with(
-        dns_backup={"interface": "eth0"},
-        transport_port=9041,
-        dns_port=9054,
-        allow_root=False,
-        lan_bypass=True,
-        interface="eth0",
-        external_daemon=False,
-        no_ipv6=True,
-        tor_uid=None,
-    )
+
+    ruleset = mock_nft_str.call_args[0][0]
+    assert "meta nfproto ipv6 drop" in ruleset
+    assert mock_write.call_args.kwargs["no_ipv6"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -945,8 +699,8 @@ class TestParseBypassUsersGroups:
     @patch("grp.getgrnam")
     @patch("pwd.getpwnam")
     def test_single_user_and_group(self, mock_pwnam, mock_grpnam):
-        mock_pwnam.return_value = MagicMock(pw_uid=1001)
-        mock_grpnam.return_value = MagicMock(gr_gid=2001)
+        mock_pwnam.return_value = types.SimpleNamespace(pw_uid=1001)
+        mock_grpnam.return_value = types.SimpleNamespace(gr_gid=2001)
 
         users, groups, uids, gids = _parse_bypass_users_groups(["alice"], ["staff"])
         assert users == ["alice"]
@@ -956,14 +710,14 @@ class TestParseBypassUsersGroups:
 
     @patch("pwd.getpwnam")
     def test_comma_separated_users(self, mock_pwnam):
-        mock_pwnam.return_value = MagicMock(pw_uid=1001)
+        mock_pwnam.return_value = types.SimpleNamespace(pw_uid=1001)
         users, _, uids, _ = _parse_bypass_users_groups(["alice,bob"], None)
         assert users == ["alice", "bob"]
         assert len(uids) == 2
 
     @patch("pwd.getpwuid")
     def test_numeric_uid_accepted(self, mock_pwuid):
-        mock_pwuid.return_value = MagicMock()
+        mock_pwuid.return_value = types.SimpleNamespace(pw_uid=1234)
         _users, _, uids, _ = _parse_bypass_users_groups(["1234"], None)
         assert uids == [1234]
 
@@ -1036,7 +790,7 @@ class TestResolveExternalTorUid:
 
     @patch("pwd.getpwnam")
     def test_manual_override_by_name(self, mock_pwnam):
-        mock_pwnam.return_value = MagicMock(pw_uid=101)
+        mock_pwnam.return_value = types.SimpleNamespace(pw_uid=101)
         result = _resolve_external_tor_uid(9041, "debian-tor")
         assert result == "101"
 
@@ -1052,7 +806,7 @@ class TestResolveExternalTorUid:
     @patch("pwd.getpwuid")
     @patch("ttp.commands.start._get_uid_from_port", return_value=105)
     def test_autodetect_via_port(self, mock_port, mock_pwuid):
-        mock_pwuid.return_value = MagicMock(pw_name="tor-daemon")
+        mock_pwuid.return_value = types.SimpleNamespace(pw_name="tor-process")
         result = _resolve_external_tor_uid(9041, None)
         assert result == "105"
 
@@ -1060,9 +814,9 @@ class TestResolveExternalTorUid:
     @patch("ttp.commands.start._get_uid_from_port", return_value=0)
     def test_autodetect_skips_root_uid(self, mock_port, mock_pwuid):
         # UID 0 (root) is not a valid Tor user - skip to next step
-        mock_pwuid.return_value = MagicMock(pw_name="root")
+        mock_pwuid.return_value = types.SimpleNamespace(pw_name="root")
         with patch("pwd.getpwnam") as mock_pwnam:
-            mock_pwnam.return_value = MagicMock(pw_uid=110)
+            mock_pwnam.return_value = types.SimpleNamespace(pw_uid=110)
             result = _resolve_external_tor_uid(9041, None)
             # Should fall through to fallback user "tor"
             assert result == "110"
@@ -1071,7 +825,7 @@ class TestResolveExternalTorUid:
     @patch("pwd.getpwnam")
     def test_fallback_to_debian_tor(self, mock_pwnam, mock_port):
         mock_pwnam.side_effect = lambda u: (
-            (_ for _ in ()).throw(KeyError("not found")) if u == "tor" else MagicMock(pw_uid=110)
+            (_ for _ in ()).throw(KeyError("not found")) if u == "tor" else types.SimpleNamespace(pw_uid=110)
         )
         result = _resolve_external_tor_uid(9041, None)
         assert result == "110"

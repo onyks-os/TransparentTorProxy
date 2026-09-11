@@ -6,12 +6,12 @@
 from __future__ import annotations
 
 import logging
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
 
 from ttp.exceptions import TorError
+from ttp.paths import resolve, resolve_optional
 from ttp.selinux import label_ports_selinux
 from ttp.tor_config import TOR_CACHE_DIR, TOR_RUNTIME_DIR, generate_torrc
 
@@ -63,7 +63,11 @@ def _write_service_unit(tor_user: str) -> None:
     Args:
         tor_user: Username running the Tor process.
     """
-    tor_bin = shutil.which("tor") or "/usr/bin/tor"
+    # This path is written into the systemd unit's ExecStart and then run as
+    # root by systemd. `shutil.which` consults $PATH, so a caller-controlled
+    # environment could have decided which program the unit launches - for the
+    # lifetime of the unit file, not just the current process.
+    tor_bin = resolve_optional("tor") or "/usr/bin/tor"
     unit = _build_service_unit_content(tor_user, tor_bin)
     TTP_SERVICE_PATH.parent.mkdir(parents=True, exist_ok=True)
     TTP_SERVICE_PATH.write_text(unit, encoding="utf-8")
@@ -113,13 +117,13 @@ def start_tor_service(
 
     try:
         subprocess.run(
-            ["systemctl", "daemon-reload"],
+            [resolve("systemctl"), "daemon-reload"],
             capture_output=True,
             text=True,
             check=True,
         )
         subprocess.run(
-            ["systemctl", "restart", TTP_SERVICE_NAME],
+            [resolve("systemctl"), "restart", TTP_SERVICE_NAME],
             capture_output=True,
             text=True,
             check=True,
@@ -132,7 +136,7 @@ def start_tor_service(
 def stop_tor_service() -> None:
     """Stop the dedicated TTP Tor service and remove the volatile systemd unit."""
     subprocess.run(
-        ["systemctl", "stop", TTP_SERVICE_NAME],
+        [resolve("systemctl"), "stop", TTP_SERVICE_NAME],
         capture_output=True,
         text=True,
         check=False,
@@ -140,7 +144,7 @@ def stop_tor_service() -> None:
     # Clean up the volatile unit
     TTP_SERVICE_PATH.unlink(missing_ok=True)
     subprocess.run(
-        ["systemctl", "daemon-reload"],
+        [resolve("systemctl"), "daemon-reload"],
         capture_output=True,
         text=True,
         check=False,

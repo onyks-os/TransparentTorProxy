@@ -46,7 +46,7 @@ if [ "$IFACE" = "wlan0" ] || [ "$IFACE" = "eth0" ]; then
 fi
 ```
 
-2. Make the script executable and set root ownership:
+1. Make the script executable and set root ownership:
 
 ```bash
 sudo chmod +x /etc/NetworkManager/dispatcher.d/99-ttp.sh
@@ -79,7 +79,7 @@ TimeoutStopSec=30
 WantedBy=multi-user.target
 ```
 
-2. Reload systemd daemon and enable the service:
+1. Reload systemd daemon and enable the service:
 
 ```bash
 sudo systemctl daemon-reload

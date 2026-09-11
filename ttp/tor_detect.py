@@ -21,25 +21,34 @@ re-exported here for backward compatibility.
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from ttp.paths import resolve, resolve_optional
 
 # Volatile runtime config path
 TORRC_PATH = Path("/run/tor/ttp/torrc")
 
 
 def _check_installed() -> bool:
-    """Return ``True`` if the ``tor`` binary is found in ``$PATH``."""
-    return shutil.which("tor") is not None
+    """Return ``True`` if a trusted ``tor`` binary is installed.
+
+    Deliberately not ``shutil.which``: that consults ``$PATH``, so a caller could
+    make TTP believe Tor is installed by putting anything named ``tor`` on it -
+    and the answer feeds decisions about a privacy session.
+    """
+    return resolve_optional("tor") is not None
 
 
 def _get_version() -> str:
     """Return the Tor version string, or ``""`` if unavailable."""
+    tor_bin = resolve_optional("tor")
+    if not tor_bin:
+        return ""
     try:
         result = subprocess.run(
-            ["tor", "--version"],
+            [tor_bin, "--version"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -55,7 +64,7 @@ def _check_running() -> bool:
     """Return ``True`` if a tor process is currently running."""
     try:
         result = subprocess.run(
-            ["pgrep", "-x", "tor"],
+            [resolve("pgrep"), "-x", "tor"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -116,7 +125,7 @@ def _detect_tor_user() -> str:
     #    ``debian-tor`` (10 chars) to ``debian-+`` (8 chars).
     try:
         result = subprocess.run(
-            ["ps", "-eo", "user:32,comm"],
+            [resolve("ps"), "-eo", "user:32,comm"],
             capture_output=True,
             text=True,
             timeout=10,

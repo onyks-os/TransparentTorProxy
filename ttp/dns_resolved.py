@@ -14,6 +14,8 @@ import logging
 import subprocess
 from pathlib import Path
 
+from ttp.paths import resolve
+
 logger = logging.getLogger("ttp")
 
 RESOLVED_CONF_DIR = Path("/run/systemd/resolved.conf.d")
@@ -24,7 +26,7 @@ def is_resolved_active() -> bool:
     """Return True if systemd-resolved is active (running)."""
     try:
         res = subprocess.run(
-            ["systemctl", "is-active", "systemd-resolved"],
+            [resolve("systemctl"), "is-active", "systemd-resolved"],
             capture_output=True,
             text=True,
             check=False,
@@ -75,7 +77,7 @@ def apply_resolved(dns_port: int, disable_ipv6: bool = False) -> bool:
         RESOLVED_CONF_FILE.write_text(config_content, encoding="utf-8")
 
         subprocess.run(
-            ["systemctl", "restart", "systemd-resolved"],
+            [resolve("systemctl"), "restart", "systemd-resolved"],
             capture_output=True,
             text=True,
             check=True,
@@ -83,7 +85,7 @@ def apply_resolved(dns_port: int, disable_ipv6: bool = False) -> bool:
         )
 
         subprocess.run(
-            ["resolvectl", "flush-caches"],
+            [resolve("resolvectl"), "flush-caches"],
             capture_output=True,
             text=True,
             check=False,
@@ -108,7 +110,7 @@ def restore_resolved() -> None:
 
     try:
         subprocess.run(
-            ["systemctl", "restart", "systemd-resolved"],
+            [resolve("systemctl"), "restart", "systemd-resolved"],
             capture_output=True,
             text=True,
             check=True,
@@ -119,7 +121,7 @@ def restore_resolved() -> None:
 
     try:
         subprocess.run(
-            ["resolvectl", "flush-caches"],
+            [resolve("resolvectl"), "flush-caches"],
             capture_output=True,
             text=True,
             check=False,

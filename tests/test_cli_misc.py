@@ -60,6 +60,7 @@ def test_status_active(mock_read, mock_orphan, mock_ip):
     assert result.exit_code == 0
     assert "ACTIVE" in result.output
     assert "5.6.7.8" in result.output
+    assert mock_read.call_count == 1
 
 
 @patch("ttp.state.read_lock", return_value=None)
@@ -68,6 +69,7 @@ def test_status_inactive(mock_read):
     result = runner.invoke(app, ["status"])
     assert result.exit_code == 0
     assert "INACTIVE" in result.output
+    assert mock_read.call_count == 1
 
 
 # start with --interface
@@ -85,9 +87,9 @@ def test_uninstall_calls_cleanup(mock_euid, mock_del_star, mock_read, mock_is_se
     assert result.exit_code == 0
     assert "Uninstallation complete" in result.output
 
-    mock_stop.assert_called_once()
-    mock_rem_sel.assert_called_once()
-    mock_del_star.assert_called_once()
+    assert mock_stop.call_count == 1
+    assert mock_rem_sel.call_count == 1
+    assert mock_del_star.call_count == 1
 
 
 # start with --bootstrap-timeout
@@ -103,6 +105,7 @@ def test_check_success(mock_verify_tor, mock_get_ctrl):
     assert "100.200.100.200" in result.output
     assert "Yes (IsTor=True)" in result.output
     assert "Yes (Controller connected)" in result.output
+    assert mock_verify_tor.call_count == 1
 
 
 @patch("ttp.tor_control.verify_tor", return_value=(False, "unknown"))
@@ -110,13 +113,14 @@ def test_check_failure(mock_verify_tor):
     result = runner.invoke(app, ["check"])
     assert result.exit_code == 1
     assert "Failed to reach any IP verification endpoint" in result.output
+    assert mock_verify_tor.call_count == 1
 
 
 # check-leak
 
 
 @patch("subprocess.run")
-@patch("shutil.which", return_value="/usr/bin/dig")
+@patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig")
 @patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_success(mock_read, mock_verify, mock_which, mock_run):
@@ -134,10 +138,12 @@ def test_check_leak_success(mock_read, mock_verify, mock_which, mock_run):
     result = runner.invoke(app, ["check-leak"])
     assert result.exit_code == 0
     assert "No leaks detected" in result.output
+    assert mock_verify.call_count == 1
+    assert mock_read.call_count == 1
 
 
 @patch("subprocess.run")
-@patch("shutil.which", return_value="/usr/bin/dig")
+@patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig")
 @patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_akahelp_txt_ip_not_a_leak(mock_read, mock_verify, mock_which, mock_run):
@@ -157,13 +163,14 @@ def test_check_leak_akahelp_txt_ip_not_a_leak(mock_read, mock_verify, mock_which
     result = runner.invoke(app, ["check-leak"])
     assert result.exit_code == 0
     assert "No leaks detected" in result.output
+    assert mock_verify.call_count == 1
 
 
 @patch("ttp.tor_control.verify_tor", return_value=(False, "8.8.8.8"))
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_detected_istor_false(mock_read, mock_verify):
     with (
-        patch("shutil.which", return_value="/usr/bin/dig"),
+        patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig"),
         patch("subprocess.run") as mock_run,
     ):
 
@@ -181,10 +188,11 @@ def test_check_leak_detected_istor_false(mock_read, mock_verify):
         result = runner.invoke(app, ["check-leak"])
     assert result.exit_code == 1
     assert "Leaks detected!" in result.output
+    assert mock_verify.call_count == 1
 
 
 @patch("ttp.tor_control.verify_tor", return_value=(False, "unknown"))
-@patch("shutil.which", return_value="/usr/bin/dig")
+@patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig")
 @patch("subprocess.run")
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_tor_api_error(mock_read, mock_run, mock_which, mock_verify):
@@ -197,19 +205,21 @@ def test_check_leak_tor_api_error(mock_read, mock_run, mock_which, mock_verify):
     result = runner.invoke(app, ["-v", "check-leak"])
     assert result.exit_code == 1
     assert "Leaks detected!" in result.output
+    assert mock_verify.call_count == 1
 
 
 @patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
-@patch("shutil.which", return_value=None)
+@patch("ttp.commands.session.resolve_optional", return_value=None)
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_no_dig_binary(mock_read, mock_which, mock_verify):
     result = runner.invoke(app, ["check-leak"])
     assert result.exit_code == 1
     assert "Leaks detected!" in result.output
+    assert mock_which.call_count == 1
 
 
 @patch("ttp.tor_control.verify_tor", return_value=(True, "1.1.1.1"))
-@patch("shutil.which", return_value="/usr/bin/dig")
+@patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig")
 @patch("subprocess.run")
 @patch("ttp.state.read_lock", return_value={"pid": 1234})
 def test_check_leak_empty_dig_a(mock_read, mock_run, mock_which, mock_verify):
@@ -226,6 +236,7 @@ def test_check_leak_empty_dig_a(mock_read, mock_run, mock_which, mock_verify):
     result = runner.invoke(app, ["check-leak"])
     assert result.exit_code == 1
     assert "Leaks detected!" in result.output
+    assert mock_verify.call_count == 1
 
 
 @patch("ttp.state.read_lock", return_value=None)
@@ -233,6 +244,7 @@ def test_check_leak_inactive(mock_read):
     result = runner.invoke(app, ["check-leak"])
     assert result.exit_code == 1
     assert "INACTIVE" in result.output
+    assert mock_read.call_count == 1
 
 
 # logs
@@ -246,7 +258,8 @@ def test_logs_command(mock_log_path):
     result = runner.invoke(app, ["logs"])
     assert result.exit_code == 0
     assert "Mock log content" in result.output
-    mock_log_path.read_text.assert_called_once_with(encoding="utf-8")
+    assert mock_log_path.read_text.call_args.kwargs == {"encoding": "utf-8"}
+    assert mock_log_path.exists.call_count == 1
 
 
 @patch("ttp.commands.admin._LOG_PATH")
@@ -256,6 +269,7 @@ def test_logs_command_no_file(mock_log_path):
     result = runner.invoke(app, ["logs"])
     assert result.exit_code == 1
     assert "No log file found" in result.output
+    assert mock_log_path.exists.call_count == 1
 
 
 # tmpfs pre-flight
@@ -279,6 +293,7 @@ def test_status_shows_custom_ports(mock_read, mock_orphan, mock_ip):
     assert "ACTIVE" in result.output
     assert "TransPort: 9080" in result.output
     assert "DNSPort: 9090" in result.output
+    assert mock_read.call_count == 1
 
 
 @patch("ttp.tor_control.get_controller")
@@ -298,6 +313,7 @@ def test_check_shows_custom_ports(mock_read, mock_verify_tor, mock_get_ctrl):
     assert result.exit_code == 0
     assert "TransPort:       9080" in result.output
     assert "DNSPort:         9090" in result.output
+    assert mock_read.call_count == 1
 
 
 @patch("os.geteuid", return_value=0)
@@ -307,6 +323,7 @@ def test_watchdog_start_no_session(mock_read, mock_euid):
     result = runner.invoke(app, ["watchdog", "start"])
     assert result.exit_code == 1
     assert "No active TTP session found" in result.output
+    assert mock_read.call_count == 1
 
 
 @patch("os.geteuid", return_value=0)
@@ -317,7 +334,8 @@ def test_watchdog_start_success(mock_start_wd, mock_read, mock_euid):
     result = runner.invoke(app, ["watchdog", "start"])
     assert result.exit_code == 0
     assert "Watchdog daemon started successfully" in result.output
-    mock_start_wd.assert_called_once()
+    assert mock_start_wd.call_count == 1
+    assert mock_read.call_count == 1
 
 
 @patch("os.geteuid", return_value=0)
@@ -327,7 +345,7 @@ def test_watchdog_stop(mock_stop_wd, mock_euid):
     result = runner.invoke(app, ["watchdog", "stop"])
     assert result.exit_code == 0
     assert "Watchdog daemon stopped successfully" in result.output
-    mock_stop_wd.assert_called_once()
+    assert mock_stop_wd.call_count == 1
 
 
 @patch("ttp.state.read_lock", return_value=None)
@@ -336,6 +354,7 @@ def test_watchdog_status_no_session(mock_read):
     result = runner.invoke(app, ["watchdog", "status"])
     assert result.exit_code == 0
     assert "INACTIVE (TTP is not running)" in result.output
+    assert mock_read.call_count == 1
 
 
 @patch("ttp.state.read_lock", return_value={"watchdog_active": False})
@@ -344,6 +363,7 @@ def test_watchdog_status_inactive(mock_read):
     result = runner.invoke(app, ["watchdog", "status"])
     assert result.exit_code == 0
     assert "Watchdog Status: INACTIVE" in result.output
+    assert mock_read.call_count == 1
 
 
 @patch(
@@ -356,6 +376,7 @@ def test_watchdog_status_active(mock_read):
     assert result.exit_code == 0
     assert "Watchdog Status: ACTIVE" in result.output
     assert "Watchdog PID: 9999" in result.output
+    assert mock_read.call_count == 1
 
 
 @patch("os.geteuid", return_value=0)
@@ -364,7 +385,7 @@ def test_watchdog_run(mock_run_loop, mock_euid):
     """watchdog run hidden command executes run_watchdog_loop."""
     result = runner.invoke(app, ["watchdog", "run", "--interval", "10"])
     assert result.exit_code == 0
-    mock_run_loop.assert_called_once_with(interval_seconds=10)
+    assert mock_run_loop.call_args.kwargs == {"interval_seconds": 10}
 
 
 # 9. JSON Logging Tests
@@ -445,12 +466,12 @@ def test_setup_logging_json(mock_stream, mock_file, mock_ensure):
         original_setup_logging()
 
         # Check file handler setup
-        mock_file.assert_called_once()
+        assert mock_file.call_count == 1
         args, _ = mock_file_handler.setFormatter.call_args
         assert isinstance(args[0], JSONFormatter)
 
         # Check stream handler setup
-        mock_stream.assert_called_once()
+        assert mock_stream.call_count == 1
         args_s, _ = mock_stream_handler.setFormatter.call_args
         assert isinstance(args_s[0], JSONFormatter)
 

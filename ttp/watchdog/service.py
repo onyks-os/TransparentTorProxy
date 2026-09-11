@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ttp import state
 from ttp.exceptions import TorError
+from ttp.paths import resolve
 
 logger = logging.getLogger("ttp")
 
@@ -70,14 +71,14 @@ def start_watchdog() -> None:
     _write_watchdog_service_unit()
     try:
         subprocess.run(
-            ["systemctl", "daemon-reload"],
+            [resolve("systemctl"), "daemon-reload"],
             capture_output=True,
             text=True,
             check=True,
             timeout=10,
         )
         subprocess.run(
-            ["systemctl", "start", WATCHDOG_SERVICE_NAME],
+            [resolve("systemctl"), "start", WATCHDOG_SERVICE_NAME],
             capture_output=True,
             text=True,
             check=True,
@@ -86,7 +87,7 @@ def start_watchdog() -> None:
 
         # Retrieve the PID of the watchdog process
         res = subprocess.run(
-            ["systemctl", "show", WATCHDOG_SERVICE_NAME, "-p", "MainPID"],
+            [resolve("systemctl"), "show", WATCHDOG_SERVICE_NAME, "-p", "MainPID"],
             capture_output=True,
             text=True,
             check=True,
@@ -105,7 +106,7 @@ def start_watchdog() -> None:
 def stop_watchdog() -> None:
     """Stop the watchdog service and delete the volatile service unit."""
     subprocess.run(
-        ["systemctl", "stop", WATCHDOG_SERVICE_NAME],
+        [resolve("systemctl"), "stop", WATCHDOG_SERVICE_NAME],
         capture_output=True,
         text=True,
         check=False,
@@ -113,7 +114,7 @@ def stop_watchdog() -> None:
     )
     WATCHDOG_SERVICE_PATH.unlink(missing_ok=True)
     subprocess.run(
-        ["systemctl", "daemon-reload"],
+        [resolve("systemctl"), "daemon-reload"],
         capture_output=True,
         text=True,
         check=False,

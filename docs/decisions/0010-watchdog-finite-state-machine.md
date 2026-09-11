@@ -19,11 +19,12 @@ The TTP watchdog daemon manages session integrity and auto-healing. Originally, 
 
 ## Decision
 
-To ensure high-assurance reliability and complete testability, we migrate the watchdog logic to a formal **Finite State Machine (FSM)** using the `transitions` library. 
+To ensure high-assurance reliability and complete testability, we migrate the watchdog logic to a formal **Finite State Machine (FSM)** using the `transitions` library.
 
 The machine is defined as follows:
 
 ### 1. States
+
 * **`stopped`**: Watchdog is inactive (idle).
 * **`healthy`**: Active monitoring. Tor, firewall, systemd-resolved, and DNS overlay are running correctly.
 * **`suspended`**: Network link is offline or default gateway is missing. Integrity checks are paused.
@@ -31,6 +32,7 @@ The machine is defined as follows:
 * **`killswitch`**: Healing failed or critical tampering detected. Emergency total-network-lockdown is active.
 
 ### 2. State Transition Model
+
 All monitoring events, disconnections, and recoveries map to formal triggers:
 
 ```mermaid
@@ -50,6 +52,7 @@ stateDiagram-v2
 ```
 
 ### 3. Separation of Concerns
+
 * **State Machine (`fsm.py`)**: Houses the FSM graph, state variable attributes (watches, sockets), and trigger actions (setup inotify, trigger auto-healing, trigger killswitch).
 * **Event Loop (`inotify.py`)**: Multiplexes Netlink sockets and Inotify events via `select.select`, delegating all state transitions and system callbacks to the FSM.
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from ttp import dns, state, tor_control
+from ttp.paths import resolve
 
 logger = logging.getLogger("ttp")
 
@@ -109,7 +110,7 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
                     "systemd-resolved drop-in configuration file has been deleted",
                 )
             res_resolved = subprocess.run(
-                ["systemctl", "is-active", "systemd-resolved"],
+                [resolve("systemctl"), "is-active", "systemd-resolved"],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -120,7 +121,7 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
 
     # 2. Firewall Ruleset check
     res = subprocess.run(
-        ["nft", "list", "table", "inet", "ttp"],
+        [resolve("nft"), "list", "table", "inet", "ttp"],
         capture_output=True,
         text=True,
         check=False,
@@ -172,7 +173,7 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
     else:
         # Control socket unavailable - fall back to systemd service status
         res_tor = subprocess.run(
-            ["systemctl", "is-active", "ttp-tor"],
+            [resolve("systemctl"), "is-active", "ttp-tor"],
             capture_output=True,
             text=True,
             check=False,
@@ -204,7 +205,7 @@ def attempt_auto_healing(failed_component: str) -> bool:
         if failed_component == "tor":
             logger.info("Watchdog: Restarting Tor service via systemctl...")
             res = subprocess.run(
-                ["systemctl", "restart", "ttp-tor.service"],
+                [resolve("systemctl"), "restart", "ttp-tor.service"],
                 capture_output=True,
                 text=True,
                 check=False,

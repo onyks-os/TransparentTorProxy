@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import subprocess
 
 import typer
@@ -23,6 +22,7 @@ from ttp.commands._common import (
     require_root as _require_root,
 )
 from ttp.exceptions import TorError
+from ttp.paths import resolve_optional
 
 
 def refresh_command() -> None:
@@ -185,11 +185,11 @@ def check_leak_command() -> None:
         if cli_state.verbose:
             logger.debug("Tor verification failed: is_tor=%s, ip=%s", is_tor, ip)
 
-    dig_bin = shutil.which("dig")
+    dig_bin = resolve_optional("dig")
     if not dig_bin:
         has_leaks = True
         if cli_state.verbose:
-            logger.debug("dig not found in PATH; cannot verify DNS path.")
+            logger.debug("dig not found in a trusted directory; cannot verify DNS path.")
     else:
         # 2. Basic DNS resolution through the tunnel (must resolve check.torproject.org).
         cmd_a = [dig_bin, "+short", "A", "check.torproject.org"]

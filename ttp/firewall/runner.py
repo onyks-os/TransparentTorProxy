@@ -9,6 +9,7 @@ import subprocess
 
 from ttp.exceptions import FirewallError
 from ttp.firewall.builder import _build_ruleset, _has_cgroup_bypass_support
+from ttp.paths import resolve
 from ttp.state import LOCK_DIR
 
 logger = logging.getLogger("ttp")
@@ -46,7 +47,7 @@ def _run_nft(args: list[str]) -> None:
         subprocess.CalledProcessError: If the ``nft`` command exits with non-zero status.
     """
     subprocess.run(
-        ["nft", *args],
+        [resolve("nft"), *args],
         capture_output=True,
         text=True,
         check=True,
@@ -70,7 +71,7 @@ def _run_nft_string(ruleset: str) -> None:
         RULES_TEMP_PATH.write_text(ruleset.strip() + "\n", encoding="utf-8")
 
         subprocess.run(
-            ["nft", "-f", str(RULES_TEMP_PATH)],
+            [resolve("nft"), "-f", str(RULES_TEMP_PATH)],
             capture_output=True,
             text=True,
             check=True,
@@ -169,13 +170,13 @@ def destroy_rules() -> bool:
     """
     # Flush the table first for absolute cleanup safety
     subprocess.run(
-        ["nft", "flush", "table", "inet", "ttp"],
+        [resolve("nft"), "flush", "table", "inet", "ttp"],
         capture_output=True,
         check=False,
         timeout=10,
     )
     result = subprocess.run(
-        ["nft", "destroy", "table", "inet", "ttp"],
+        [resolve("nft"), "destroy", "table", "inet", "ttp"],
         capture_output=True,
         check=False,
         timeout=10,
@@ -185,7 +186,7 @@ def destroy_rules() -> bool:
     if result.returncode != 0:
         # Check: does the table still exist?
         check = subprocess.run(
-            ["nft", "list", "table", "inet", "ttp"],
+            [resolve("nft"), "list", "table", "inet", "ttp"],
             capture_output=True,
             check=False,
             timeout=10,
