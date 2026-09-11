@@ -1,0 +1,94 @@
+# The published documentation lives in onyks-os.github.io, a separate repository
+# holding built output. Rebuilding it by hand meant the site drifted behind the
+# code silently: NSE 2.1.1 shipped with a site that did not mention it at all.
+#
+# This publishes on `release: published` rather than on every push to main, so
+# what the site shows is by construction a version that was actually released,
+# not whatever happened to land on the default branch.
+name: Publish Documentation
+
+on:
+  release:
+    types: [published]
+  # For republishing after a site-side change; builds from the default branch,
+  # so prefer re-running this on a release when the content is what matters.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialised within this repository. Two *different* repositories publishing at
+# once is still possible, which the rebase loop at the end handles.
+concurrency:
+  group: publish-docs
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to onyks-os.github.io/ttp
+    runs-on: ubuntu-latest
+    steps:
+      # On a release event the default ref is the tag, so this checks out the
+      # released source rather than main.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install documentation toolchain
+        run: |
+          python -m pip install --upgrade pip
+          pip install mkdocs mkdocs-material "mkdocstrings[python]"
+
+      # mkdocs.yml points site_dir at a sibling checkout of the site repository,
+      # which does not exist on a runner; --site-dir overrides it. --strict keeps
+      # a broken link from being published rather than only reported.
+      - name: Build (strict)
+        run: |
+          make docs-sync
+          mkdocs build --strict --site-dir "${RUNNER_TEMP}/site"
+
+      - name: Check out the documentation site
+        uses: actions/checkout@v7
+        with:
+          repository: onyks-os/onyks-os.github.io
+          path: site-repo
+          token: ${{ secrets.DOCS_SITE_TOKEN }}
+
+      # --delete so that a page removed from the nav also disappears from the
+      # site; a plain copy would leave orphaned pages reachable by URL forever.
+      - name: Replace the published tree
+        run: rsync -a --delete "${RUNNER_TEMP}/site/" site-repo/ttp/
+
+      - name: Commit and push
+        working-directory: site-repo
+        env:
+          VERSION: ${{ github.event.release.tag_name || github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ -z "$(git status --porcelain ttp)" ]; then
+            echo "Published documentation already matches ${VERSION}."
+            exit 0
+          fi
+
+          git add -A ttp
+          git commit -m "docs(ttp): publish ${VERSION}" \
+            -m "Built from ${GITHUB_REPOSITORY}@${VERSION} by ${GITHUB_WORKFLOW} run ${GITHUB_RUN_ID}."
+
+          # Another project's release can push here between the checkout above
+          # and this line. Rebasing is correct because each project owns a
+          # disjoint subdirectory, so the two changes never touch the same file.
+          for attempt in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "::error::Could not push the built documentation after three attempts."
+          exit 1

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`publish-docs.yml`** — the documentation site is rebuilt and pushed to
+  `onyks-os.github.io/ttp` when a release is published, from the released tag.
+  Publication was a manual step, so the site drifted behind the code with
+  nothing to report it.
+
 ## [0.4.8] - 2026-09-11 (Verification Debt)
 
 The theme of this cycle is one defect repeated across the project: **a check that
