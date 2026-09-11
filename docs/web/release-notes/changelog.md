@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The IP leak test was less resilient than the code it verifies.** It made a
+  single request to `check.torproject.org`, while `tor_control.verify_tor()`
+  makes five attempts across several endpoints with a three-second backoff. One
+  TLS handshake dropped by an exit node therefore failed the Debian integration
+  job on a tree that had passed the identical job eleven minutes earlier
+  (`SSL: UNEXPECTED_EOF_WHILE_READING`). The retry budget now mirrors
+  `verify_tor`'s, and exhausting it reports a transport failure explicitly as
+  *not* a leak verdict. The endpoint list is deliberately not shared: a leak
+  test must not ask the code under test whether the code under test works.
 - **The exit-code table documented a code the CLI never returns.**
   `docs/interfaces.md` listed `2` as "invoked without root privileges", but
   `require_root()` has always raised `typer.Exit(1)`; `2` is spent by Click on
