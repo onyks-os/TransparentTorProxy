@@ -96,12 +96,21 @@ When invoking TTP inside shell scripts, inspect exit codes to verify success:
 #!/bin/bash
 set -e
 
-if sudo ttp --quiet start; then
-    echo "TTP session established."
-else
-    echo "Failed to start TTP session." >&2
-    exit 1
-fi
+sudo ttp --quiet start && status=0 || status=$?
+
+case "$status" in
+    0) echo "TTP session established and verified." ;;
+    3) echo "Session is up but Tor is unverified: traffic is blocked, not leaking." >&2
+       exit 3 ;;
+    *) echo "Failed to start TTP session; the network is in cleartext." >&2
+       exit "$status" ;;
+esac
 ```
 
-Exit code `0` indicates successful session establishment. Exit code `1` indicates preflight failure or missing root privileges.
+`0` means the session is active *and* traffic was confirmed to be reaching Tor.
+`3` means the session is active and fail-closed but Tor could not be verified —
+nothing is leaking, but nothing is getting through either. Anything else means
+there is no session and the host is back on clearnet.
+
+Testing only for `$? -eq 0` collapses those last two into one, which is how
+`ttp restart && next_command` ends up running against a blocked network.

@@ -12,9 +12,11 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from ttp.cli import app
+from ttp.commands._common import EXIT_UNVERIFIED
 
 runner = CliRunner()
 
@@ -198,6 +200,25 @@ def test_restart_active_session(mock_read, mock_stop, mock_sleep, mock_start):
     assert kwargs["allow_root"] is False
     assert kwargs["external_daemon"] is False
     assert kwargs["no_ipv6"] is False
+
+
+@patch("ttp.commands.stop_restart.start_command", side_effect=typer.Exit(code=EXIT_UNVERIFIED))
+@patch("time.sleep")
+@patch("ttp.commands.stop_restart._do_stop")
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
+def test_restart_propagates_the_unverified_exit_code(mock_read, mock_stop, mock_sleep, mock_start):
+    """
+    restart must not swallow the distinction start draws.
+
+    restart tears the session down and then calls start, so it inherits both of
+    start's failure windows: a Tor unit that will not start leaves the host on
+    clearnet (exit 1), and a Tor that never bootstraps leaves it blocked but
+    fail-closed (exit 3). Those demand opposite responses from a caller, so the
+    code has to survive the wrapper rather than collapsing into 0 or 1.
+    """
+    result = runner.invoke(app, ["restart"])
+    assert result.exit_code == EXIT_UNVERIFIED
+    assert mock_stop.call_count == 1
 
 
 @patch("ttp.commands.stop_restart.start_command")

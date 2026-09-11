@@ -12,6 +12,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING (scripting): `ttp start` and `ttp restart` no longer exit `0` when
+  Tor cannot be verified.** They now exit `3`. The rules, the DNS overlay and the
+  lock are applied before the bootstrap is ever observed, so a Tor that never
+  comes up leaves the host *fail-closed* — correct, but previously reported as
+  success. `restart` made it sharp: it tears the session down before calling
+  `start`, so `ttp restart && next_command` proceeded onto a blocked network,
+  while the one case where connectivity was fine (the `ttp-tor` unit failing to
+  start, before any rule exists, leaving plain clearnet) exited `1`. The exit
+  code said the opposite of the truth in both directions. The session is
+  deliberately **not** torn down on `3`: that would trade a blocked network for
+  an unannounced cleartext one. See
+  [ADR 0011](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/decisions/0011-start-exit-codes.md).
+
 ### Added
 
 - **`publish-docs.yml`** — the documentation site is rebuilt and pushed to
@@ -21,6 +36,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The exit-code table documented a code the CLI never returns.**
+  `docs/interfaces.md` listed `2` as "invoked without root privileges", but
+  `require_root()` has always raised `typer.Exit(1)`; `2` is spent by Click on
+  usage errors. The table, its published mirror in `docs/web/reference/cli.md`,
+  and the scripting example in the automation tutorial now describe what the
+  code actually does.
+- **`docs/security-assessment.md` overstated the fail-closed guarantee.** The row
+  on bootstrap failure justified it with "nftables rules are already applied",
+  which holds only when Tor fails *after* step 2. A Tor service that will not
+  start at all fails before any rule exists. Split into the two windows, with the
+  fail-open one named as such.
 - **The `S607` migration guard had no positive control, and could not find ruff
   off `$PATH`.** It invoked a bare `ruff` and skipped on exit code 127, a shell
   convention `subprocess.run` never produces — a missing bare name raises

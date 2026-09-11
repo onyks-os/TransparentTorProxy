@@ -22,6 +22,8 @@ import pytest
 from typer.testing import CliRunner
 
 from ttp.cli import app
+from ttp.commands._common import EXIT_UNVERIFIED
+from ttp.exceptions import TorError
 
 runner = CliRunner()
 
@@ -188,6 +190,8 @@ def test_start_with_interface_flag(
 # health check warning
 
 
+@patch("ttp.state.delete_lock")
+@patch("ttp.firewall.destroy_rules")
 @patch("ttp.commands.start._verify_tor", return_value=(False, "1.2.3.4"))
 @patch("ttp.firewall.runner._run_nft_string")
 @patch("ttp.firewall.runner._run_nft")
@@ -199,13 +203,81 @@ def test_start_tor_verification_fails(
     mock_run_nft,
     mock_nft_str,
     mock_verify,
+    mock_destroy,
+    mock_delete_lock,
     mock_base_start,
 ):
-    """start with Tor not verified -> shows warning."""
+    """
+    Tor never bootstraps -> the session is *kept*, and the exit code says so.
+
+    Reaching verification means the ruleset, the DNS overlay and the lock are
+    already in place, so the host is fail-closed. Tearing it down here would
+    trade a blocked network for an unannounced cleartext one, so the session
+    stands; what changes is the signal. This used to exit 0, which let
+    `ttp restart && ...` walk onto a blocked network believing it had succeeded.
+    """
     result = runner.invoke(app, ["start"])
-    assert result.exit_code == 0
+    assert result.exit_code == EXIT_UNVERIFIED
     assert "verification failed" in result.output
+    assert "held fail-closed" in result.output
     assert mock_verify.call_count == 1
+
+    # The session survives: rules produced, lock written, nothing torn down.
+    assert mock_nft_str.call_count == 1
+    assert "policy drop" in mock_nft_str.call_args[0][0]
+    assert mock_write.call_count == 1
+    assert mock_destroy.call_count == 0
+    assert mock_delete_lock.call_count == 0
+
+
+@patch("ttp.watchdog.start_watchdog")
+@patch("ttp.commands.start._verify_tor", return_value=(False, "unknown"))
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
+@patch("ttp.state.write_lock")
+def test_start_unverified_still_starts_the_watchdog(
+    mock_write,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
+    mock_verify,
+    mock_watchdog,
+    mock_base_start,
+):
+    """The exit is raised *after* the watchdog gets its chance to start.
+
+    An unverified session is the one that most needs watching; raising as soon
+    as verification failed would have silently dropped `--watchdog`.
+    """
+    result = runner.invoke(app, ["start", "--watchdog"])
+    assert result.exit_code == EXIT_UNVERIFIED
+    assert mock_watchdog.call_count == 1
+
+
+@patch("ttp.tor_install.ensure_tor_ready", side_effect=TorError("unit failed to start"))
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.state.write_lock")
+def test_start_tor_unit_failure_leaves_the_host_in_cleartext(
+    mock_write,
+    mock_nft_str,
+    mock_ensure,
+    mock_base_start,
+):
+    """
+    The other half of the recovery contract, and the reason it needs its own code.
+
+    Tor fails at step 1, before a single rule is written, so the host is on
+    plain clearnet rather than blocked - the exact opposite of the state above,
+    reached from a failure that looks identical at the terminal. The assertion
+    is on which state was produced (no ruleset, no lock), not merely that the
+    command failed.
+    """
+    result = runner.invoke(app, ["start"])
+    assert result.exit_code == 1
+    assert result.exit_code != EXIT_UNVERIFIED
+    assert mock_nft_str.call_count == 0
+    assert mock_write.call_count == 0
 
 
 # uninstall

@@ -29,3 +29,4 @@ Each ADR is formatted using the Markdown standard and named using a sequential I
 8. [0008-byod-architecture.md](docs/decisions/0008-byod-architecture.md) — Support for custom external Tor instances via Bring Your Own Daemon (BYOD) on systemd hosts.
 9. [0009-systemd-resolved-bypass.md](docs/decisions/0009-systemd-resolved-bypass.md) — systemd-resolved DNS bypass and fail-closed firewall kernel drop.
 10. [0010-watchdog-finite-state-machine.md](docs/decisions/0010-watchdog-finite-state-machine.md) — Watchdog FSM (Finite State Machine) using the transitions library.
+11. [0011-start-exit-codes.md](0011-start-exit-codes.md) — Distinct exit code for a session that is active but whose Tor routing could not be verified.

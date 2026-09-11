@@ -64,11 +64,14 @@ Most commands require root privileges (`sudo`). Exceptions are noted in the tabl
 
 ### 1.4 Exit Codes
 
-| Code | Meaning                                        |
-| :--- | :--------------------------------------------- |
-| `0`  | Success                                        |
-| `1`  | Generic error (printed to stderr)              |
-| `2`  | Invoked without root privileges where required |
+| Code | Meaning                                                                                   |
+| :--- | :---------------------------------------------------------------------------------------- |
+| `0`  | Success. For `start` and `restart`, the session is active *and* Tor routing was confirmed. |
+| `1`  | Generic error, printed to stderr. Includes missing root privileges. For `start` and `restart`, the network has been left in — or restored to — cleartext. |
+| `2`  | Reserved by the CLI framework for usage errors (unknown option, bad argument value).       |
+| `3`  | `start` / `restart` only: the session is active and fail-closed, but Tor routing could not be verified. Traffic that is not explicitly bypassed is **blocked**, not leaking. |
+
+> **Scripting `start` and `restart`:** `0` and `3` both leave a session standing; only `0` means traffic is reaching Tor. `1` means there is no session at all and the host is back on clearnet. Treating any non-zero code as "still protected" is therefore wrong in exactly one direction — see [ADR 0011](decisions/0011-start-exit-codes.md).
 
 ---
 

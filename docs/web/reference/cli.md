@@ -205,8 +205,13 @@ TTP commands exit with standard status codes for scripting and automation:
 
 | Code | Meaning | Context |
 |:---:|---|---|
-| `0` | **Success** | Command completed successfully, or system already in target state. |
-| `1` | **Error / Failure** | Preflight check failure, missing root privileges, invalid arguments, or system error. |
+| `0` | **Success** | Command completed successfully, or system already in target state. For `start` and `restart`, the session is active and Tor routing was confirmed. |
+| `1` | **Error / Failure** | Preflight check failure, missing root privileges, or system error. For `start` and `restart`, no session is running and the network is in cleartext. |
+| `2` | **Usage error** | Reserved by the CLI framework: unknown option or invalid argument value. |
+| `3` | **Unverified session** | `start` / `restart` only. The session is active and fail-closed, but Tor routing could not be verified. Traffic that is not explicitly bypassed is blocked. |
 
-!!! tip "Scripting Tip"
-    Always inspect stdout/stderr when `ttp` returns exit code `1` or pass `-v` to receive structured error diagnostics.
+!!! warning "Scripting Tip"
+    Do not read "non-zero" as "unprotected", or `0` as the only safe outcome.
+    `3` means the kill-switch is holding and nothing is leaking — the session is
+    simply not carrying traffic. `1` is the one that means the host is back on
+    clearnet. Pass `-v` for structured error diagnostics.

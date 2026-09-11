@@ -31,6 +31,17 @@ _PREFIX = "[bold cyan]\\[TTP][/bold cyan]"
 _LOG_PATH = Path("/run/ttp/ttp.log")
 logger = logging.getLogger("ttp")
 
+# Exit code for "the session was established, but Tor could not be verified".
+#
+# It has to be distinguishable from both neighbours: 0 means traffic is
+# confirmed to be flowing through Tor, 1 means start gave up and left the host
+# in cleartext. Neither describes a session that is up and holding everything
+# fail-closed while Tor is unreachable - and a caller scripting `ttp start` has
+# to tell those three apart. 3 rather than 2 because Click already spends 2 on
+# usage errors, and a script must not confuse a mistyped flag with a blocked
+# network.
+EXIT_UNVERIFIED = 3
+
 
 class CLIState:
     verbose: bool = False
