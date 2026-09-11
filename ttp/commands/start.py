@@ -9,6 +9,7 @@ import typer
 from ttp import dns, firewall, state, tor_install
 from ttp.commands._common import (
     _PREFIX,
+    EXIT_UNVERIFIED,
     cli_state,
     console,
     logger,
@@ -298,14 +299,21 @@ def start_command(
         raise typer.Exit(code=1)
 
     # --- Step 5: Verify Tor is working ---
+    #
+    # Reaching this point means the firewall rules, the DNS overlay and the lock
+    # file are all in place, so a failure here does not leak: everything that is
+    # not explicitly bypassed is held fail-closed against a Tor that is not
+    # answering. The session is therefore left standing rather than torn down -
+    # but it is not a success either, and the exit code has to say so.
     is_tor, exit_ip = _verify_tor(timeout=bootstrap_timeout)
     if is_tor:
         console.print(f"{_PREFIX} [bold green]Session active. Exit IP: {exit_ip}[/]")
     else:
         console.print(f"{_PREFIX} [bold yellow]Session active but Tor verification failed.[/]")
         console.print(
-            f"{_PREFIX} [yellow]Traffic may NOT be routed through Tor. "
-            f"Check Tor service and try 'ttp stop' then 'ttp start'.[/]"
+            f"{_PREFIX} [yellow]Traffic is NOT reaching Tor and is being held fail-closed: "
+            f"everything except explicitly bypassed traffic is blocked. "
+            f"Check the Tor service, or run 'ttp stop' to restore the network.[/]"
         )
         if exit_ip != "unknown":
             console.print(f"{_PREFIX} [yellow]Detected IP: {exit_ip}[/]")
@@ -320,6 +328,12 @@ def start_command(
             _print_error("Watchdog Error", f"Failed to start session watchdog: {e}")
 
     console.print(f"{_PREFIX} Use 'ttp stop' to terminate. 'ttp refresh' to change IP.")
+
+    # Raised after the watchdog has been given its chance to start: a session
+    # that is up but unverified is exactly the one that benefits from being
+    # watched.
+    if not is_tor:
+        raise typer.Exit(code=EXIT_UNVERIFIED)
 
     if state.should_show_star_message():
         console.print("\n[dim]Thanks for using TTP! Starring the repo on GitHub helps the project grow.[/]")
