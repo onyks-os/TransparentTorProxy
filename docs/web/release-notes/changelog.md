@@ -74,6 +74,14 @@ regardless.
 
 ### Security
 
+- **The runtime `torrc` is no longer briefly world-readable.** It was written
+  with `write_text` and restricted with `chmod` immediately after, leaving a
+  window in which any local user could read it. That file is not innocuous in
+  that window: with bridges configured it carries the obfs4 certificate, which
+  identifies the bridge the user chose to reach. It is now created with mode
+  `0600` by `os.open`, so the permissions are in place before any content
+  exists. Found by CodeQL (`py/clear-text-storage-sensitive-data`).
+
 - **PATH hijacking closed (`ruff S607` x47).** `nft`, `ip`, `systemctl` and
   fifteen other binaries were invoked **by name** from a process running as
   root, so the kernel resolved them through `$PATH`. Anyone able to influence

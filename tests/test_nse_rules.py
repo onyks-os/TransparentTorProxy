@@ -348,6 +348,28 @@ def observe(ns, loop, stimulus, settle: float = 0.4) -> list:  # type: ignore[no
     return loop.run_until_complete(asserter.stop())
 
 
+def _engine():
+    """
+    A RuleEngine that enters the namespace with ``nsenter``, not ``ip netns exec``.
+
+    They differ in a way that matters here. ``ip netns exec`` unshares the mount
+    namespace and remounts ``/sys`` so that ``/sys/class/net`` reflects the new
+    namespace - which detaches every submount underneath it, ``/sys/fs/cgroup``
+    included. TTP's ruleset carries
+
+        socket cgroupv2 level 1 "ttp-bypass.slice" accept
+
+    and nftables resolves that path at load time, so under ``ip netns exec`` the
+    whole ruleset is rejected with "cgroupv2 path fails: No such file or
+    directory" - not because the rule is wrong, but because the loader cannot
+    see the cgroup hierarchy any more.
+
+    ``nsenter --net`` changes only the network namespace, leaving mounts alone,
+    which is also how TTP itself loads these rules in production.
+    """
+    return RuleEngine(use_nsenter=True)
+
+
 def assert_contained(ns, loop, ruleset: str, stimulus, description: str) -> None:  # type: ignore[no-untyped-def]
     """
     Assert that TTP contains *stimulus*, having first proved the test can see it.
@@ -356,7 +378,7 @@ def assert_contained(ns, loop, ruleset: str, stimulus, description: str) -> None
     does not, the harness is not measuring and the zero-leak assertion in step 2
     would pass for the wrong reason, so the test fails there instead.
     """
-    engine = RuleEngine()
+    engine = _engine()
 
     engine.flush(ns.name)
     control = observe(ns, loop, stimulus)
@@ -446,7 +468,7 @@ def test_bypassed_user_traffic_still_reaches_the_lan(ns_sandbox, ttp_ruleset) ->
     bypassed UID to a LAN address must still get out.
     """
     ns, loop = ns_sandbox
-    RuleEngine().load(ttp_ruleset, ns.name)
+    _engine().load(ttp_ruleset, ns.name)
 
     captured = observe(ns, loop, udp_to(HOST_V4, 9999, uid=1000), settle=0.5)
 
@@ -468,7 +490,7 @@ def test_a_flushed_ruleset_leaks_everything(ns_sandbox) -> None:
     observe a leak at all. It is deliberately the loudest failure in the module.
     """
     ns, loop = ns_sandbox
-    RuleEngine().flush(ns.name)
+    _engine().flush(ns.name)
 
     captured = observe(ns, loop, udp_to(WAN_V4, 53))
     leaks = [p for p in captured if is_cleartext_leak(p)]
