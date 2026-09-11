@@ -8,6 +8,8 @@ All tests mock subprocess.run, shutil.which, and system paths.
 
 from __future__ import annotations
 
+import os
+import stat
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -692,3 +694,40 @@ def test_ensure_tor_ready_forwards_every_tor_option() -> None:
         ensure_tor_ready(block_doh=False, disable_ipv6=True, use_bridges=False)
     assert start.call_args.kwargs["block_doh"] is False
     assert start.call_args.kwargs["disable_ipv6"] is True
+
+
+@patch("ttp.tor_config.os.makedirs")
+@patch("ttp.tor_config.shutil.chown")
+def test_the_torrc_is_never_briefly_world_readable(mock_chown, mock_makedirs, tmp_path: Path):
+    """
+    The file must be root-only from the instant it exists.
+
+    Writing then chmod'ing leaves a window, and a torrc is not innocuous in it:
+    with bridges configured it carries the obfs4 certificate, which identifies
+    the bridge the user picked. This asserts on the mode the file is *created*
+    with, not the mode it ends up with, so restoring the write-then-chmod
+    sequence fails here even though the final permissions would look correct.
+    """
+    runtime_dir = tmp_path / "run/tor"
+    cache_dir = tmp_path / "lib/cache"
+    runtime_dir.mkdir(parents=True)
+    cache_dir.mkdir(parents=True)
+
+    modes_at_creation: list[int] = []
+    real_open = os.open
+
+    def recording_open(path, flags, mode=0o777, **kwargs):
+        if str(path).endswith("torrc"):
+            modes_at_creation.append(mode)
+        return real_open(path, flags, mode, **kwargs)
+
+    with (
+        patch.object(tor_config, "TOR_RUNTIME_DIR", runtime_dir),
+        patch.object(tor_config, "TOR_CACHE_DIR", cache_dir),
+        patch("ttp.tor_config.os.open", side_effect=recording_open),
+    ):
+        generate_torrc("debian-tor", use_bridges=True, bridges=["obfs4 1.2.3.4:443 CERT=secret"])
+
+    assert modes_at_creation == [0o600], "the torrc was created with a permissive mode and narrowed afterwards"
+    assert stat.S_IMODE((runtime_dir / "torrc").stat().st_mode) == 0o600
+    assert "CERT=secret" in (runtime_dir / "torrc").read_text()

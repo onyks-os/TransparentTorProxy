@@ -47,6 +47,31 @@ PT_MAP = {
 }
 
 
+def _write_private(path: Path, content: str) -> None:
+    """
+    Write *content* to *path*, readable by root only, with no window.
+
+    ``write_text`` followed by ``chmod`` leaves the file world-readable for the
+    time between the two calls. A torrc is not innocuous in that window: with
+    bridges configured it carries the obfs4 certificate, which identifies the
+    bridge the user chose to reach. Opening with the mode already set closes
+    the gap - and O_TRUNC rather than O_EXCL because regenerating the config
+    over a previous run is the normal path.
+
+    The explicit mode only applies when the file is created, so an existing
+    file is chmod'd too rather than trusting whatever it had.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+    except BaseException:
+        os.close(fd)
+        raise
+    # fdopen takes ownership of the descriptor; closing the handle closes it.
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
+
 def _build_torrc_content(
     tor_user: str,
     transport_port: int,
@@ -214,10 +239,6 @@ def generate_torrc(
     )
 
     torrc_path = TOR_RUNTIME_DIR / "torrc"
-    torrc_path.write_text(torrc_content, encoding="utf-8")
-    try:
-        os.chmod(torrc_path, 0o600)
-    except OSError:
-        pass
+    _write_private(torrc_path, torrc_content)
     logger.info("Generated runtime torrc at %s", torrc_path)
     return torrc_path
