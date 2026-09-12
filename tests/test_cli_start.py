@@ -23,7 +23,7 @@ from typer.testing import CliRunner
 
 from ttp.cli import app
 from ttp.commands._common import EXIT_UNVERIFIED
-from ttp.exceptions import TorError
+from ttp.exceptions import DNSError, FirewallError, StateError, TorError
 
 runner = CliRunner()
 
@@ -278,6 +278,310 @@ def test_start_tor_unit_failure_leaves_the_host_in_cleartext(
     assert result.exit_code != EXIT_UNVERIFIED
     assert mock_nft_str.call_count == 0
     assert mock_write.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Rollback: what a failure *between* the steps leaves behind
+# ---------------------------------------------------------------------------
+#
+# `start` applies the ruleset at step 2, the DNS overlay at step 3 and the lock
+# at step 4, and each of the four `except` blocks in between unwinds a different
+# amount of that. Which one runs decides whether the host ends up on plain
+# clearnet, held fail-closed, or - the case worth testing for - carrying a
+# partial ruleset with no lock file to tell `ttp stop` how to clean it up.
+#
+# The four branches are deliberately *not* symmetric, and the asymmetry is the
+# thing these tests pin down:
+#
+#   failure            stop_tor_service   destroy_rules   restore_dns
+#   FirewallError      yes (managed)      yes             no
+#   DNSError           yes (managed)      yes             no
+#   unexpected DNS     yes (managed)      yes             no
+#   StateError         yes (managed)      yes             YES
+#
+# `restore_dns` is absent from the first three because there is nothing to
+# restore: step 3 has not run yet on the firewall path, and `dns.apply_dns`
+# cleans up after itself on the DNS paths - it rolls back its own
+# systemd-resolved drop-in, and the bind mount is the last thing it does, so a
+# raise means the mount either never happened or never took. By step 4 the
+# overlay *is* live, which is why `StateError` is the one branch that has to
+# undo it.
+#
+# Asserting "was destroy_rules called" is not enough on its own. `stop` reads
+# the lock file to know what to tear down, so a branch that leaves rules behind
+# without a lock leaves a host that `ttp stop` cannot fix - and every one of
+# these branches was uncovered until now (#31).
+
+
+@patch("ttp.dns.restore_dns")
+@patch("ttp.firewall.destroy_rules")
+@patch("ttp.tor_install.stop_tor_service")
+@patch("ttp.firewall.apply_rules", side_effect=FirewallError("nft: syntax error"))
+@patch("ttp.state.write_lock")
+def test_start_rolls_back_a_firewall_failure(
+    mock_write,
+    mock_apply_rules,
+    mock_stop_tor,
+    mock_destroy,
+    mock_restore_dns,
+    mock_base_start,
+):
+    """Step 2 fails: the managed Tor is stopped, the table is destroyed, DNS is untouched.
+
+    This is the branch that produces the widest range of kernel states, because
+    `apply_rules` can fail after some of the ruleset is already loaded. Hence
+    `destroy_rules` unconditionally, even though nothing may have been applied:
+    destroying a table that is not there is free, and leaving half a table
+    behind is a host with no working network and no lock file explaining why.
+    """
+    result = runner.invoke(app, ["start"])
+
+    assert result.exit_code == 1
+    assert result.exit_code != EXIT_UNVERIFIED
+    assert "Firewall Setup Failed" in result.output
+
+    assert mock_stop_tor.call_count == 1
+    assert mock_destroy.call_count == 1
+    # Step 3 never ran, so there is no overlay to undo.
+    assert mock_restore_dns.call_count == 0
+    # No lock: nothing is left claiming a session is active.
+    assert mock_write.call_count == 0
+
+
+@patch("ttp.dns.restore_dns")
+@patch("ttp.firewall.destroy_rules")
+@patch("ttp.tor_install.stop_tor_service")
+@patch("ttp.dns.apply_dns", side_effect=DNSError("mount --bind failed"))
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
+@patch("ttp.state.write_lock")
+def test_start_rolls_back_a_dns_failure(
+    mock_write,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
+    mock_apply_dns,
+    mock_stop_tor,
+    mock_destroy,
+    mock_restore_dns,
+    mock_base_start,
+):
+    """Step 3 fails: the ruleset applied at step 2 must not be left behind.
+
+    A fail-closed ruleset with no lock file is the worst of the three possible
+    outcomes - the network is down, `ttp status` reports no session, and
+    `ttp stop` returns early because `read_lock()` gives it nothing to undo.
+    `destroy_rules` here is what stops that.
+    """
+    result = runner.invoke(app, ["start"])
+
+    assert result.exit_code == 1
+    assert "DNS Setup Failed" in result.output
+
+    # The ruleset *was* applied before the failure, and must be gone after it.
+    assert mock_nft_str.call_count == 1
+    assert mock_destroy.call_count == 1
+    assert mock_stop_tor.call_count == 1
+    assert mock_write.call_count == 0
+
+    # `apply_dns` rolls back its own partial state, so the caller must not
+    # second-guess it with a backup dict it never received.
+    assert mock_restore_dns.call_count == 0
+
+
+@patch("ttp.dns.restore_dns")
+@patch("ttp.firewall.destroy_rules")
+@patch("ttp.tor_install.stop_tor_service")
+@patch("ttp.dns.apply_dns", side_effect=RuntimeError("resolv.conf is a directory"))
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
+@patch("ttp.state.write_lock")
+def test_start_rolls_back_an_unexpected_dns_failure(
+    mock_write,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
+    mock_apply_dns,
+    mock_stop_tor,
+    mock_destroy,
+    mock_restore_dns,
+    mock_base_start,
+):
+    """An exception `apply_dns` does not wrap in `DNSError` unwinds identically.
+
+    `apply_dns` converts what it anticipates into `DNSError`, so anything
+    arriving here is by definition unforeseen - and an unforeseen failure is
+    exactly when a tool must not fall through to `raise` with the ruleset still
+    loaded. The separate `except Exception` branch exists for that, and this
+    test is what keeps the two in step: the teardown must be the same whether
+    the failure was expected or not.
+    """
+    result = runner.invoke(app, ["start"])
+
+    assert result.exit_code == 1
+    assert "DNS Setup Failed" in result.output
+    # The generic branch reports a generic cause rather than leaking the
+    # exception text, so assert on the branch actually taken.
+    assert "unexpected error" in result.output
+
+    assert mock_nft_str.call_count == 1
+    assert mock_destroy.call_count == 1
+    assert mock_stop_tor.call_count == 1
+    assert mock_write.call_count == 0
+    assert mock_restore_dns.call_count == 0
+
+
+@patch("ttp.dns.restore_dns")
+@patch("ttp.firewall.destroy_rules")
+@patch("ttp.tor_install.stop_tor_service")
+@patch("ttp.state.write_lock", side_effect=StateError("/run/ttp is read-only"))
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
+def test_start_rolls_back_a_lock_failure_including_dns(
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
+    mock_write,
+    mock_stop_tor,
+    mock_destroy,
+    mock_restore_dns,
+    mock_base_start,
+):
+    """Step 4 fails: the only branch that also has to undo the DNS overlay.
+
+    By this point `apply_dns` has succeeded, so `/etc/resolv.conf` is a bind
+    mount pointing every lookup at Tor's DNSPort. Skipping the restore would
+    leave the host resolving nothing at all through a Tor that is about to be
+    stopped, with no lock file to say so.
+
+    The backup dict matters as much as the call: `restore_dns` starts with
+    `if not backup: return`, so being handed `None` would be a silent no-op
+    that still passes a bare `assert called`.
+    """
+    result = runner.invoke(app, ["start"])
+
+    assert result.exit_code == 1
+    assert "Session Tracking Failed" in result.output
+
+    assert mock_stop_tor.call_count == 1
+    assert mock_destroy.call_count == 1
+    assert mock_restore_dns.call_count == 1
+    # The real backup from `apply_dns`, not None - see the docstring.
+    assert mock_restore_dns.call_args[0][0] == {"interface": "eth0"}
+
+
+@patch("ttp.commands.start._is_port_listening_tcp", return_value=True)
+@patch("ttp.commands.start._is_port_listening_udp", return_value=True)
+@patch("pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=101))
+@patch("ttp.firewall.destroy_rules")
+@patch("ttp.tor_install.stop_tor_service")
+@patch("ttp.firewall.apply_rules", side_effect=FirewallError("nft: syntax error"))
+@patch("ttp.state.write_lock")
+def test_start_rollback_never_stops_a_tor_it_does_not_own(
+    mock_write,
+    mock_apply_rules,
+    mock_stop_tor,
+    mock_destroy,
+    mock_pwnam,
+    mock_udp,
+    mock_tcp,
+    mock_base_start,
+):
+    """In BYOD mode the rollback must not stop the operator's own Tor daemon.
+
+    Every rollback branch guards its `stop_tor_service()` with
+    `if not external_daemon`, and that guard is the whole meaning of
+    `--external-daemon`: TTP is borrowing a daemon it did not start, which may
+    be carrying onion services or another user's circuits. Killing it because
+    *TTP's* firewall step failed would be collateral damage from an error that
+    has nothing to do with Tor.
+
+    The ruleset still gets destroyed - that part is TTP's own mess to clean up.
+    """
+    result = runner.invoke(app, ["start", "--external-daemon", "--tor-uid", "debian-tor"])
+
+    assert result.exit_code == 1
+    assert mock_stop_tor.call_count == 0
+    assert mock_destroy.call_count == 1
+    assert mock_write.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Failures that are *survived* rather than rolled back
+# ---------------------------------------------------------------------------
+
+
+@patch("ttp.firewall.apply_rules")
+@patch("pwd.getpwnam", side_effect=KeyError("no such user"))
+@patch("ttp.state.write_lock")
+def test_start_records_an_unresolvable_tor_user_as_a_null_uid(
+    mock_write,
+    mock_pwnam,
+    mock_apply_rules,
+    mock_base_start,
+):
+    """An unresolvable Tor user is swallowed, and the lock says so explicitly.
+
+    `start` wraps the UID lookup in a bare `except Exception: pass`, so a Tor
+    user that does not resolve does not stop the session - it writes
+    `tor_uid: None` into the lock instead. That is not a dead end: `do_stop()`
+    treats a missing `tor_uid` as "work it out yourself" and falls back to
+    `get_uid_from_port(transport_port)`, then to `pwd.getpwnam` on "tor" and
+    "debian-tor" in turn (`ttp/commands/lifecycle.py:42-52`).
+
+    That fallback chain is reachable *only* through this `pass`, which means it
+    was reachable only through an uncovered line. Pinning the null here is what
+    makes the chain's own tests meaningful: if this silently started writing a
+    real UID, or crashing, the fallback would become unreachable code that
+    still has tests.
+    """
+    result = runner.invoke(app, ["start"])
+
+    assert result.exit_code == 0
+    assert mock_write.call_count == 1
+    assert mock_write.call_args.kwargs["tor_uid"] is None
+
+
+@patch("ttp.watchdog.start_watchdog", side_effect=RuntimeError("fork failed"))
+@patch("ttp.firewall.destroy_rules")
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
+@patch("ttp.state.write_lock")
+def test_start_survives_a_watchdog_that_cannot_start(
+    mock_write,
+    mock_pwd,
+    mock_run_nft,
+    mock_nft_str,
+    mock_destroy,
+    mock_watchdog,
+    mock_base_start,
+):
+    """A watchdog that fails to launch is reported, not rolled back.
+
+    This is deliberate rather than an oversight, and worth stating: the
+    watchdog *monitors* a session, it does not create the protection. The
+    ruleset, the DNS overlay and the lock are all in place by the time it is
+    launched, and Tor is verified, so the host is genuinely protected - just
+    unwatched. Tearing all of that down would replace a protected-but-unmonitored
+    host with a cleartext one, which is strictly worse.
+
+    The operator still has to be told, because `--watchdog` was asked for and
+    did not happen, so the failure is surfaced as an error panel. Exit code 0
+    reflects the session's state, not the flag's.
+    """
+    result = runner.invoke(app, ["start", "--watchdog"])
+
+    assert result.exit_code == 0
+    assert "Watchdog Error" in result.output
+    assert mock_watchdog.call_count == 1
+
+    # The session itself is untouched.
+    assert mock_write.call_count == 1
+    assert mock_destroy.call_count == 0
 
 
 # uninstall
