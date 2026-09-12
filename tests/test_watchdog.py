@@ -582,3 +582,410 @@ def test_trigger_emergency_killswitch_sanitization(mock_which, mock_run, mock_ki
     assert notify_args[0] == resolve_optional("notify-send")
     assert "dns" in notify_args[2]
     assert "\x1b[31m" not in notify_args[2]
+
+
+# ---------------------------------------------------------------------------
+# Bypass rule tampering
+# ---------------------------------------------------------------------------
+#
+# `check_system_integrity` already checks that the `inet ttp` table exists and
+# carries a `filter_out` chain. That is enough to catch a table that was flushed
+# or deleted, and nothing finer.
+#
+# The bypass rules are the finer case, and they are the one part of the ruleset
+# a session *depends on being there* rather than being absent. The lock records
+# which users and groups were exempted at `start`; this block re-derives their
+# UIDs and GIDs and looks for the matching `accept` in the live ruleset. A
+# missing one means the ruleset in the kernel is not the ruleset the lock
+# describes - someone edited it, or a reload rebuilt it from different inputs -
+# and the watchdog treats that as tampering and fails closed rather than
+# healing.
+#
+# Worth stating what this does *not* detect, since the tests below would
+# otherwise imply it: an *extra* `accept` that the lock never asked for is
+# invisible here. The check is one-directional by construction. That is a
+# narrower guarantee than "the ruleset is unmodified", and the difference
+# matters because an added bypass is the version an attacker would want.
+#
+# One more property of the loops, established by mutating them rather than by
+# reading them: because each `except KeyError` *returns*, the first bypass entry
+# that cannot be resolved ends the check, and every entry after it goes
+# unexamined. Moving the `try` outside the loop is therefore indistinguishable
+# from leaving it inside - both stop at the first failure. That is defensible
+# (an unverifiable bypass is reported, and the watchdog fails closed on it) but
+# it is not what the per-entry `try` looks like it is for, and it differs from
+# `label_ports_selinux`, where the equivalent handler only warns and the loop
+# genuinely continues.
+
+
+def _healthy_nft(*extra_rules: str) -> str:
+    """A minimal `inet ttp` listing that passes the table and chain checks."""
+    rules = "\n".join(f"    {r}" for r in extra_rules)
+    return f"table inet ttp {{\n  chain filter_out {{\n{rules}\n  }}\n}}\n"
+
+
+def _integrity_env(nft_stdout: str, lock: dict):
+    """Everything `check_system_integrity` touches before the bypass block."""
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    stack.enter_context(patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf"))
+    stack.enter_context(patch("ttp.dns._is_mount_point", return_value=True))
+    stack.enter_context(patch("ttp.state.read_lock", return_value=lock))
+    stack.enter_context(patch("subprocess.run", return_value=MagicMock(stdout=nft_stdout, returncode=0)))
+    # A healthy controller, so a bypass verdict cannot be confused with a Tor one.
+    mock_ctrl = MagicMock()
+    mock_ctrl.__enter__ = lambda s: s
+    mock_ctrl.__exit__ = MagicMock(return_value=False)
+    stack.enter_context(patch("ttp.tor_control.get_controller", return_value=mock_ctrl))
+    return stack
+
+
+def test_integrity_accepts_a_ruleset_whose_bypass_rules_are_all_present():
+    """The negative control for everything below.
+
+    Without this, a bug that made the bypass block return a violation
+    unconditionally would still satisfy every "detects a missing rule" test
+    here, and the watchdog would killswitch a healthy session on every tick.
+    """
+    nft = _healthy_nft("meta skuid 1000 accept", "meta skgid 1000 accept")
+    lock = {"bypass_users": ["alice"], "bypass_groups": ["devs"]}
+
+    with (
+        _integrity_env(nft, lock),
+        patch("pwd.getpwnam", return_value=MagicMock(pw_uid=1000)),
+        patch("grp.getgrnam", return_value=MagicMock(gr_gid=1000)),
+    ):
+        comp, err = wd.check_system_integrity()
+
+    assert comp is None
+    assert err is None
+
+
+def test_integrity_detects_a_missing_user_bypass_rule():
+    """A bypassed user whose `accept` is gone means the ruleset was rebuilt or edited."""
+    nft = _healthy_nft("meta skgid 1000 accept")
+    lock = {"bypass_users": ["alice"], "bypass_groups": []}
+
+    with _integrity_env(nft, lock), patch("pwd.getpwnam", return_value=MagicMock(pw_uid=1000)):
+        comp, err = wd.check_system_integrity()
+
+    assert comp == "firewall"
+    assert "bypass rule for user 'alice' (UID 1000) is missing" in err
+
+
+def test_integrity_detects_a_missing_group_bypass_rule():
+    nft = _healthy_nft("meta skuid 1000 accept")
+    lock = {"bypass_users": [], "bypass_groups": ["devs"]}
+
+    with _integrity_env(nft, lock), patch("grp.getgrnam", return_value=MagicMock(gr_gid=1000)):
+        comp, err = wd.check_system_integrity()
+
+    assert comp == "firewall"
+    assert "bypass rule for group 'devs' (GID 1000) is missing" in err
+
+
+def test_integrity_accepts_a_numeric_bypass_id_without_a_name_lookup():
+    """A lock may record a bare UID, which must not be sent through `pwd`.
+
+    `ttp start --bypass-user 1000` stores "1000". Resolving that as a *name*
+    would raise KeyError and be reported as tampering - a healthy session
+    killswitched because of how the operator spelled the flag.
+    """
+    nft = _healthy_nft("meta skuid 1000 accept", "meta skgid 1000 accept")
+    lock = {"bypass_users": ["1000"], "bypass_groups": ["1000"]}
+
+    with (
+        _integrity_env(nft, lock),
+        patch("pwd.getpwnam", side_effect=AssertionError("must not be called for a numeric id")),
+        patch("grp.getgrnam", side_effect=AssertionError("must not be called for a numeric id")),
+    ):
+        comp, _ = wd.check_system_integrity()
+
+    assert comp is None
+
+
+def test_integrity_reports_a_bypass_user_that_no_longer_resolves():
+    """A deleted account is a violation, not a crash.
+
+    The UID cannot be re-derived, so the check cannot say whether the rule is
+    correct - and an unverifiable bypass is reported rather than assumed good.
+    Letting the KeyError escape would instead kill the watchdog thread, which is
+    strictly worse: the session would then be unmonitored *and* nothing would
+    say so.
+    """
+    nft = _healthy_nft("meta skuid 1000 accept")
+    lock = {"bypass_users": ["ghost"], "bypass_groups": []}
+
+    with _integrity_env(nft, lock), patch("pwd.getpwnam", side_effect=KeyError("no such user")):
+        comp, err = wd.check_system_integrity()
+
+    assert comp == "firewall"
+    assert "bypass user 'ghost' cannot be resolved on system" in err
+
+
+def test_integrity_reports_a_bypass_group_that_no_longer_resolves():
+    nft = _healthy_nft()
+    lock = {"bypass_users": [], "bypass_groups": ["ghosts"]}
+
+    with _integrity_env(nft, lock), patch("grp.getgrnam", side_effect=KeyError("no such group")):
+        comp, err = wd.check_system_integrity()
+
+    assert comp == "firewall"
+    assert "bypass group 'ghosts' cannot be resolved on system" in err
+
+
+def test_integrity_checks_every_bypass_entry_not_just_the_first():
+    """The loop examines every entry, not only the first.
+
+    The first user resolves and its rule is present, so a check that stopped
+    after one entry would return a clean verdict. The violation has to come
+    from the *second* user, which is what makes this distinguishable from
+    checking `bypass_users[0]` and returning.
+    """
+    nft = _healthy_nft("meta skuid 1000 accept")
+    lock = {"bypass_users": ["alice", "bob"], "bypass_groups": []}
+
+    def getpwnam(name):
+        return MagicMock(pw_uid={"alice": 1000, "bob": 1001}[name])
+
+    with _integrity_env(nft, lock), patch("pwd.getpwnam", side_effect=getpwnam):
+        comp, err = wd.check_system_integrity()
+
+    assert comp == "firewall"
+    assert "'bob' (UID 1001)" in err
+
+
+def test_integrity_checks_groups_even_when_every_user_rule_is_present():
+    """The group loop runs after the user loop, so it needs its own evidence.
+
+    A `return` misplaced at the end of the user loop would make this pass for
+    the wrong reason, and no other test in this file would notice.
+    """
+    nft = _healthy_nft("meta skuid 1000 accept")
+    lock = {"bypass_users": ["alice"], "bypass_groups": ["devs"]}
+
+    with (
+        _integrity_env(nft, lock),
+        patch("pwd.getpwnam", return_value=MagicMock(pw_uid=1000)),
+        patch("grp.getgrnam", return_value=MagicMock(gr_gid=1000)),
+    ):
+        comp, err = wd.check_system_integrity()
+
+    assert comp == "firewall"
+    assert "bypass rule for group 'devs'" in err
+
+
+# ---------------------------------------------------------------------------
+# resolv.conf content: the DNS leak the mount check cannot see
+# ---------------------------------------------------------------------------
+#
+# The mount check above answers "is there an overlay". These answer "does the
+# overlay still say what it said at `start`" - and they were uncovered, which
+# left the module's only actual *leak* detector untested. A `nameserver
+# 8.8.8.8` in a live session means every lookup on the host is going straight
+# to Google outside Tor, while the mount is present and the ruleset is intact.
+
+
+def _dns_content_env(resolv_text: str):
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    stack.enter_context(patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf"))
+    stack.enter_context(patch("ttp.dns._is_mount_point", return_value=True))
+    stack.enter_context(patch("ttp.state.read_lock", return_value=None))
+
+    original_read_text = Path.read_text
+
+    def read_text(self, *args, **kwargs):
+        if "resolv.conf" in str(self):
+            return resolv_text
+        return original_read_text(self, *args, **kwargs)
+
+    stack.enter_context(patch("pathlib.Path.read_text", read_text))
+    return stack
+
+
+def test_integrity_detects_a_non_local_nameserver():
+    """The DNS leak this module exists to catch, and it had no test.
+
+    The overlay is mounted and the ruleset is intact; only the file's contents
+    changed. NetworkManager rewriting resolv.conf on a DHCP renew produces
+    exactly this, with no other symptom.
+    """
+    with _dns_content_env("nameserver 127.0.0.1\nnameserver 8.8.8.8\n"):
+        comp, err = wd.check_system_integrity()
+
+    assert comp == "dns"
+    assert "points to non-local resolver: 8.8.8.8" in err
+
+
+def test_integrity_accepts_both_loopback_families():
+    """`::1` is as local as `127.0.0.1` and must not read as a leak.
+
+    `apply_dns` writes both when the host supports IPv6, so rejecting `::1`
+    would make every dual-stack session fail its first integrity tick.
+    """
+    with (
+        _dns_content_env("nameserver 127.0.0.1\nnameserver ::1\n"),
+        patch("subprocess.run", return_value=MagicMock(stdout=_healthy_nft(), returncode=0)),
+        patch("ttp.tor_control.get_controller", return_value=None),
+    ):
+        comp, _ = wd.check_system_integrity()
+
+    # Not a DNS verdict; the tor fallback decides the rest and is not the point.
+    assert comp != "dns"
+
+
+def test_integrity_detects_an_empty_resolv_conf():
+    """A mounted overlay with no nameservers resolves nothing at all.
+
+    Distinct from the case above and worth its own message: nothing leaks, but
+    the session is broken, and the operator needs to know which of the two it
+    is.
+    """
+    with _dns_content_env("# Generated by TTP\n"):
+        comp, err = wd.check_system_integrity()
+
+    assert comp == "dns"
+    assert "no nameservers configured" in err
+
+
+def test_integrity_reports_an_unreadable_resolv_conf_rather_than_assuming_it_is_fine():
+    """An unreadable resolv.conf is a violation, not a pass.
+
+    This is the #26 failure mode in miniature: the check cannot observe the
+    file, and the only safe reading of that is "cannot verify", which the
+    watchdog escalates. Swallowing it would let a session continue on an
+    overlay nobody can inspect.
+    """
+    with (
+        patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf"),
+        patch("ttp.dns._is_mount_point", return_value=True),
+        patch("ttp.state.read_lock", return_value=None),
+        patch("pathlib.Path.read_text", side_effect=PermissionError("denied")),
+    ):
+        comp, err = wd.check_system_integrity()
+
+    assert comp == "dns"
+    assert "Failed to read/verify resolv.conf" in err
+
+
+# ---------------------------------------------------------------------------
+# Auto-healing: every failure must return False
+# ---------------------------------------------------------------------------
+#
+# The FSM turns `False` into a killswitch and `True` into "carry on". So a
+# healing path that returned True after failing would leave the FSM believing a
+# component it never repaired is healthy - the session stays up, unmonitored in
+# practice, with Tor down. Fail-open by way of a return value.
+
+
+@patch("ttp.state.read_lock", return_value=None)
+def test_auto_healing_refuses_to_heal_without_a_lock(mock_read):
+    """No lock means no session to repair, and nothing to repair it from.
+
+    The healing commands are parameterised by the lock. Running them against a
+    default that was never the session's configuration would apply a *different*
+    ruleset than the one the operator started, which is worse than not healing.
+    """
+    assert wd.attempt_auto_healing("tor") is False
+
+
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
+@patch("subprocess.run")
+def test_auto_healing_returns_false_when_the_tor_restart_fails(mock_run, mock_read, caplog):
+    """`systemctl restart` exiting non-zero must not be reported as healed."""
+    import logging
+
+    mock_run.return_value = MagicMock(returncode=1, stderr="Job for ttp-tor.service failed")
+
+    with caplog.at_level(logging.ERROR, logger="ttp"):
+        result = wd.attempt_auto_healing("tor")
+
+    assert result is False
+    assert "Failed to restart Tor service" in caplog.text
+    assert "Job for ttp-tor.service failed" in caplog.text
+
+
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
+@patch("subprocess.run")
+def test_auto_healing_reports_a_nonzero_exit_with_no_stderr(mock_run, mock_read, caplog):
+    """systemctl can fail silently; the exit code is then the only evidence.
+
+    The message falls back to the exit code so the log is never just
+    "Failed to restart Tor service: " with nothing after it.
+    """
+    import logging
+
+    mock_run.return_value = MagicMock(returncode=5, stderr="")
+
+    with caplog.at_level(logging.ERROR, logger="ttp"):
+        assert wd.attempt_auto_healing("tor") is False
+
+    assert "Exit code 5" in caplog.text
+
+
+@patch("ttp.state.read_lock", return_value={"pid": 1234})
+@patch("subprocess.run", side_effect=OSError("systemctl not found"))
+def test_auto_healing_returns_false_when_the_healing_command_cannot_run(mock_run, mock_read, caplog):
+    """An exception from the healing attempt is a failure to heal, not a crash.
+
+    This runs on the watchdog's own thread. An escaping exception would kill the
+    monitor loop, leaving the session unwatched with no killswitch and no log
+    line tying the two together - so the handler converts it into the `False`
+    the FSM knows how to act on.
+    """
+    import logging
+
+    with caplog.at_level(logging.ERROR, logger="ttp"):
+        result = wd.attempt_auto_healing("tor")
+
+    assert result is False
+    assert "Auto-healing failed for 'tor'" in caplog.text
+    assert "systemctl not found" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Link state: telling "the network is down" from "TTP is broken"
+# ---------------------------------------------------------------------------
+#
+# `inotify.py` consults both of these before acting on a violation. If they
+# report a healthy link while the cable is out, the watchdog attributes an
+# ordinary outage to tampering and killswitches a host whose only problem was
+# Wi-Fi. The two failure paths below were the uncovered ones.
+
+
+def test_is_interface_online_is_false_for_an_interface_that_no_longer_exists():
+    """A renamed or removed interface is offline, not an error.
+
+    USB tethering and `systemd`'s predictable-names churn both make
+    `/sys/class/net/<iface>` vanish under a live session, and the lock still
+    holds the old name.
+    """
+    with patch("pathlib.Path.exists", return_value=False):
+        assert wd.is_interface_online("eth0") is False
+
+
+@patch("pathlib.Path.exists", return_value=True)
+def test_is_interface_online_is_false_when_sysfs_cannot_be_read(mock_exists):
+    """Reading sysfs can fail mid-teardown; that must answer False, not raise.
+
+    An interface being torn down exists for the `exists()` call and is gone by
+    the `read_text()`. Raising here would propagate into the watchdog loop.
+    """
+    with patch("pathlib.Path.read_text", side_effect=OSError("no such device")):
+        assert wd.is_interface_online("eth0") is False
+
+
+def test_has_default_route_is_false_without_proc_net_route():
+    """A kernel without /proc/net/route answers False rather than raising."""
+    with patch("pathlib.Path.exists", return_value=False):
+        assert wd.has_default_route() is False
+
+
+@patch("pathlib.Path.exists", return_value=True)
+def test_has_default_route_is_false_when_proc_cannot_be_read(mock_exists):
+    """Same contract as above for an unreadable /proc."""
+    with patch("builtins.open", side_effect=OSError("permission denied")):
+        assert wd.has_default_route() is False
