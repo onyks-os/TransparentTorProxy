@@ -29,6 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tests for the watchdog's tamper detection and auto-healing failure paths.**
+  `ttp/watchdog/integrity.py` 78% → 100%. The bypass-rule check — the only part
+  of the ruleset a session depends on being *present* rather than absent, and
+  what the watchdog uses to decide the kernel's ruleset still matches the lock
+  — had no test at all, including the numeric-UID path that `--bypass-user 1000`
+  takes. Neither did the resolv.conf content checks, which are the module's only
+  actual leak detector: a `nameserver 8.8.8.8` in a live session sends every
+  lookup outside Tor while the mount is present and the ruleset is intact, which
+  is what NetworkManager rewriting the file on a DHCP renew produces. And
+  neither did the auto-healing failure paths, where returning `True` after
+  failing to restart Tor would leave the FSM believing a component it never
+  repaired is healthy. Verified against eighteen mutations. Floor 90% → 91%. See
+  [#31](https://github.com/onyks-os/TransparentTorProxy/issues/31).
+
 - **Tests for the teardown paths that swallow their own failures.** Three
   modules whose `except` blocks log a warning and continue — the right choice,
   since they run during teardown where raising would abandon the remaining

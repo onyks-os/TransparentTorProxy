@@ -60,7 +60,7 @@ lang-clean:
 # A ratchet, not a target. Raise it when you add tests; never lower it to make a
 # build pass. The floor sits just under the measured number so an accidental
 # regression is caught while a deliberate improvement is not punished.
-COV_FAIL_UNDER ?= 90
+COV_FAIL_UNDER ?= 91
 
 coverage: ## Run the test suite with a coverage report and enforce the floor
 	@$(PYTHON) -m pytest $(TEST_DIRS) --cov=$(PROJECT_PKG) --cov-report=term-missing \
