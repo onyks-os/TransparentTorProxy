@@ -24,6 +24,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tests for the teardown paths that swallow their own failures.** Three
+  modules whose `except` blocks log a warning and continue — the right choice,
+  since they run during teardown where raising would abandon the remaining
+  steps. What was untested is that continuing actually happens:
+  `dns.restore_dns` unmounts the overlay, hands systemd-resolved back its
+  configuration and deletes the volatile file in that order, and each step is
+  now verified to run when an earlier one fails. A teardown that stopped after
+  a failed unmount would leave `/etc/resolv.conf` bind-mounted onto a DNSPort
+  that `stop` is about to kill. `ttp/firewall/emergency.py`'s killswitch
+  handler is covered too: it fires when integrity is already lost, so a
+  swallowed exception there would report the network isolated while it is wide
+  open. `ttp/selinux.py`'s port labelling had no test at all, including the
+  `semanage port -a` → `-m` fallback that every session after the first
+  depends on. `dns.py` 77% → 100%, `selinux.py` 67% → 100%,
+  `emergency.py` 88% → 100%; floor 88% → 90%. Each test verified against a
+  mutation of the branch it covers. See
+  [#31](https://github.com/onyks-os/TransparentTorProxy/issues/31).
+
 - **Tests for every rollback branch of `ttp start`.** The four `except` blocks
   between applying the ruleset and writing the lock were entirely uncovered, and
   they are the code that decides whether a failed start leaves the host on plain

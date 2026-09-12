@@ -678,3 +678,58 @@ class TestEmergencyTeardown:
             apply_active_socket_slaughter()
 
         assert "Active socket slaughter FAILED" in caplog.text
+
+    # The killswitch's *own* error handler. Every other test in this class checks
+    # what happens when a teardown step fails; these two check what happens when
+    # the last resort fails.
+    #
+    # The killswitch fires when the watchdog has already concluded integrity is
+    # lost, so the only remaining question is whether the caller finds out. A
+    # swallowed exception here is the worst failure mode TTP has: the FSM would
+    # transition to `killswitch` and report the network isolated while it is
+    # still wide open. That is fail-OPEN reported as fail-closed.
+
+    @patch("ttp.firewall.emergency._apply_table_atomically")
+    def test_killswitch_failure_reaches_the_caller_unwrapped(self, mock_apply, caplog):
+        """A FirewallError from the transaction propagates as itself.
+
+        `_apply_table_atomically` already raises `FirewallError` with the nft
+        stderr in it. Re-wrapping would bury that message one exception deeper
+        for no gain, so the handler re-raises instead - and the operator, who is
+        being told the network could not be isolated, gets the reason nft gave.
+        """
+        from ttp.firewall import apply_emergency_killswitch
+
+        original = FirewallError("nft: Operation not permitted")
+        mock_apply.side_effect = original
+
+        with caplog.at_level(logging.ERROR, logger="ttp"), pytest.raises(FirewallError) as exc_info:
+            apply_emergency_killswitch()
+
+        # The same object, not a copy wrapping it.
+        assert exc_info.value is original
+        assert "Failed to apply emergency killswitch" in caplog.text
+        assert "Operation not permitted" in caplog.text
+
+    @patch("ttp.firewall.emergency._apply_table_atomically")
+    def test_killswitch_never_swallows_an_unexpected_failure(self, mock_apply, caplog):
+        """Anything the transaction did not anticipate is still raised, as FirewallError.
+
+        An `OSError` - nft missing, /run unwritable, the tmpfs full - is not
+        something `_apply_table_atomically` converts, so without the wrap it
+        would escape as a bare OSError that callers catching `FirewallError`
+        would miss entirely. The FSM is one such caller.
+
+        The cause chain is preserved so the original is still diagnosable.
+        """
+        from ttp.firewall import apply_emergency_killswitch
+
+        root_cause = OSError("[Errno 28] No space left on device")
+        mock_apply.side_effect = root_cause
+
+        with caplog.at_level(logging.ERROR, logger="ttp"), pytest.raises(FirewallError) as exc_info:
+            apply_emergency_killswitch()
+
+        assert exc_info.value.__cause__ is root_cause
+        assert "No space left on device" in str(exc_info.value)
+        assert "Failed to apply emergency killswitch" in caplog.text
