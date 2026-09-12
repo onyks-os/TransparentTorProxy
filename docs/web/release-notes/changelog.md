@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tests for every rollback branch of `ttp start`.** The four `except` blocks
+  between applying the ruleset and writing the lock were entirely uncovered, and
+  they are the code that decides whether a failed start leaves the host on plain
+  clearnet, held fail-closed, or carrying a partial ruleset with no lock file to
+  tell `ttp stop` how to clean it up. Coverage of `ttp/commands/start.py` went
+  from 73% to 98%; the coverage floor moved from 86% to 88%. The branches are
+  deliberately asymmetric — only the `StateError` one restores DNS, because by
+  step 4 the overlay is live whereas `dns.apply_dns` rolls back its own partial
+  state — and that asymmetry is now pinned rather than incidental. Each test was
+  verified against a mutation of the branch it covers. See
+  [#31](https://github.com/onyks-os/TransparentTorProxy/issues/31).
+
 - **`publish-docs.yml`** — the documentation site is rebuilt and pushed to
   `onyks-os.github.io/ttp` when a release is published, from the released tag.
   Publication was a manual step, so the site drifted behind the code with
