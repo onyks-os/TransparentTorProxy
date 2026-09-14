@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 
 from ttp.cli import app
 from ttp.commands._common import setup_logging as original_setup_logging
+from ttp.exceptions import TorError
 
 runner = CliRunner()
 
@@ -508,3 +509,234 @@ def test_get_uid_from_port_parser():
     with patch("builtins.open", mock_open(read_data=mock_content)):
         uid = _get_uid_from_port(9041)
         assert uid == 1001
+
+
+# ---------------------------------------------------------------------------
+# refresh - the fourth state-changing command, and the only one with no tests
+# ---------------------------------------------------------------------------
+#
+# `start`, `stop` and `restart` each had dedicated files; `refresh` had none,
+# so its entire body - including the TorError path a user hits whenever the
+# control socket is unreachable - was reached only by importing the module.
+
+
+@patch("os.geteuid", return_value=1000)
+def test_refresh_requires_root(mock_euid):
+    """Rotating a circuit talks to Tor's control socket, which is root-owned."""
+    result = runner.invoke(app, ["refresh"])
+    assert result.exit_code == 1
+    assert "must be run as root" in result.output
+
+
+@patch("os.geteuid", return_value=0)
+@patch("ttp.state.read_lock", return_value=None)
+def test_refresh_requires_an_active_session(mock_read, mock_euid):
+    """With no session there is no circuit to rotate, and no Tor of ours running."""
+    result = runner.invoke(app, ["refresh"])
+    assert result.exit_code == 1
+    assert "No active session" in result.output
+
+
+@patch("os.geteuid", return_value=0)
+@patch("ttp.state.read_lock", return_value={"pid": 123})
+@patch("ttp.tor_control.request_new_circuit", return_value=(True, "185.220.101.5"))
+def test_refresh_reports_the_new_exit_ip(mock_circuit, mock_read, mock_euid):
+    result = runner.invoke(app, ["refresh"])
+    assert result.exit_code == 0
+    assert "185.220.101.5" in result.output
+    assert mock_circuit.call_count == 1
+
+
+@patch("os.geteuid", return_value=0)
+@patch("ttp.state.read_lock", return_value={"pid": 123})
+@patch("ttp.tor_control.request_new_circuit", return_value=(False, "185.220.101.5"))
+def test_refresh_succeeds_even_when_the_exit_ip_did_not_change(mock_circuit, mock_read, mock_euid):
+    """NEWNYM rotates the circuit; it does not promise a different exit node.
+
+    Tor can legitimately hand back the same exit, and the command exits 0 with
+    a caveat rather than reporting a failure - the rotation did happen. Exiting
+    non-zero here would train users to ignore the one exit code that matters.
+    """
+    result = runner.invoke(app, ["refresh"])
+    assert result.exit_code == 0
+    assert "may not have changed" in result.output
+
+
+@patch("os.geteuid", return_value=0)
+@patch("ttp.state.read_lock", return_value={"pid": 123})
+@patch("ttp.tor_control.request_new_circuit", side_effect=TorError("Connection refused"))
+def test_refresh_reports_an_unreachable_control_socket(mock_circuit, mock_read, mock_euid):
+    """The failure a user actually hits: ControlPort/ControlSocket not enabled.
+
+    The progress spinner is `transient=True`, so it must be stopped before the
+    error panel prints or Rich paints the panel over a live spinner region.
+    """
+    result = runner.invoke(app, ["refresh"])
+    assert result.exit_code == 1
+    assert "Connection Failed" in result.output
+    assert "Connection refused" in result.output
+    assert "ControlSocket" in result.output
+
+
+# ---------------------------------------------------------------------------
+# status / check: the reporting branches that describe the host's IPv6 posture
+# ---------------------------------------------------------------------------
+
+
+@patch("ttp.state.read_lock", return_value=None)
+@patch("urllib.request.urlopen", side_effect=OSError("no route to host"))
+def test_status_reports_an_unknown_ip_rather_than_guessing(mock_urlopen, mock_read):
+    """When the lookup fails, status says "Unknown" instead of omitting the line.
+
+    This is the same principle as the leak oracles: a check that could not run
+    must say so. Printing nothing would let the reader supply their own answer.
+    """
+    result = runner.invoke(app, ["status"])
+    assert result.exit_code == 0
+    assert "Unknown" in result.output
+
+
+@patch("ttp.tor_control.get_exit_ip", return_value="5.6.7.8")
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("ttp.state.read_lock", return_value={"pid": 1, "no_ipv6": True})
+@patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
+def test_status_distinguishes_ipv6_dropped_by_us_from_unsupported(mock_v6, mock_read, mock_orphan, mock_ip):
+    """`--no-ipv6` and "the host has no IPv6" produce the same packets and very
+    different diagnoses, so status must not collapse them into one message."""
+    result = runner.invoke(app, ["status"])
+    assert "Force Dropped" in result.output
+
+
+@patch("ttp.tor_control.get_exit_ip", return_value="5.6.7.8")
+@patch("ttp.state.is_orphan", return_value=False)
+@patch("ttp.state.read_lock", return_value={"pid": 1})
+@patch("ttp.tor_detect.is_ipv6_supported", return_value=False)
+def test_status_reports_ipv6_unsupported_by_the_host(mock_v6, mock_read, mock_orphan, mock_ip):
+    result = runner.invoke(app, ["status"])
+    assert "Not supported by host" in result.output
+
+
+@patch("ttp.tor_control.get_controller", return_value=MagicMock())
+@patch("ttp.tor_control.verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.state.read_lock", return_value={"pid": 1, "no_ipv6": True})
+@patch("ttp.tor_detect.is_ipv6_supported", return_value=True)
+def test_check_distinguishes_ipv6_dropped_by_us_from_unsupported(mock_v6, mock_read, mock_verify, mock_ctrl):
+    result = runner.invoke(app, ["check"])
+    assert "Force Dropped" in result.output
+
+
+@patch("ttp.tor_control.get_controller", return_value=MagicMock())
+@patch("ttp.tor_control.verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.state.read_lock", return_value={"pid": 1})
+@patch("ttp.tor_detect.is_ipv6_supported", return_value=False)
+def test_check_reports_ipv6_unsupported_by_the_host(mock_v6, mock_read, mock_verify, mock_ctrl):
+    result = runner.invoke(app, ["check"])
+    assert "Not supported" in result.output
+
+
+# ---------------------------------------------------------------------------
+# check-leak: the branches where a probe fails rather than reports
+# ---------------------------------------------------------------------------
+
+
+@patch("ttp.tor_control.verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig")
+@patch("ttp.state.read_lock", return_value={"pid": 1})
+@patch("subprocess.run", side_effect=OSError("dig: cannot execute"))
+def test_check_leak_treats_an_unrunnable_dig_as_a_leak(mock_run, mock_read, mock_which, mock_verify):
+    """A DNS path that cannot be probed is reported as a leak, not as clean.
+
+    The verdict is the same one the empty-pcap bug got wrong in the other
+    direction: not being able to measure is not evidence of safety.
+    """
+    result = runner.invoke(app, ["-v", "check-leak"])
+    assert result.exit_code == 1
+    assert "Leaks detected" in result.output
+
+
+@patch("ttp.tor_control.verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig")
+@patch("ttp.state.read_lock", return_value={"pid": 1})
+@patch("subprocess.run")
+def test_check_leak_treats_a_failing_resolver_probe_as_a_leak(mock_run, mock_read, mock_which, mock_verify):
+    """The Akamai TXT probe is informational - its *result* can never set
+    `has_leaks`, because a resolver IP is not a leak (`session.py:213`).
+
+    Its *failure* does, and that asymmetry is deliberate: the probe returning
+    an address tells us nothing alarming, but the probe not completing means
+    the DNS path is not behaving, which is. Worth pinning down precisely
+    because it reads like an inconsistency until you see which way it fails.
+    """
+
+    def _by_record_type(cmd, **kwargs):
+        if "TXT" in cmd:
+            raise OSError("resolver unreachable")
+        return MagicMock(stdout="1.2.3.4\n", returncode=0)
+
+    mock_run.side_effect = _by_record_type
+    result = runner.invoke(app, ["-v", "check-leak"])
+    assert result.exit_code == 1
+    assert "Leaks detected" in result.output
+
+
+@patch("ttp.tor_control.verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.commands.session.resolve_optional", return_value=None)
+@patch("ttp.state.read_lock", return_value={"pid": 1})
+def test_check_leak_without_dig_explains_itself_in_verbose(mock_read, mock_which, mock_verify, caplog):
+    """Missing `dig` fails the check; -v must say which probe was skipped, or
+    the user sees a leak verdict with no way to tell it was a tooling gap."""
+    with caplog.at_level("DEBUG", logger="ttp"):
+        result = runner.invoke(app, ["-v", "check-leak"])
+    assert result.exit_code == 1
+    assert "dig not found" in caplog.text
+
+
+@patch("ttp.tor_control.verify_tor", return_value=(True, "1.2.3.4"))
+@patch("ttp.commands.session.resolve_optional", return_value="/usr/bin/dig")
+@patch("ttp.state.read_lock", return_value={"pid": 1})
+@patch("subprocess.run")
+def test_check_leak_logs_the_return_code_when_dig_answers_nothing(mock_run, mock_read, mock_which, mock_verify, caplog):
+    """An empty answer and a failed lookup are different faults; the debug line
+    carries the return code so they can be told apart after the fact."""
+    mock_run.return_value = MagicMock(stdout="", returncode=9)
+    with caplog.at_level("DEBUG", logger="ttp"):
+        result = runner.invoke(app, ["-v", "check-leak"])
+    assert result.exit_code == 1
+    assert "returncode=9" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# diagnose
+# ---------------------------------------------------------------------------
+
+
+@patch("os.geteuid", return_value=1000)
+def test_diagnose_requires_root(mock_euid):
+    """It reads /run/tor/ttp/torrc and the live nftables ruleset."""
+    result = runner.invoke(app, ["diagnose"])
+    assert result.exit_code == 1
+    assert "must be run as root" in result.output
+
+
+@patch("os.geteuid", return_value=0)
+@patch("ttp.system_info.collect_diagnostics")
+def test_diagnose_renders_every_section_it_collected(mock_collect, mock_euid):
+    """A diagnostic report that silently drops a section is worse than none:
+    the reader cannot tell an absent section from an empty one, and this is the
+    output people paste into bug reports.
+    """
+    sections = {
+        "os": "Fedora 44",
+        "tor_service": "active (running)",
+        "torrc": "TransPort 9041",
+        "nftables": "table inet ttp",
+        "dns": "nameserver 127.0.0.1",
+        "control_interface": "ControlSocket ok",
+        "ttp_state": "pid 123",
+    }
+    mock_collect.return_value = sections
+    result = runner.invoke(app, ["diagnose"])
+    assert result.exit_code == 0
+    for key, value in sections.items():
+        assert value in result.output, f"section {key!r} was collected but never rendered"
+    assert "Diagnostic complete" in result.output

@@ -24,6 +24,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tests for the watchdog's event loop, the `refresh` command, and the numeric
+  guard on delegated privileges.** `ttp/watchdog/inotify.py` 82% → 100%,
+  `ttp/commands/session.py` 77% → 100%, `ttp/commands/admin.py` 75% → 100%.
+  Three things here were load-bearing and untested. The watchdog loop's outer
+  exception handler is what turns an internal bug into a visible, fail-closed
+  `tamper` — without it the daemon exits quietly, the lock file stays, `ttp
+  status` still reports the watchdog as active, and nothing is watching the
+  firewall; its `InterruptedError` handler is the other half, since without it
+  any signal delivered to the process would isolate the host. `bypass`
+  interpolates `SUDO_UID`/`SUDO_GID` straight into `systemd-run --uid=`, and
+  `--uid=` accepts more than digits, so the `.isdigit()` check decides the
+  identity an un-proxied process runs as — it is now tested by what it
+  prevents, asserting `systemd-run` is never reached. And `refresh`, the fourth
+  state-changing command, had no test file at all: not its `TorError` path, and
+  not the case where Tor rotates the circuit but hands back the same exit IP,
+  which exits `0` with a caveat rather than reporting a failure. Verified
+  against twenty-four mutations, two of which initially survived and exposed
+  assertions that did not pin the branch they covered. Floor 91% → 94%. See
+  [#31](https://github.com/onyks-os/TransparentTorProxy/issues/31).
+
 - **Tests for the watchdog's tamper detection and auto-healing failure paths.**
   `ttp/watchdog/integrity.py` 78% → 100%. The bypass-rule check — the only part
   of the ruleset a session depends on being *present* rather than absent, and
@@ -74,6 +94,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing to report it.
 
 ### Fixed
+
+- **`test_bypass_requires_systemd` no longer asserts a global `os.path.exists`
+  call count.** The patch is process-wide, so the count also counted whatever
+  the interpreter, Typer and Rich happened to stat on the way through — a
+  number that is not ours to predict and that says nothing about whether the
+  guard works. It now asserts on *which* path the guard interrogated
+  (`/run/systemd/system`), which is both the thing that matters and stable
+  across interpreter versions. See
+  [#27](https://github.com/onyks-os/TransparentTorProxy/issues/27).
 
 - **The IP leak test was less resilient than the code it verifies.** It made a
   single request to `check.torproject.org`, while `tor_control.verify_tor()`
