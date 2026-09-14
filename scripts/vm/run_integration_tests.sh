@@ -84,7 +84,23 @@ if [ $TEST_EXIT -eq 0 ]; then
     START_EXIT=$?
     set -e
     
-    if [ $START_EXIT -eq 0 ]; then
+    # Exit 3 is not a failure to start. Since #24 it means the opposite of one:
+    # the ruleset, the DNS overlay and the lock are all in place and the host is
+    # being held fail-closed, but Tor could not be verified. Treating it as
+    # "failed to start" reported the wrong thing and, worse, skipped `ttp stop`,
+    # leaving the session applied on the way out.
+    #
+    # It is still not a state to run the leak suite against: `test_ip_leak`
+    # asserts the exit IP is a Tor one, which is precisely what could not be
+    # confirmed. So it is surfaced as its own retryable outcome - `make
+    # integration-debian` already retries the script once - rather than being
+    # folded into the generic failure path.
+    if [ $START_EXIT -eq 3 ]; then
+        echo "==> TTP started and the host is fail-closed, but Tor could not be verified (exit 3)."
+        echo "==> Not a start failure. Tearing down and reporting it as retryable."
+        docker exec "$CID" ttp stop || true
+        TEST_EXIT=$START_EXIT
+    elif [ $START_EXIT -eq 0 ]; then
         echo "==> Running offensive anti-leak verification tests..."
         set +e
         REAL_IP=$(docker exec "$CID" cat /tmp/real_public_ip.txt)
@@ -96,7 +112,8 @@ if [ $TEST_EXIT -eq 0 ]; then
         echo "==> Stopping TTP..."
         docker exec "$CID" ttp stop
     else
-        echo "==> Failed to start TTP inside the container!"
+        echo "==> Failed to start TTP inside the container (exit $START_EXIT)!"
+        docker exec "$CID" ttp stop || true
         TEST_EXIT=$START_EXIT
     fi
 fi
