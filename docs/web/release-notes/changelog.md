@@ -24,6 +24,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The leak probes can now fail.** `tests/leak/test_dns_leak.py` and
+  `test_webrtc_leak.py` had no path to a failing result: a well-formed answer
+  passed, a timeout passed, and any `OSError` passed. The branch that looked
+  strictest was the weakest — a valid DNS reply with a matching transaction ID
+  is what you get **both** when TTP redirects the query to Tor's DNSPort **and**
+  when it leaks in cleartext to the resolver it was addressed to, and the NAT
+  translation is undone on the way back so even the source address matches. The
+  probe scored that as "safely intercepted" in both worlds, and did so whether
+  or not a TTP session existed at all. Verdicts now come from
+  `tests/leak/oracle.py`: three outcomes rather than two, where `INCONCLUSIVE`
+  is red, derived from a recorded observation and written to a schema-versioned
+  artifact *before* it is asserted on — so a probe that crashed produces no
+  artifact and therefore no pass, and an unknown schema is a doubt rather than a
+  best-effort read. The oracle and the probes' own classification logic are
+  tested in the default suite (`tests/test_leak_oracle.py`, 33 tests, verified
+  against eleven mutations) even though the probes themselves are not, because
+  the part that decides pass or fail is the part that was wrong. See
+  [#26](https://github.com/onyks-os/TransparentTorProxy/issues/26); the
+  remaining half, a counter on the redirect rule that would make the DNS case
+  decisive rather than merely honest, is
+  [#38](https://github.com/onyks-os/TransparentTorProxy/issues/38).
+
 - **Tests for the watchdog's event loop, the `refresh` command, and the numeric
   guard on delegated privileges.** `ttp/watchdog/inotify.py` 82% → 100%,
   `ttp/commands/session.py` 77% → 100%, `ttp/commands/admin.py` 75% → 100%.
