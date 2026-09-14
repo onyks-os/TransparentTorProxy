@@ -2,17 +2,32 @@
 # SPDX-License-Identifier: MIT
 
 """
-Offensive WebRTC/STUN leak verification.
+Offensive verification that arbitrary UDP cannot reach the WAN.
 
-Sends a raw STUN binding request (RFC 5389) to a public STUN server, which is
-how a browser discovers its own public address before opening a peer connection.
+The payload is a STUN binding request (RFC 5389), which is how a browser
+discovers its own public address before opening a WebRTC peer connection. The
+port, 19302, is a realistic choice and nothing more: any WAN-bound UDP port
+exercises the same rule.
 
-Unlike the DNS probe, this one is decisive in both directions. TTP redirects TCP
-and DNS; it does not redirect UDP/19302 at all, it rejects it. So **any** STUN
-reply is proof the packet left the machine in cleartext - there is no benign
-path that produces one. That makes it the closest thing this suite has to a
-built-in negative control, and the reason its verdict mapping is
-``ESCAPED -> LEAK`` rather than the DNS probe's ``ANSWERED -> INCONCLUSIVE``.
+**What this proves.** Tor's ``TransPort`` is TCP-only, so TTP does not proxy UDP
+- it rejects it. ``nat output`` redirects TCP (``builder.py:142``) and DNS on
+port 53; every other datagram falls through to the catch-all ``reject`` at the
+bottom of ``filter_out``. This probe is the check on that catch-all, which is
+the difference between "UDP is blocked" and "UDP goes out in cleartext".
+
+**What it does not prove, despite the payload.** It is not a WebRTC leak test
+and this file used to be named as though it were. WebRTC's serious leaks are not
+network traffic at all: host ICE candidates carrying private addresses, mDNS
+candidates, and local interface enumeration are all produced *inside* the
+browser and handed to a web page through a JavaScript API. A firewall cannot see
+them, so TTP cannot prevent them, and a green result here says nothing about
+them. Those are mitigated in the browser. See ``docs/decisions/0012``.
+
+Unlike the DNS probe, this one is decisive in both directions: **any** reply is
+proof the datagram left the machine in cleartext, because nothing benign
+produces one. That makes it the suite's built-in negative control, and the
+reason its verdict mapping is ``ESCAPED -> LEAK`` rather than the DNS probe's
+``ANSWERED -> INCONCLUSIVE``.
 """
 
 from __future__ import annotations
@@ -74,17 +89,17 @@ def _probe(family: int, host: str, port: int, probe_name: str) -> Observation:
 
 
 @pytest.mark.leak
-def test_webrtc_stun_leak_prevention():
-    """A STUN binding request over IPv4 must never be answered."""
-    assert_contained(_probe(socket.AF_INET, "stun.l.google.com", 19302, "stun_udp19302_ipv4"))
+def test_arbitrary_udp_to_wan_is_rejected():
+    """A WAN-bound datagram must never be answered. STUN is just the payload."""
+    assert_contained(_probe(socket.AF_INET, "stun.l.google.com", 19302, "udp_wan_egress_ipv4"))
 
 
 @pytest.mark.leak
-def test_webrtc_stun_leak_prevention_ipv6():
+def test_arbitrary_udp_to_wan_is_rejected_over_ipv6():
     """The same over IPv6, where a missing drop rule is the classic leak."""
     from ttp.tor_detect import is_ipv6_supported
 
     if not is_ipv6_supported():
         pytest.skip("IPv6 loopback not supported by the environment.")
 
-    assert_contained(_probe(socket.AF_INET6, "stun.l.google.com", 19302, "stun_udp19302_ipv6"))
+    assert_contained(_probe(socket.AF_INET6, "stun.l.google.com", 19302, "udp_wan_egress_ipv6"))

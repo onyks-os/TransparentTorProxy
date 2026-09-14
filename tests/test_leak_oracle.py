@@ -233,7 +233,7 @@ import socket  # noqa: E402
 from unittest.mock import MagicMock, patch  # noqa: E402
 
 from tests.leak.test_dns_leak import _probe as dns_probe  # noqa: E402
-from tests.leak.test_webrtc_leak import _probe as stun_probe  # noqa: E402
+from tests.leak.test_udp_egress_leak import _probe as udp_probe  # noqa: E402
 
 
 @pytest.fixture
@@ -282,28 +282,28 @@ def test_the_dns_probe_reads_a_valid_answer_as_undecidable() -> None:
     assert verdict_for(observation)[0] is Verdict.INCONCLUSIVE
 
 
-def test_the_stun_probe_reads_any_reply_as_a_leak() -> None:
+def test_the_udp_probe_reads_any_reply_as_a_leak() -> None:
     sock = MagicMock()
     sock.recvfrom.return_value = (b"\x01\x01\x00\x0c" + b"\x00" * 20, ("74.125.0.1", 19302))
     with (
-        patch("tests.leak.test_webrtc_leak.session_is_active", return_value=True),
+        patch("tests.leak.test_udp_egress_leak.session_is_active", return_value=True),
         patch("socket.getaddrinfo", return_value=[(2, 2, 17, "", ("74.125.0.1", 19302))]),
         patch("socket.socket", return_value=sock),
     ):
-        observation = stun_probe(socket.AF_INET, "stun.example", 19302, "stun_test")
+        observation = udp_probe(socket.AF_INET, "stun.example", 19302, "stun_test")
 
     assert observation.outcome is Outcome.ESCAPED
     assert verdict_for(observation)[0] is Verdict.LEAK
 
 
-def test_the_stun_probe_reads_a_dns_failure_as_a_probe_that_could_not_run() -> None:
+def test_the_udp_probe_reads_a_dns_failure_as_a_probe_that_could_not_run() -> None:
     """It used to call this a test failure. A STUN probe whose hostname would
     not resolve has said nothing about whether UDP is contained."""
     with (
-        patch("tests.leak.test_webrtc_leak.session_is_active", return_value=True),
+        patch("tests.leak.test_udp_egress_leak.session_is_active", return_value=True),
         patch("socket.getaddrinfo", side_effect=socket.gaierror("Name or service not known")),
     ):
-        observation = stun_probe(socket.AF_INET, "stun.example", 19302, "stun_test")
+        observation = udp_probe(socket.AF_INET, "stun.example", 19302, "stun_test")
 
     assert observation.outcome is Outcome.UNREACHABLE
     assert verdict_for(observation)[0] is Verdict.INCONCLUSIVE

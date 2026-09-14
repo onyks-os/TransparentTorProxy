@@ -24,8 +24,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **ADR 0012 — DoH, DoT and browser-level leaks are out of scope for the
+  firewall.** The DoH rules are a hardcoded blocklist of sixteen resolver
+  addresses, and tracing the chain shows they almost never fire: for a
+  non-bypassed process `nat output` has already rewritten the destination to
+  `127.0.0.1` before `filter_out` runs, and a bypassed process is accepted at
+  position 1b, above them. The ruleset comment claiming they "apply to bypassed
+  users" was wrong and is corrected. What actually protects against DoH and DoT
+  is structural and needs no list: all TCP goes to Tor's `TransPort`, port 53
+  goes to its `DNSPort`, everything else is rejected. The rules are kept,
+  relabelled as defence in depth against a failed NAT redirect, and are no
+  longer advertised as DoH protection. Browser-level WebRTC leaks — host ICE
+  candidates, mDNS candidates, interface enumeration — are not network traffic
+  and cannot be filtered; they are mitigated in the browser.
+
 - **The leak probes can now fail.** `tests/leak/test_dns_leak.py` and
-  `test_webrtc_leak.py` had no path to a failing result: a well-formed answer
+  `test_udp_egress_leak.py` had no path to a failing result: a well-formed answer
   passed, a timeout passed, and any `OSError` passed. The branch that looked
   strictest was the weakest — a valid DNS reply with a matching transaction ID
   is what you get **both** when TTP redirects the query to Tor's DNSPort **and**
@@ -40,7 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   best-effort read. The oracle and the probes' own classification logic are
   tested in the default suite (`tests/test_leak_oracle.py`, 33 tests, verified
   against eleven mutations) even though the probes themselves are not, because
-  the part that decides pass or fail is the part that was wrong. See
+  the part that decides pass or fail is the part that was wrong. The STUN probe
+  is also renamed `test_udp_egress_leak.py`: it never tested WebRTC, it tested
+  that arbitrary WAN-bound UDP is rejected, and the old name promised coverage
+  of a browser attack surface no firewall can reach (ADR 0012). See
   [#26](https://github.com/onyks-os/TransparentTorProxy/issues/26); the
   remaining half, a counter on the redirect rule that would make the DNS case
   decisive rather than merely honest, is

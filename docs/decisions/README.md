@@ -30,3 +30,4 @@ Each ADR is formatted using the Markdown standard and named using a sequential I
 9. [0009-systemd-resolved-bypass.md](docs/decisions/0009-systemd-resolved-bypass.md) — systemd-resolved DNS bypass and fail-closed firewall kernel drop.
 10. [0010-watchdog-finite-state-machine.md](docs/decisions/0010-watchdog-finite-state-machine.md) — Watchdog FSM (Finite State Machine) using the transitions library.
 11. [0011-start-exit-codes.md](0011-start-exit-codes.md) — Distinct exit code for a session that is active but whose Tor routing could not be verified.
+12. [0012-doh-dot-and-browser-leaks-are-out-of-scope.md](0012-doh-dot-and-browser-leaks-are-out-of-scope.md) — The structural guarantee, not a resolver blocklist, is what protects against DoH/DoT; browser-level WebRTC leaks are not packets and are out of scope.
