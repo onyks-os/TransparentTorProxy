@@ -95,6 +95,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The integration harness no longer reports a fail-closed host as a failure to
+  start.** `scripts/vm/run_integration_tests.sh` branched on `ttp start` exiting
+  `0`, so the exit code `3` introduced in #24 — session applied, host held
+  fail-closed, Tor unverified — printed "Failed to start TTP inside the
+  container", which is the opposite of what happened, and skipped `ttp stop` on
+  the way out. Exit `3` is now its own outcome: the session is torn down and the
+  result is reported as retryable, which the `make integration-*` targets already
+  handle by re-running the script once. The generic failure path now tears the
+  session down too, and prints the exit code it actually saw.
+
 - **`test_bypass_requires_systemd` no longer asserts a global `os.path.exists`
   call count.** The patch is process-wide, so the count also counted whatever
   the interpreter, Typer and Rich happened to stat on the way through — a
