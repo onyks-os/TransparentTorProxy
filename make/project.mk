@@ -8,7 +8,7 @@
 # ---------------------------------------------------------------------------
 
 .PHONY: explain debt integration-debian integration-fedora integration-arch integration-all \
-        chaos-monkey test-leak-ip test-leak-dns test-leak-webrtc check-leak \
+        chaos-monkey test-leak-ip test-leak-dns test-leak-udp check-leak \
         test-nse packages clean-packages verify-full tarball testpypi pypi
 
 ##@ Integration (Docker, privileged)
@@ -41,10 +41,10 @@ test-leak-ip: ## Offensive IP leak test
 test-leak-dns: ## Offensive DNS leak test
 	@$(PYTHON) -m pytest tests/leak/test_dns_leak.py -v -s
 
-test-leak-webrtc: ## Offensive WebRTC STUN leak test
-	@$(PYTHON) -m pytest tests/leak/test_webrtc_leak.py -v -s
+test-leak-udp: ## Offensive test that arbitrary UDP cannot reach the WAN
+	@$(PYTHON) -m pytest tests/leak/test_udp_egress_leak.py -v -s
 
-check-leak: test-leak-ip test-leak-dns test-leak-webrtc ## The full leak suite
+check-leak: test-leak-ip test-leak-dns test-leak-udp ## The full leak suite
 
 ##@ Zero-leak ruleset verification (NSE)
 

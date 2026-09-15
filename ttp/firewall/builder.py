@@ -233,10 +233,16 @@ def _build_ruleset(
             # 5. DoT (DNS-over-TLS) Leak Prevention: Block direct connections to port 853.
             tcp dport 853 reject
 
-            # 6. DoH (DNS-over-HTTPS) & QUIC Leak Prevention: Block common public DoH resolvers on port 443.
-            # Note: For non-bypassed TCP, NAT output (priority -150) redirects TCP/443 to Tor TransPort
-            # before filter_out runs. These TCP reject rules serve as a safety net if NAT fails and
-            # apply to bypassed users. The UDP rules block HTTP/3 (QUIC) DoH queries which NAT does not redirect.
+            # 6. DoH (DNS-over-HTTPS) & QUIC: defence in depth against a failed NAT redirect.
+            #
+            # These are NOT how TTP protects against DoH, and the blocklist is not the mechanism -
+            # see ADR 0012. For a non-bypassed process, nat output (priority -150) has already
+            # rewritten the destination to 127.0.0.1 before filter_out runs, so `ip daddr {...}`
+            # no longer matches: the rule fires only if that redirect failed, which is the case it
+            # exists for. Bypassed processes are accepted at 1b above, so these rules never apply to
+            # them either - an earlier version of this comment claimed they did, and was wrong.
+            # The UDP rules cover QUIC DoH, which NAT does not redirect; the catch-all at 8 would
+            # reject those anyway, so they buy a more specific rejection rather than a new guarantee.
             {doh_reject_ipv4}
             {doh_reject_ipv6}
             {quic_doh_reject_ipv4}
