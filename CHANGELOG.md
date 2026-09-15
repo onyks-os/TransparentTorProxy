@@ -100,6 +100,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The chaos monkey reported a clean run whenever it could not measure.**
+  `run_connectivity_audit` returned a bool, and every path that failed to
+  observe anything returned `True` — "no leak". The sharpest case was the
+  baseline: `get_real_public_ip` returns `None` when the detection service is
+  unreachable, and the leak test was `current_ip == real_ip`, which is false for
+  every possible answer when `real_ip` is `None`. A genuine cleartext leak was
+  printed as "Traffic is successfully proxied through Tor", and the run exited
+  `0`. The audit now reports `CONTAINED` / `LEAK` / `INCONCLUSIVE`, an
+  inconclusive audit fails the run, and a missing baseline aborts before any
+  failure is injected. The root check moved out of module scope into
+  `require_root()`, which is what makes the script testable at all.
+
 - **The integration harness no longer reports a fail-closed host as a failure to
   start.** `scripts/vm/run_integration_tests.sh` branched on `ttp start` exiting
   `0`, so the exit code `3` introduced in #24 — session applied, host held

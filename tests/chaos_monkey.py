@@ -8,17 +8,40 @@ Simulates randomized system failure injections (Tor daemon crash, DNS unmount,
 firewall rules flush, and network link flapping) and asserts that the TTP
 watchdog auto-heals the system or applies the emergency killswitch, preventing
 any cleartext network leaks.
+
+Why the audit has three answers
+-------------------------------
+
+The audit used to return a bool, and every path that could not measure returned
+``True`` - "no leak". A failed subprocess, a raised exception, and a missing
+baseline IP all reported the same thing as a genuinely contained host. The
+summary then printed "Watchdog successfully protected the environment with zero
+leaks" on the strength of measurements that never happened.
+
+The missing baseline was the sharpest case. ``get_real_public_ip`` returns
+``None`` when it cannot reach the detection service, and the leak test is
+``current_ip == real_ip``. With ``real_ip`` at ``None`` that comparison is false
+for every possible answer, so a real cleartext leak was scored as "successfully
+proxied through Tor". The run could not fail.
+
+So the audit now reports :class:`AuditResult`, and ``INCONCLUSIVE`` is a
+failure of the run, not a pass. The child process is also made to exit ``0``
+whether the request succeeds or is blocked, which leaves a non-zero exit meaning
+only one thing: the harness itself broke. That is what separates "the killswitch
+worked" from "the audit never ran", which a bare exit code cannot.
 """
 
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import os
 import random
 import subprocess
 import sys
 import time
 import urllib.request
+from enum import Enum
 from pathlib import Path
 
 # Ensure the virtual environment's bin directory is at the front of PATH,
@@ -36,12 +59,27 @@ for d in reversed(path_dirs):
     if d not in os.environ.get("PATH", "").split(os.pathsep):
         os.environ["PATH"] = f"{d}{os.pathsep}{os.environ.get('PATH', '')}"
 
-# Ensure we are running as root
-if os.geteuid() != 0:
-    print("[ERROR] Chaos Monkey must be run as root (sudo).", file=sys.stderr)
-    sys.exit(1)
-
 TEST_USER = "ttp-chaos-test"
+
+
+class AuditResult(str, Enum):
+    """What one audit proved. ``INCONCLUSIVE`` is red, not green."""
+
+    CONTAINED = "contained"
+    LEAK = "leak"
+    INCONCLUSIVE = "inconclusive"
+
+
+def require_root() -> None:
+    """Refuse to run unprivileged.
+
+    Kept out of module scope so the module can be imported and unit-tested; at
+    import time this was an unconditional ``sys.exit`` that no test could get
+    past, which is why none of the logic below had any coverage.
+    """
+    if os.geteuid() != 0:
+        print("[ERROR] Chaos Monkey must be run as root (sudo).", file=sys.stderr)
+        sys.exit(1)
 
 
 def get_real_public_ip() -> str | None:
@@ -90,42 +128,74 @@ def get_active_interface() -> str | None:
     return None
 
 
-def run_connectivity_audit(real_ip: str | None) -> bool:
-    """Verifies that no cleartext leak escapes to the WAN.
+#: Run in the child so that a blocked request and a successful one both exit 0.
+#: A non-zero exit then means the harness broke, which is a different fact from
+#: "the killswitch held" and must not be scored as one.
+_AUDIT_SCRIPT = (
+    "import urllib.request\n"
+    "req = urllib.request.Request('https://api.ipify.org',"
+    " headers={'User-Agent': 'ttp-chaos-audit'})\n"
+    "try:\n"
+    "    print('OK ' + urllib.request.urlopen(req, timeout=3).read().decode().strip())\n"
+    "except OSError as exc:\n"
+    "    print('NETFAIL ' + type(exc).__name__)\n"
+)
 
-    Returns True if traffic is successfully blocked/torified,
-    False if a cleartext leak is detected (i.e. we connect to WAN and see real_ip).
-    """
-    # Test command running under the unprivileged test user
-    cmd = [
-        "python3",
-        "-c",
-        "import urllib.request; "
-        "req = urllib.request.Request('https://api.ipify.org', headers={'User-Agent': 'ttp-chaos-audit'}); "
-        "print(urllib.request.urlopen(req, timeout=3).read().decode().strip())",
-    ]
 
+def classify_audit(real_ip: str | None, returncode: int, stdout: str) -> tuple[AuditResult, str]:
+    """Decide what one audit run proved, from its output alone."""
+    if real_ip is None:
+        return (
+            AuditResult.INCONCLUSIVE,
+            "no baseline public IP was detected, so no answer can be compared against one",
+        )
+    if returncode != 0:
+        return (
+            AuditResult.INCONCLUSIVE,
+            f"the audit child exited {returncode} without reporting: it did not run",
+        )
+
+    head, _, rest = stdout.strip().partition(" ")
+    if head == "NETFAIL":
+        return AuditResult.CONTAINED, f"the request was refused or dropped ({rest or 'unknown'})"
+    if head != "OK":
+        return AuditResult.INCONCLUSIVE, f"unrecognised audit output {stdout.strip()!r}"
+
+    current_ip = rest.strip()
     try:
-        # Run under the unprivileged test user to hit standard firewall chains
-        res = subprocess.run(cmd, capture_output=True, text=True, user=TEST_USER)
-        if res.returncode == 0:
-            current_ip = res.stdout.strip()
-            print(f"[AUDIT] Connectivity check succeeded. External IP: {current_ip}")
-            if real_ip and current_ip == real_ip:
-                print("[ALERT] CRITICAL NET LEAK DETECTED! Traffic bypassed Tor and reached WAN in cleartext!")
-                return False
-            else:
-                print("[AUDIT] Traffic is successfully proxied through Tor.")
-                return True
-        else:
-            # If the request fails (e.g. timeout or rejected), that is safe (killswitch works)
-            print(
-                f"[AUDIT] Connectivity blocked/rejected (Expected during recovery or killswitch): {res.stderr.strip() or 'Timeout'}"
+        ipaddress.ip_address(current_ip)
+    except ValueError:
+        return AuditResult.INCONCLUSIVE, f"the service answered with something that is not an IP: {current_ip!r}"
+
+    if current_ip == real_ip:
+        return AuditResult.LEAK, f"the WAN saw this host's own address {current_ip}, so traffic bypassed Tor"
+    return AuditResult.CONTAINED, f"the WAN saw {current_ip}, not this host's {real_ip}"
+
+
+def run_connectivity_audit(real_ip: str | None) -> AuditResult:
+    """Ask what the WAN sees, and report honestly when the question went unanswered."""
+    if real_ip is None:
+        result, reason = classify_audit(real_ip, 0, "")
+    else:
+        try:
+            res = subprocess.run(
+                ["python3", "-c", _AUDIT_SCRIPT],
+                capture_output=True,
+                text=True,
+                user=TEST_USER,
             )
-            return True
-    except Exception as e:
-        print(f"[AUDIT] Audit connection failed: {e}")
-        return True
+        except OSError as exc:
+            result, reason = AuditResult.INCONCLUSIVE, f"the audit could not be launched at all: {exc!r}"
+        else:
+            result, reason = classify_audit(real_ip, res.returncode, res.stdout)
+
+    label = {
+        AuditResult.CONTAINED: "[AUDIT] CONTAINED",
+        AuditResult.LEAK: "[ALERT] CRITICAL NET LEAK DETECTED",
+        AuditResult.INCONCLUSIVE: "[ALERT] AUDIT INCONCLUSIVE",
+    }[result]
+    print(f"{label}: {reason}")
+    return result
 
 
 def inject_kill_tor():
@@ -169,7 +239,21 @@ def main():
     )
     args = parser.parse_args()
 
+    require_root()
+
     real_ip = get_real_public_ip()
+    if real_ip is None:
+        # Without a baseline the leak test is `current_ip == None`, which is
+        # false for every possible answer. The run would report zero leaks
+        # whatever happened, so there is nothing to gain by starting it.
+        print(
+            "[ERROR] Could not detect this host's real public IP. The leak check "
+            "compares against it, so without it the run cannot fail and would "
+            "report success no matter what the watchdog did.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     interface = get_active_interface()
     if not interface:
         print("[ERROR] No active network interface found.", file=sys.stderr)
@@ -195,6 +279,7 @@ def main():
     last_injection = time.time()
     failures_injected = 0
     leaks_found = 0
+    inconclusive_audits = 0
 
     try:
         while time.time() - start_time < args.duration:
@@ -230,9 +315,12 @@ def main():
                 time.sleep(check_wait)
 
                 # Run network leak audits
-                if not run_connectivity_audit(real_ip):
+                result = run_connectivity_audit(real_ip)
+                if result is AuditResult.LEAK:
                     leaks_found += 1
                     break
+                if result is AuditResult.INCONCLUSIVE:
+                    inconclusive_audits += 1
 
             # Passive audit sleep
             time.sleep(1)
@@ -247,16 +335,28 @@ def main():
 
     print("\n" + "=" * 50)
     print("Chaos Monkey Stress Test Summary:")
-    print(f"  Failures Injected: {failures_injected}")
-    print(f"  Leaks Detected:    {leaks_found}")
+    print(f"  Failures Injected:    {failures_injected}")
+    print(f"  Leaks Detected:       {leaks_found}")
+    print(f"  Inconclusive Audits:  {inconclusive_audits}")
     print("=" * 50)
 
     if leaks_found > 0:
         print("[FAIL] Watchdog failed to prevent cleartext network leaks.")
         sys.exit(1)
-    else:
-        print("[PASS] Watchdog successfully protected the environment with zero leaks.")
-        sys.exit(0)
+    if inconclusive_audits > 0:
+        # Not a pass. An audit that could not measure has produced no evidence
+        # that the host was safe, and reporting one as a clean run is the defect
+        # this script exists to catch in TTP.
+        print(
+            f"[FAIL] {inconclusive_audits} of {failures_injected} audit(s) could not "
+            "measure. This run proves nothing about whether the watchdog held."
+        )
+        sys.exit(1)
+    if failures_injected == 0:
+        print("[FAIL] No failure was ever injected, so the watchdog was never tested.")
+        sys.exit(1)
+    print("[PASS] Watchdog successfully protected the environment with zero leaks.")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
