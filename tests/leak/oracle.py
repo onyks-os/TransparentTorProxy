@@ -133,9 +133,9 @@ def verdict_for(observation: Observation) -> tuple[Verdict, str]:
     if observation.outcome is Outcome.ANSWERED:
         return (
             Verdict.INCONCLUSIVE,
-            "a well-formed answer is produced both by a redirect to Tor and by a "
-            "cleartext leak to the addressed resolver; this probe cannot tell them "
-            "apart (see issue #38 for the discriminator this needs)",
+            "the answer's shape is produced both by a redirect to Tor and by a "
+            "cleartext leak to the addressed resolver; this probe cannot tell "
+            "them apart",
         )
 
     if observation.outcome is Outcome.UNREACHABLE:

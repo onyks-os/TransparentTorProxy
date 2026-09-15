@@ -6,23 +6,40 @@ Offensive DNS leak verification.
 
 Sends a raw DNS query straight at a public resolver and reports what came back.
 
-What this probe can and cannot prove
-------------------------------------
+The discriminator
+-----------------
 
-It can prove containment when the packet is **refused or dropped**: nothing
-answered, so nothing left.
+An A-record query cannot decide anything. Under a working session it is DNAT'd
+to Tor's ``DNSPort`` and Tor answers it; with the ruleset absent it reaches the
+public resolver and the resolver answers it. Both replies carry the same
+transaction id and the same response bit, and the NAT translation is undone on
+the way back, so even the source address matches. An earlier version of this
+file asserted on exactly those fields and called the result "safely
+intercepted" - an assertion that was true in both worlds and therefore
+distinguished neither.
 
-It cannot prove containment when an answer *does* come back. Under a working
-session the query is DNAT'd to Tor's DNSPort and Tor answers it; with the
-ruleset absent the query reaches the public resolver and the resolver answers
-it. Both replies carry the same transaction ID and the same response bit, and
-the NAT translation is undone on the way back, so the source address matches in
-both cases too. The previous version of this file asserted on exactly those
-fields and called the result "safely intercepted" - an assertion that was true
-in both worlds and therefore distinguished neither.
+This version asks for a **TXT** record instead, because Tor's ``DNSPort`` cannot
+answer one. From tor(1), DNSPort:
 
-That case is now reported as INCONCLUSIVE, which is red. Issue #38 covers the
-discriminator that would make it decisive: a counter on the redirect rule.
+    This port only handles A, AAAA, and PTR requests - it doesn't handle
+    arbitrary DNS request types.
+
+So the reply type is the discriminator, and it needs no root, no counter and no
+privileged observation point:
+
+* an **error rcode** (NOTIMP, REFUSED, SERVFAIL, ...) is something only a
+  resolver that refuses arbitrary types produces. That is Tor. ``CONTAINED``.
+* **no reply at all** means the packet was dropped before it left. ``CONTAINED``.
+* a **NOERROR reply carrying answer records** is a real TXT answer, which only a
+  full recursive resolver can produce. The packet reached ``1.1.1.1`` in
+  cleartext. ``LEAK`` - and this is the first DNS outcome that can be one.
+* a **NOERROR reply with no answer records** is the one ambiguous case left: it
+  is what a resolver returns for a name that genuinely has no TXT record, and it
+  is also a plausible shape for a refusal. It stays ``INCONCLUSIVE``.
+
+``example.com`` is the target because its TXT record (``v=spf1 -all``) is served
+by IANA and has been stable for years, and the discriminator above is only sound
+while the name actually has a TXT record to return.
 """
 
 from __future__ import annotations
@@ -33,18 +50,52 @@ import pytest
 
 from tests.leak.oracle import Observation, Outcome, assert_contained, session_is_active
 
-# A minimal A-record query for check.torproject.org, hand-packed to avoid a
-# dnspython dependency in a test whose whole job is to not trust its tools.
+# A TXT query for example.com, hand-packed to avoid a dnspython dependency in a
+# test whose whole job is to not trust its tools.
 _QUERY = (
     b"\xaa\xbb"  # Transaction ID
-    b"\x01\x00"  # Flags: standard query
+    b"\x01\x00"  # Flags: standard query, recursion desired
     b"\x00\x01"  # Questions: 1
     b"\x00\x00\x00\x00\x00\x00"  # Answer/Authority/Additional RRs: 0
-    b"\x05check\x0atorproject\x03org\x00"
-    b"\x00\x01"  # Type: A
+    b"\x07example\x03com\x00"
+    b"\x00\x10"  # Type: TXT
     b"\x00\x01"  # Class: IN
 )
 _TXID = _QUERY[:2]
+
+#: Offsets into the 12-byte DNS header (RFC 1035 s4.1.1).
+_HEADER_LEN = 12
+_RCODE_MASK = 0x0F
+_QR_BIT = 0x80
+
+
+def _classify(data: bytes, peer_addr: str) -> tuple[Outcome, str]:
+    """Decide what a reply proves, from the reply alone."""
+    if len(data) < _HEADER_LEN or data[:2] != _TXID or not data[2] & _QR_BIT:
+        return (
+            Outcome.UNREACHABLE,
+            f"{len(data)} bytes from {peer_addr} that are not a response to our query",
+        )
+
+    rcode = data[3] & _RCODE_MASK
+    answers = int.from_bytes(data[6:8], "big")
+
+    if rcode != 0:
+        return (
+            Outcome.ANSWERED_BY_PROXY,
+            f"rcode {rcode} from {peer_addr}: the responder refuses TXT, which a public recursive resolver does not",
+        )
+    if answers > 0:
+        return (
+            Outcome.ESCAPED,
+            f"NOERROR with {answers} answer record(s) from {peer_addr}: only a full "
+            "recursive resolver answers TXT, so the query left the host in cleartext",
+        )
+    return (
+        Outcome.ANSWERED,
+        f"NOERROR with no answer records from {peer_addr}: indistinguishable from a "
+        "name that has no TXT record, so this reply decides nothing",
+    )
 
 
 def _probe(family: int, resolver: str, probe_name: str) -> Observation:
@@ -58,14 +109,8 @@ def _probe(family: int, resolver: str, probe_name: str) -> Observation:
     sock.settimeout(5.0)
     try:
         sock.sendto(_QUERY, (resolver, 53))
-        data, peer = sock.recvfrom(512)
-
-        well_formed = len(data) >= 12 and data[:2] == _TXID and bool(data[2] & 0x80)
-        outcome = Outcome.ANSWERED
-        detail = (
-            f"{len(data)} bytes from {peer[0]}, "
-            f"{'well-formed' if well_formed else 'MALFORMED'} reply to our transaction id"
-        )
+        data, peer = sock.recvfrom(1232)
+        outcome, detail = _classify(data, peer[0])
     except TimeoutError:
         outcome = Outcome.BLOCKED
         detail = "no reply within 5s: the query was dropped before leaving the host"

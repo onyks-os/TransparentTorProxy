@@ -60,7 +60,7 @@ def test_a_well_formed_answer_does_not_prove_containment() -> None:
 
 
 def test_an_answer_with_proof_of_its_origin_does_prove_containment() -> None:
-    """The outcome #38 will produce once the redirect rule carries a counter."""
+    """The outcome the DNS probe reaches when Tor refuses a TXT query."""
     verdict, _ = verdict_for(_obs(Outcome.ANSWERED_BY_PROXY))
     assert verdict is Verdict.CONTAINED
 
@@ -266,9 +266,49 @@ def test_the_dns_probe_reads_a_silent_socket_as_containment(exc, expected) -> No
     assert verdict_for(observation)[0] is Verdict.CONTAINED
 
 
-def test_the_dns_probe_reads_a_valid_answer_as_undecidable() -> None:
-    """The exact bytes the old version accepted as proof of containment."""
-    reply = b"\xaa\xbb\x81\x80" + b"\x00" * 8
+def _dns_reply(flags_lo: int, answers: int, txid: bytes = b"\xaa\xbb") -> bytes:
+    """A 12-byte DNS header: *flags_lo* carries RA and the rcode nibble."""
+    return txid + bytes([0x81, flags_lo]) + b"\x00\x01" + answers.to_bytes(2, "big") + b"\x00" * 4
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected", "verdict"),
+    [
+        pytest.param(
+            _dns_reply(0x84, 0),
+            Outcome.ANSWERED_BY_PROXY,
+            Verdict.CONTAINED,
+            id="notimp-is-tor-refusing-txt",
+        ),
+        pytest.param(
+            _dns_reply(0x85, 0),
+            Outcome.ANSWERED_BY_PROXY,
+            Verdict.CONTAINED,
+            id="refused-is-tor-refusing-txt",
+        ),
+        pytest.param(
+            _dns_reply(0x80, 2),
+            Outcome.ESCAPED,
+            Verdict.LEAK,
+            id="noerror-with-answers-is-a-recursive-resolver",
+        ),
+        pytest.param(
+            _dns_reply(0x80, 0),
+            Outcome.ANSWERED,
+            Verdict.INCONCLUSIVE,
+            id="noerror-without-answers-decides-nothing",
+        ),
+        pytest.param(
+            _dns_reply(0x80, 2, txid=b"\x00\x00"),
+            Outcome.UNREACHABLE,
+            Verdict.INCONCLUSIVE,
+            id="a-reply-to-someone-elses-query-is-not-evidence",
+        ),
+    ],
+)
+def test_the_dns_probe_classifies_a_reply_by_what_only_one_responder_can_produce(reply, expected, verdict) -> None:
+    """The TXT discriminator: Tor's DNSPort handles A, AAAA and PTR only, so an
+    answered TXT query is proof the packet reached a real recursive resolver."""
     sock = MagicMock()
     sock.recvfrom.return_value = (reply, ("1.1.1.1", 53))
     with (
@@ -277,9 +317,16 @@ def test_the_dns_probe_reads_a_valid_answer_as_undecidable() -> None:
     ):
         observation = dns_probe(socket.AF_INET, "1.1.1.1", "dns_test")
 
-    assert observation.outcome is Outcome.ANSWERED
-    assert "well-formed" in observation.detail
-    assert verdict_for(observation)[0] is Verdict.INCONCLUSIVE
+    assert observation.outcome is expected
+    assert verdict_for(observation)[0] is verdict
+
+
+def test_the_dns_probe_asks_for_a_record_type_tor_cannot_answer() -> None:
+    """The discriminator lives in the query, not the reply: an A query would be
+    answered identically by Tor and by the resolver it was addressed to."""
+    from tests.leak.test_dns_leak import _QUERY
+
+    assert _QUERY.endswith(b"\x00\x10\x00\x01"), "QTYPE must be TXT (16), class IN"
 
 
 def test_the_udp_probe_reads_any_reply_as_a_leak() -> None:
