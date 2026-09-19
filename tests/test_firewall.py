@@ -47,13 +47,15 @@ def test_apply_rules_is_a_single_atomic_transaction(mock_run, mock_pwd, mock_loc
 
     apply_rules(tor_user="debian-tor")
 
-    # Exactly one nft invocation, and it is a file-driven (atomic) one.
+    # Exactly one nft invocation, and it is a script-driven (atomic) one.
+    # The script goes in on stdin: a fixed file under /run/ttp would be a name
+    # nft resolves a second time, after TTP has already written it.
     assert mock_run.call_count == 1
     argv = mock_run.call_args.args[0]
-    assert argv[:2] == [resolve("nft"), "-f"]
+    assert argv == [resolve("nft"), "-f", "-"]
 
     # The script itself carries the reset, ahead of the table definition.
-    script = mock_rules_path.write_text.call_args.args[0]
+    script = mock_run.call_args.kwargs["input"]
     reset_pos = script.index("flush table inet ttp")
     assert script.index("add table inet ttp") < reset_pos
     assert reset_pos < script.index("table inet ttp {")
@@ -637,9 +639,9 @@ class TestEmergencyTeardown:
         apply_emergency_killswitch()
 
         assert mock_run.call_count == 1
-        assert mock_run.call_args.args[0][:2] == [resolve("nft"), "-f"]
+        assert mock_run.call_args.args[0] == [resolve("nft"), "-f", "-"]
 
-        script = mock_rules_path.write_text.call_args.args[0]
+        script = mock_run.call_args.kwargs["input"]
         assert "add table inet ttp" in script
         assert script.index("flush table inet ttp") < script.index("table inet ttp {")
         # And the resulting table really is the drop-all one.
@@ -784,3 +786,24 @@ def test_apply_teardown_lockdown_accepts_an_integer_uid():
         "lo",
         "drop",
     ]
+
+
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner.subprocess.run")
+def test_apply_rules_never_stages_the_ruleset_in_a_file(mock_run, mock_pwd):
+    """The ruleset must not be written to a path nft then reopens by name.
+
+    /run/ttp holds files root creates by fixed name. Writing the ruleset there
+    and passing nft the path resolves it twice: the write can follow a symlink
+    and truncate an arbitrary file as root, and the second resolution can be
+    steered at different content in between.
+    """
+    mock_run.return_value = MagicMock(returncode=0)
+    mock_pwd.return_value = MagicMock(pw_uid=123)
+
+    with patch("ttp.firewall.runner.RULES_TEMP_PATH") as mock_path:
+        apply_rules(tor_user="debian-tor")
+        mock_path.write_text.assert_not_called()
+
+    assert "-" in mock_run.call_args.args[0]
+    assert mock_run.call_args.kwargs["input"].startswith("add table inet ttp")

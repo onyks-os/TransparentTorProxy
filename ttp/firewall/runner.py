@@ -56,22 +56,26 @@ def _run_nft(args: list[str]) -> None:
 
 
 def _run_nft_string(ruleset: str) -> None:
-    """Inject a complex ruleset string directly into nft via a volatile temporary file.
+    """Inject a complex ruleset string directly into nft via stdin.
+
+    The ruleset is piped to ``nft -f -`` rather than staged in a file under
+    ``/run/ttp``. Writing it to a fixed name and then having ``nft`` reopen
+    that name resolves the path twice: the write could follow a symlink and
+    truncate an arbitrary file as root, and the second resolution could be
+    steered at a different file again in between. ``nft`` still reports syntax
+    errors with line numbers when reading stdin, which is the only reason the
+    temporary file existed.
 
     Args:
         ruleset: The complete nftables ruleset definition string.
 
     Raises:
-        FirewallError: If writing to state or running ``nft -f`` fails.
+        FirewallError: If running ``nft -f -`` fails.
     """
     try:
-        # Ensure the state directory exists
-        LOCK_DIR.mkdir(parents=True, exist_ok=True)
-        # Write to temporary file to get better error messages with line numbers
-        RULES_TEMP_PATH.write_text(ruleset.strip() + "\n", encoding="utf-8")
-
         subprocess.run(
-            [resolve("nft"), "-f", str(RULES_TEMP_PATH)],
+            [resolve("nft"), "-f", "-"],
+            input=ruleset.strip() + "\n",
             capture_output=True,
             text=True,
             check=True,
@@ -183,6 +187,12 @@ def destroy_rules() -> bool:
     )
     # returncode 1 with table absent = already clean, not an error
     # to distinguish it, check if the table exists
+    # Remove any ruleset file left behind by an older version, on every exit
+    # path: TTP no longer writes one (the ruleset is piped to `nft -f -`), and
+    # a stale copy of a session's ports, UIDs and bypass list should not
+    # outlive the session.
+    RULES_TEMP_PATH.unlink(missing_ok=True)
+
     if result.returncode != 0:
         # Check: does the table still exist?
         check = subprocess.run(
@@ -199,5 +209,4 @@ def destroy_rules() -> bool:
         logger.error(f"nft destroy failed: {err_msg}")
         raise FirewallError(f"Failed to destroy nftables ruleset: {err_msg}")
 
-    RULES_TEMP_PATH.unlink(missing_ok=True)
     return True
