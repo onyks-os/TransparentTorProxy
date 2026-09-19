@@ -807,3 +807,53 @@ def test_apply_rules_never_stages_the_ruleset_in_a_file(mock_run, mock_pwd):
 
     assert "-" in mock_run.call_args.args[0]
     assert mock_run.call_args.kwargs["input"].startswith("add table inet ttp")
+
+
+# ---------------------------------------------------------------------------
+# The IPv6 kill-switch must outrank every family-agnostic exemption.
+#
+# "meta skuid", "meta skgid" and "socket cgroupv2" match IPv4 and IPv6 alike,
+# and per nft(8) `accept` terminates evaluation of the chain. An exemption
+# placed ahead of the drop therefore hides it, and that principal's IPv6
+# leaves in cleartext while README and the CLI banner both say all IPv6 is
+# dropped.
+# ---------------------------------------------------------------------------
+
+
+def _filter_out_block(ruleset: str) -> str:
+    start = ruleset.index("chain filter_out")
+    return ruleset[start : ruleset.index("chain filter_forward", start)]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "exemption"),
+    [
+        pytest.param({"allow_root": True}, "meta skuid 0 accept", id="allow-root"),
+        pytest.param({"bypass_uids": [9999]}, "meta skuid 9999 accept", id="bypass-uid"),
+        pytest.param({"bypass_gids": [8888]}, "meta skgid 8888 accept", id="bypass-gid"),
+        pytest.param(
+            {"cgroup_bypass": True},
+            'socket cgroupv2 level 1 "ttp-bypass.slice" accept',
+            id="cgroup-bypass",
+        ),
+    ],
+)
+def test_ipv6_killswitch_precedes_every_family_agnostic_exemption(kwargs, exemption):
+    block = _filter_out_block(_build_ruleset(**_base_kwargs(ipv6_avail=False, **kwargs)))
+
+    drop = block.index("meta nfproto ipv6 drop")
+    assert exemption in block, "test fixture no longer emits the exemption it checks"
+    assert drop < block.index(exemption), (
+        f"{exemption!r} is evaluated before the IPv6 drop, so that principal's IPv6 escapes"
+    )
+
+
+def test_ipv6_killswitch_still_follows_the_tor_daemon_exemption():
+    """Tor keeps its exemption ahead of the drop.
+
+    In --external-daemon mode TTP never writes the torrc, so an externally
+    managed Tor may legitimately reach an IPv6 guard or bridge. Putting the
+    drop first would strand it.
+    """
+    block = _filter_out_block(_build_ruleset(**_base_kwargs(ipv6_avail=False, tor_uid=110)))
+    assert block.index("meta skuid 110 accept") < block.index("meta nfproto ipv6 drop")
