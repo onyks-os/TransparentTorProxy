@@ -174,8 +174,12 @@ def test_detect_tor_user_from_ps_toranon():
     'debian-tor' and 'tor', causing nftables to block Tor's own
     traffic on those systems.
     """
-    ps_output = "USER     COMMAND\nroot     systemd\ntoranon  tor\nroot     bash\n"
-    with patch("ttp.tor_detect.subprocess.run") as mock_run:
+    ps_output = "  PID USER     COMMAND\n    1 root     systemd\n  910 toranon  tor\n  920 root     bash\n"
+    with (
+        patch("ttp.tor_detect.subprocess.run") as mock_run,
+        patch("ttp.tor_detect.resolve_optional", return_value="/usr/bin/tor"),
+        patch("ttp.tor_detect.os.path.realpath", return_value="/usr/bin/tor"),
+    ):
         mock_run.return_value = MagicMock(stdout=ps_output, returncode=0)
         assert _detect_tor_user() == "toranon"
 
@@ -185,9 +189,13 @@ def test_detect_tor_user_ps_fallback(mock_run):
     """Fallback to /etc/passwd if ps output is truncated or suspicious."""
     mock_run.side_effect = [
         # 1. ps returns truncated user
-        MagicMock(returncode=0, stdout="debian-+ tor\n"),
+        MagicMock(returncode=0, stdout="  910 debian-+ tor\n"),
     ]
-    with patch("ttp.tor_detect.Path.read_text") as mock_read:
+    with (
+        patch("ttp.tor_detect.resolve_optional", return_value="/usr/bin/tor"),
+        patch("ttp.tor_detect.os.path.realpath", return_value="/usr/bin/tor"),
+        patch("ttp.tor_detect.Path.read_text") as mock_read,
+    ):
         mock_read.return_value = "debian-tor:x:110:110::/var/lib/tor:/bin/false\n"
         assert _detect_tor_user() == "debian-tor"
 

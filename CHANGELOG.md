@@ -193,7 +193,7 @@ A hardening-only release. No new features: it is the result of TTP's first
 end-to-end security audit, and every change below comes from a finding that
 survived independent verification. The full report, including the seven
 candidates that were **disproved** and the work still open, is at
-[`docs/security/audit-2026-09.md`](docs/security/audit-2026-09.md).
+[`docs/security/audit-2026-09.md`](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/security/audit-2026-09.md).
 
 ### Security
 
