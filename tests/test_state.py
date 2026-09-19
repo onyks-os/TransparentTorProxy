@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
@@ -462,3 +462,41 @@ def test_attempt_recovery_passes_a_missing_dns_backup_as_none(_use_tmp_lock):
 def test_delete_lock_is_idempotent(_use_tmp_lock):
     state.delete_lock()
     state.delete_lock()  # must not raise on a lock that is already gone
+
+
+# ---------------------------------------------------------------------------
+# _is_pid_ttp authenticates a process by /proc/<pid>/cmdline, which the owner
+# of that process chooses. It must match argv tokens, never a substring.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "cmdline",
+    [
+        pytest.param(b"/usr/bin/curl\x00http://example.invalid/\x00", id="curl-http-url"),
+        pytest.param(b"/usr/sbin/httpd\x00-DFOREGROUND\x00", id="httpd"),
+        pytest.param(b"/usr/bin/python3\x00-m\x00http.server\x00", id="python-http-server"),
+        pytest.param(b"http\x00", id="attacker-chosen-argv0"),
+        pytest.param(b"/usr/sbin/nginx\x00-g\x00daemon off;\x00", id="unrelated"),
+    ],
+)
+def test_is_pid_ttp_rejects_a_process_that_is_not_ttp(cmdline: bytes) -> None:
+    """ "http" contains "ttp", so a substring test claimed these as ours."""
+    with patch("builtins.open", mock_open(read_data=cmdline)):
+        assert state._is_pid_ttp(4242) is False
+
+
+@pytest.mark.parametrize(
+    "cmdline",
+    [
+        pytest.param(b"/usr/bin/ttp\x00start\x00", id="console-script"),
+        pytest.param(b"/usr/bin/sudo\x00ttp\x00start\x00", id="sudo-console-script"),
+        pytest.param(b"/opt/venv/bin/python3\x00/opt/venv/bin/ttp\x00start\x00", id="venv-script"),
+        pytest.param(b"/usr/bin/python3\x00-m\x00ttp.cli\x00start\x00", id="module-form"),
+    ],
+)
+def test_is_pid_ttp_still_recognises_every_real_invocation(cmdline: bytes) -> None:
+    """The inverse error is worse: a live session reported as an orphan would
+    have attempt_recovery() tear down a working session's firewall and DNS."""
+    with patch("builtins.open", mock_open(read_data=cmdline)):
+        assert state._is_pid_ttp(4242) is True

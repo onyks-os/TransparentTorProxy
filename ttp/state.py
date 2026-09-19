@@ -272,14 +272,33 @@ def delete_lock() -> None:
     LOCK_PATH.unlink(missing_ok=True)
 
 
+# argv tokens that identify a genuine ttp process. The installed console
+# script is /usr/bin/ttp; `python -m ttp.cli` is the module form.
+_TTP_ARGV_TOKENS = (b"ttp", b"ttp.cli")
+
+
 def _is_pid_ttp(pid: int) -> bool:
-    """Check if the PID actually belongs to a TTP process (prevents PID recycling)."""
+    """Check if the PID actually belongs to a TTP process (prevents PID recycling).
+
+    /proc/<pid>/cmdline is chosen by the owner of the target process, so it is
+    matched as NUL-separated argv tokens and never as a substring: the literal
+    "http" contains "ttp", so a substring test treated any curl, wget, browser
+    or httpd process as ours. That made a recycled PID look alive, which in
+    turn made is_orphan() report a dead session as running and suppressed the
+    recovery path.
+    """
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as f:
-            cmdline = f.read()
-            return b"ttp" in cmdline
+            argv = [token for token in f.read().split(b"\x00") if token]
     except (FileNotFoundError, OSError):
         return False
+
+    for index, token in enumerate(argv):
+        if token.rsplit(b"/", 1)[-1] in _TTP_ARGV_TOKENS:
+            return True
+        if token == b"-m" and index + 1 < len(argv) and argv[index + 1] in _TTP_ARGV_TOKENS:
+            return True
+    return False
 
 
 def is_orphan() -> bool:
