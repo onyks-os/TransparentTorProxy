@@ -1,5 +1,12 @@
 # Security Policy
 
+## Audits
+
+TTP's first end-to-end security audit was run in September 2026. The report —
+including the findings that were **disproved**, and the work still open — is at
+[`docs/security/audit-2026-09.md`](docs/security/audit-2026-09.md). Its fixes
+ship in 0.4.9.
+
 ## Reporting a Vulnerability
 
 We take the security of TTP seriously. If you discover a security vulnerability within this project, please **do not open a public issue**.
