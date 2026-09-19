@@ -16,6 +16,7 @@ import typer
 from typer.testing import CliRunner
 
 from ttp.cli import app
+from ttp.commands import lifecycle
 from ttp.commands._common import EXIT_UNVERIFIED
 
 runner = CliRunner()
@@ -403,3 +404,25 @@ def test_stop_graceful_teardown_no_conntrack(
 
 
 # bypass
+
+
+def test_do_stop_clears_the_lock_even_when_dns_restore_fails():
+    """Once the table is destroyed the lock must not survive.
+
+    do_stop had no try/finally: an exception from restore_dns left the
+    firewall gone, the overlay mounted and the lock in place, which then made
+    `ttp status` report a live session, `ttp stop` repeat the failure and the
+    next `ttp start` refuse with a concurrency error -- all while the host was
+    routing in cleartext.
+    """
+    with (
+        patch("ttp.state.read_lock", return_value={"pid": 1, "tor_uid": 107}),
+        patch("ttp.commands.lifecycle.firewall"),
+        patch("ttp.commands.lifecycle.tor_install"),
+        patch("ttp.commands.lifecycle.dns.restore_dns", side_effect=RuntimeError("umount timed out")),
+        patch("ttp.commands.lifecycle.resolve_optional", return_value=None),
+        patch("ttp.state.delete_lock") as delete_lock,
+    ):
+        lifecycle.do_stop()
+
+    delete_lock.assert_called_once()

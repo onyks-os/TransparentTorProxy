@@ -173,11 +173,22 @@ def restore_dns(backup: dict[str, Any] | None) -> None:
     If systemd-resolved was active on startup, also removes the volatile
     drop-in configuration and restarts it.
     """
-    if not backup:
-        return
+    # The backup comes from the session lock, which is state rather than a
+    # trusted structure. A wrong type here used to raise out of do_stop after
+    # the firewall was already destroyed, leaving the overlay mounted with no
+    # way to clear it through ttp; and a falsy value made this a silent no-op
+    # that still reported success. Derive the target instead of trusting it.
+    if not isinstance(backup, dict):
+        if backup:
+            logger.warning("Ignoring malformed DNS backup of type %s", type(backup).__name__)
+        backup = {}
+
+    target = RESOLV_CONF
+    if os.path.islink(str(RESOLV_CONF)):
+        target = Path(os.path.realpath(str(RESOLV_CONF)))
 
     # 1. Unmount TTP DNS overlay first to restore the base /etc/resolv.conf file
-    mount_target = backup.get("mount_target", str(RESOLV_CONF))
+    mount_target = backup.get("mount_target") or str(target)
 
     if _is_ttp_mount(mount_target):
         try:

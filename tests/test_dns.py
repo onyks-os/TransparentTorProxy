@@ -458,29 +458,54 @@ def test_apply_dns_wraps_an_unexpected_failure_as_dnserror(_mock_resolv_conf):
 
 
 def test_restore_dns_with_no_backup_is_a_no_op(_mock_resolv_conf):
-    """A falsy backup means there was never a session, so there is nothing to undo.
+    """A falsy backup no longer means "do nothing" - it means "find out".
 
-    This is the guard that makes `restore_dns(None)` silent, and the reason
-    `start`'s StateError rollback has to pass the real backup dict rather than
-    `None` - a detail that is otherwise invisible and is asserted from the other
-    side in `tests/test_cli_start.py`.
+    Treating it as nothing to undo made the lockless `ttp stop --restore-only`
+    path leave the overlay mounted while printing "Network restored", and made
+    a malformed backup abort teardown after the firewall was already gone.
+    The unmount is gated on _is_ttp_mount, which only ever acts on a path
+    /proc/self/mountinfo shows as a TTP mount, so nothing else can be affected.
     """
     _, fake_runtime = _mock_resolv_conf
     fake_runtime.touch()
 
     with (
-        patch("ttp.dns._is_ttp_mount") as mock_is_mount,
+        patch("ttp.dns._is_ttp_mount", return_value=False) as mock_is_mount,
         patch("ttp.dns.subprocess.run") as mock_run,
-        patch("ttp.dns_resolved.restore_resolved") as mock_restore,
+        patch("ttp.dns_resolved.restore_resolved"),
     ):
         dns.restore_dns(None)
         dns.restore_dns({})
 
-    assert mock_is_mount.call_count == 0
+    # It looks, but there is nothing of ours mounted, so it does not act.
+    assert mock_is_mount.call_count > 0
     assert mock_run.call_count == 0
-    assert mock_restore.call_count == 0
-    # Notably it does *not* clean up the volatile file either.
-    assert fake_runtime.exists()
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        pytest.param("i-am-not-a-dict", id="string"),
+        pytest.param(["/etc/passwd"], id="list"),
+        pytest.param(5, id="int"),
+    ],
+)
+def test_restore_dns_survives_a_malformed_backup(_mock_resolv_conf, hostile) -> None:
+    """A wrong-typed dns_backup must not abort teardown.
+
+    do_stop reaches restore_dns after destroy_rules has already run, so an
+    AttributeError here left the host with the firewall gone, the overlay
+    still mounted and the lock never deleted - which then made stop,
+    --restore-only and restart all fail the same way.
+    """
+    with (
+        patch("ttp.dns._is_ttp_mount", return_value=False),
+        patch("ttp.dns.subprocess.run") as mock_run,
+        patch("ttp.dns_resolved.restore_resolved"),
+    ):
+        dns.restore_dns(hostile)
+
+    assert mock_run.call_count == 0
 
 
 # Interface detection
