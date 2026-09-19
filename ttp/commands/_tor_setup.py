@@ -124,6 +124,13 @@ def _parse_bridges(
     return bridge_lines, use_bridges
 
 
+# Exact names, never a substring test: "tor" is contained in many ordinary
+# account names -- victor, actor, contractor, mentor, factory, history -- and
+# the UID matched here receives a full cleartext exemption in both the NAT
+# redirect chain and the fail-closed filter chain.
+_KNOWN_TOR_USERNAMES = frozenset({"tor", "debian-tor", "toranon", "_tor"})
+
+
 def _resolve_external_tor_uid(
     transport_port: int,
     tor_uid_override: str | None,
@@ -160,7 +167,7 @@ def _resolve_external_tor_uid(
         if detected_uid is not None:
             try:
                 username = pwd.getpwuid(detected_uid).pw_name
-                if "tor" in username.lower() and detected_uid != 0:
+                if username.lower() in _KNOWN_TOR_USERNAMES and detected_uid != 0:
                     resolved_uid = detected_uid
                     logger.info(
                         "Auto-detected Tor process owner UID via ports: %s (user: %s)",
@@ -169,7 +176,8 @@ def _resolve_external_tor_uid(
                     )
                 else:
                     logger.warning(
-                        "Auto-detected Tor UID %d belongs to user '%s' which does not contain 'tor'. Ignoring.",
+                        "Auto-detected Tor UID %d belongs to user '%s', which is not a known Tor "
+                        "account name. Ignoring; pass --tor-uid to override explicitly.",
                         detected_uid,
                         username,
                     )

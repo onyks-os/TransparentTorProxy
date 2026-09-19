@@ -945,7 +945,7 @@ def test_start_external_daemon_happy_path_auto_uid(
 ):
     """Verify happy path in BYOD mode with port-owner auto-detected UID."""
     mock_user = MagicMock()
-    mock_user.pw_name = "tor-process"
+    mock_user.pw_name = "debian-tor"
     mock_pwuid.return_value = mock_user
 
     result = runner.invoke(app, ["start", "--external-daemon"])
@@ -1182,7 +1182,7 @@ class TestResolveExternalTorUid:
     @patch("pwd.getpwuid")
     @patch("ttp.commands.start._get_uid_from_port", return_value=105)
     def test_autodetect_via_port(self, mock_port, mock_pwuid):
-        mock_pwuid.return_value = types.SimpleNamespace(pw_name="tor-process")
+        mock_pwuid.return_value = types.SimpleNamespace(pw_name="debian-tor")
         result = _resolve_external_tor_uid(9041, None)
         assert result == "105"
 
@@ -1211,3 +1211,30 @@ class TestResolveExternalTorUid:
     def test_all_steps_fail_raises_exit(self, mock_pwnam, mock_port):
         with pytest.raises(typer.Exit):
             _resolve_external_tor_uid(9041, None)
+
+
+@pytest.mark.parametrize(
+    "username",
+    [
+        pytest.param("victor", id="victor"),
+        pytest.param("actor", id="actor"),
+        pytest.param("contractor", id="contractor"),
+        pytest.param("factory", id="factory"),
+        pytest.param("tor-backup", id="tor-backup"),
+        pytest.param("torproject", id="torproject"),
+    ],
+)
+def test_byod_uid_detection_requires_an_exact_tor_account_name(username: str) -> None:
+    """A name merely containing "tor" must not earn the cleartext exemption.
+
+    The UID accepted here is emitted as `meta skuid <uid> accept` in both the
+    NAT redirect chain and the fail-closed filter chain, so the account's
+    entire outbound traffic bypasses Tor for the whole session.
+    """
+    with (
+        patch("ttp.commands.start._get_uid_from_port", return_value=4242),
+        patch("pwd.getpwuid", return_value=types.SimpleNamespace(pw_name=username)),
+        patch("pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110)),
+    ):
+        # Falls through to the known-usernames fallback, never to 4242.
+        assert _resolve_external_tor_uid(9041, None) == "110"
