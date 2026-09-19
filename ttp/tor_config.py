@@ -165,6 +165,12 @@ def _build_torrc_content(
                 lines.append(f"ClientTransportPlugin {pt} exec /usr/bin/{binary}")
 
         for b in bridges:
+            # Defence in depth: this writer is reached by several callers and
+            # must not depend on an upstream validator. A value spanning lines
+            # would become extra directives in the config of the Tor daemon
+            # that carries every connection on the host.
+            if any(ch in b for ch in "\n\r\v\f\x00"):
+                raise ValueError("Bridge value contains a line separator; refusing to write torrc")
             lines.append(f"Bridge {b}")
 
     if tor_user != "root":

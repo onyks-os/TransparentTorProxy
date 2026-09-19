@@ -232,3 +232,25 @@ def test_verify_tor_feeds_bootstrap_progress_to_the_bar() -> None:
     ):
         verify_tor(timeout=1)
     assert seen == [10, 50, 100]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        pytest.param("192.0.2.10:9001\nCookieAuthentication 0", id="newline"),
+        pytest.param("obfs4 192.0.2.10:9001 cert=AAAA\r\nControlPort 9051", id="crlf"),
+        pytest.param(f"192.0.2.10:9001{chr(0x2028)}Socks5Proxy 198.51.100.7:1080", id="line-separator"),
+        pytest.param(f"192.0.2.10:9001{chr(0x85)}EntryNodes {{xx}}", id="nel"),
+        pytest.param("192.0.2.10:9001\x0bSocksPort 9050", id="vertical-tab"),
+        pytest.param("192.0.2.10:9001\x00", id="nul"),
+    ],
+)
+def test_multiline_bridge_lines_are_rejected(line: str) -> None:
+    """A bridge value must not be able to add directives to the torrc.
+
+    The first token of each of these is a valid bridge prefix, so the old
+    early-return accepted them and every line after the first became its own
+    torrc directive -- read by a root-started Tor daemon.
+    """
+    with pytest.raises(ValueError, match="single line"):
+        validate_bridge_line(line)

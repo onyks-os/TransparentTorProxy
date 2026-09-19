@@ -25,9 +25,23 @@ from rich.progress import (
 
 from ttp.exceptions import TorError
 
+# A bridge value becomes exactly one physical line of the generated torrc.
+# str.split() treats \n, \r, \v, \f, \x1c-\x1e, \x85, \u2028 and \u2029 as
+# ordinary whitespace, so a multi-line value would tokenise cleanly here and
+# then turn into several torrc directives at the writer. Refuse anything
+# outside printable ASCII (tab tolerated) before tokenising.
+_BRIDGE_ILLEGAL_CHARS = re.compile(r"[^\x20-\x7e\t]")
+
 
 def validate_bridge_line(line: str) -> None:
     """Perform basic format validation on a bridge configuration line."""
+    if _BRIDGE_ILLEGAL_CHARS.search(line):
+        raise ValueError(
+            "A bridge line must be a single line of printable ASCII. "
+            "To configure several bridges, repeat --bridge once per line "
+            "or pass them with --bridge-file."
+        )
+
     parts = line.split()
     if not parts:
         raise ValueError("Empty bridge line")

@@ -783,3 +783,22 @@ def test_ensure_tor_ready_refuses_an_account_that_does_not_exist() -> None:
         ensure_tor_ready()
 
     start.assert_not_called()
+
+
+def test_build_torrc_refuses_a_bridge_value_that_spans_lines() -> None:
+    """The writer must not rely on the CLI validator having run.
+
+    _build_torrc_content is reached by several callers; a bridge value with a
+    newline would silently become extra directives in the configuration of the
+    Tor daemon that carries all host traffic.
+    """
+    with pytest.raises(ValueError, match="line separator"):
+        tor_config._build_torrc_content(
+            tor_user="debian-tor",
+            transport_port=9041,
+            dns_port=9054,
+            block_doh=False,
+            use_bridges=True,
+            bridges=["obfs4 192.0.2.10:9001 cert=AAAA\nControlPort 9051"],
+            ipv6_avail=False,
+        )
