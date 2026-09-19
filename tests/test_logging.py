@@ -23,7 +23,7 @@ from unittest.mock import patch
 import pytest
 
 from ttp.commands._common import cli_state, logger
-from ttp.commands._logging import JSONFormatter, setup_logging
+from ttp.commands._logging import JSONFormatter, _open_log_file_safely, setup_logging
 
 
 @pytest.fixture
@@ -229,3 +229,35 @@ def test_json_formatter_includes_the_traceback() -> None:
 
 def test_json_formatter_omits_exception_when_there_is_none() -> None:
     assert "exception" not in json.loads(JSONFormatter().format(_record()))
+
+
+def test_a_symlinked_log_path_is_refused(tmp_path):
+    """A symlink at the log path must not redirect root's create/chmod/append.
+
+    /run/ttp/ttp.log is a fixed name. Following a link there let root create a
+    new file at the target, narrow an existing file to 0600 -- which also
+    strips setuid bits -- and then append its log lines into it.
+    """
+    victim = tmp_path / "victim"
+    victim.write_text("ORIGINAL", encoding="utf-8")
+    victim.chmod(0o644)
+    link = tmp_path / "ttp.log"
+    link.symlink_to(victim)
+
+    with patch("ttp.commands._logging._LOG_PATH", link):
+        assert _open_log_file_safely() is False
+
+    assert victim.read_text(encoding="utf-8") == "ORIGINAL"
+    assert victim.stat().st_mode & 0o777 == 0o644
+
+
+def test_a_dangling_symlink_does_not_create_a_file_at_its_target(tmp_path):
+    """The dangling case is the one exists() reported as "does not exist"."""
+    target = tmp_path / "new-root-owned-file"
+    link = tmp_path / "ttp.log"
+    link.symlink_to(target)
+
+    with patch("ttp.commands._logging._LOG_PATH", link):
+        assert _open_log_file_safely() is False
+
+    assert not target.exists()

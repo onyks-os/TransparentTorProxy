@@ -459,10 +459,11 @@ def test_json_formatter_records():
     assert "ValueError: Oops!" in data_exc["exception"]
 
 
+@patch("ttp.commands._logging._open_log_file_safely", return_value=True)
 @patch("ttp.state.ensure_runtime_dir")
 @patch("logging.handlers.RotatingFileHandler")
 @patch("logging.StreamHandler")
-def test_setup_logging_json(mock_stream, mock_file, mock_ensure):
+def test_setup_logging_json(mock_stream, mock_file, mock_ensure, _mock_open_ok):
     """_setup_logging configures JSON formatter on handlers when log_format is 'json'."""
     from ttp.commands._common import JSONFormatter, cli_state, logger
 
