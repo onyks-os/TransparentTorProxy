@@ -18,6 +18,7 @@ from typing import Any, Optional
 import typer
 from rich.panel import Panel
 
+from ttp.exceptions import TorError
 from ttp.paths import resolve_optional
 from ttp.selinux import (
     label_ports_selinux as label_ports_selinux,
@@ -145,6 +146,28 @@ def ensure_pluggable_transports(required_transports: list[str]) -> None:
             raise typer.Exit(code=0)
 
 
+def _assert_is_tor_system_account(tor_user: str) -> None:
+    """Refuse to run managed Tor as anything but a dedicated system account.
+
+    Defence in depth behind ``_detect_tor_user``: this account drives
+    root-privileged chowns of Tor's runtime and data directories, the torrc
+    ``User`` directive the daemon obeys, and the firewall's cleartext
+    exemption. An ordinary login account in any of those places is a
+    misidentification, not a configuration.
+    """
+    import pwd
+
+    try:
+        entry = pwd.getpwnam(tor_user)
+    except KeyError:
+        raise TorError(f"Detected Tor user '{tor_user}' does not exist on this system.")
+    if entry.pw_uid == 0 or entry.pw_uid >= 1000:
+        raise TorError(
+            f"Refusing to run managed Tor as '{tor_user}' (UID {entry.pw_uid}): "
+            "the Tor account must be a dedicated system account."
+        )
+
+
 def ensure_tor_ready(
     transport_port: int = 9041,
     dns_port: int = 9054,
@@ -191,6 +214,7 @@ def ensure_tor_ready(
         raise typer.Exit(code=0)
 
     tor_user = info.get("tor_user", "debian-tor")
+    _assert_is_tor_system_account(tor_user)
 
     # If bridges are requested, ensure the corresponding pluggable transports are installed
     if use_bridges and bridges:
