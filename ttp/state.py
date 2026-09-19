@@ -32,6 +32,9 @@ from ttp.exceptions import StateError
 LOCK_DIR = Path("/run/ttp")
 LOCK_PATH = LOCK_DIR / "ttp.lock"
 
+# The only part of the runtime directory the unprivileged watchdog owns.
+WATCHDOG_DIR = LOCK_DIR / "watchdog"
+
 # Minimum required free space on /run (tmpfs): 5 MB.
 MIN_TMPFS_BYTES = 5 * 1024 * 1024
 
@@ -50,29 +53,59 @@ from ttp.ux import (  # noqa: E402, F401
 )
 
 
+def _watchdog_gid() -> int | None:
+    """Return the ttp-watchdog GID, or ``None`` when the account is absent."""
+    import pwd
+
+    try:
+        return pwd.getpwnam("ttp-watchdog").pw_gid
+    except KeyError:
+        return None
+
+
 def ensure_runtime_dir() -> None:
-    """Create ``/run/ttp`` with mode 0700.
+    """Create ``/run/ttp``, owned by root, and the watchdog's own subdirectory.
 
     Must be called early in the CLI startup before any I/O that targets
     the runtime directory (lock file, log file, torrc, etc.).
 
-    Owned by ttp-watchdog if the user exists, otherwise owned by root.
+    The directory itself stays **root-owned**. Root creates several files in
+    here by fixed name -- the lock, the log, the generated ``resolv.conf`` and
+    the nftables ruleset -- and reopens them by path. Handing the directory to
+    ttp-watchdog let that account unlink any of those entries and put a symlink
+    in their place (the directory carries no sticky bit), which redirected a
+    root-privileged create, chmod, write or bind-mount to a file of its
+    choosing. Ownership of the directory is the capability; the individual
+    files' 0600 modes never protected against it.
+
+    The watchdog needs two things and gets exactly those: group search/read on
+    this directory so it can read the lock, and its own subdirectory for
+    anything it writes itself.
     """
+    LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    gid = _watchdog_gid()
+    os.chown(LOCK_DIR, 0, gid if gid is not None else 0)
+    os.chmod(LOCK_DIR, 0o750 if gid is not None else 0o700)
+
+    if gid is None:
+        return
+
+    # Derived from LOCK_DIR rather than the module constant so that callers
+    # (and tests) which redirect LOCK_DIR move the whole tree together.
+    watchdog_dir = LOCK_DIR / WATCHDOG_DIR.name
+    watchdog_dir.mkdir(parents=True, exist_ok=True)
+    os.chown(watchdog_dir, _watchdog_uid_or_root(), gid)
+    os.chmod(watchdog_dir, 0o700)
+
+
+def _watchdog_uid_or_root() -> int:
+    """Return the ttp-watchdog UID, falling back to root when absent."""
     import pwd
 
-    LOCK_DIR.mkdir(parents=True, exist_ok=True)
-    os.chmod(LOCK_DIR, 0o700)
-
-    uid = 0
-    gid = 0
     try:
-        pw = pwd.getpwnam("ttp-watchdog")
-        uid = pw.pw_uid
-        gid = pw.pw_gid
+        return pwd.getpwnam("ttp-watchdog").pw_uid
     except KeyError:
-        pass
-
-    os.chown(LOCK_DIR, uid, gid)
+        return 0
 
 
 def check_tmpfs_space(min_bytes: int = MIN_TMPFS_BYTES) -> None:
@@ -185,8 +218,16 @@ def write_lock(
 
 def _write_lock_file(data: dict[str, Any]) -> None:
     ensure_runtime_dir()
-    fd = os.open(LOCK_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(LOCK_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
     try:
+        # The watchdog reads this file to learn the session it is monitoring;
+        # it never writes it. Group-read for ttp-watchdog, nothing for others.
+        gid = _watchdog_gid()
+        if gid is not None:
+            os.fchown(fd, 0, gid)
+            os.fchmod(fd, 0o640)
+        else:
+            os.fchmod(fd, 0o600)
         with open(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
             f.write("\n")

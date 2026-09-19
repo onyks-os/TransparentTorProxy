@@ -32,6 +32,8 @@ def _use_tmp_lock(tmp_path: Path):
         patch.object(state, "STAR_NOTIFIED_PATH", persistent_dir / ".starred_notified"),
         patch("ttp.state.os.chown"),
         patch("ttp.state.os.chmod"),
+        patch("ttp.state.os.fchown"),
+        patch("ttp.state.os.fchmod"),
     ):
         yield lock, runtime_dir
 
@@ -40,7 +42,7 @@ def _use_tmp_lock(tmp_path: Path):
 
 
 def test_ensure_runtime_dir(_use_tmp_lock):
-    """ensure_runtime_dir creates the directory with correct permissions."""
+    """With no watchdog account the runtime dir is root-owned and 0700."""
     _, runtime_dir = _use_tmp_lock
 
     with (
@@ -55,8 +57,13 @@ def test_ensure_runtime_dir(_use_tmp_lock):
         mock_chown.assert_called_once_with(runtime_dir, 0, 0)
 
 
-def test_ensure_runtime_dir_watchdog_exists(_use_tmp_lock):
-    """ensure_runtime_dir uses ttp-watchdog owner if the user exists."""
+def test_ensure_runtime_dir_never_gives_the_directory_to_the_watchdog(_use_tmp_lock):
+    """The runtime dir stays root-owned even when ttp-watchdog exists.
+
+    Owning this directory would let that account unlink root's lock, log,
+    resolv.conf or ruleset and substitute a symlink, redirecting a
+    root-privileged write. It gets group search/read instead.
+    """
     _, runtime_dir = _use_tmp_lock
     mock_pw = MagicMock(pw_uid=123, pw_gid=456)
 
@@ -68,8 +75,27 @@ def test_ensure_runtime_dir_watchdog_exists(_use_tmp_lock):
         state.ensure_runtime_dir()
 
         assert runtime_dir.exists()
-        mock_chmod.assert_called_once_with(runtime_dir, 0o700)
-        mock_chown.assert_called_once_with(runtime_dir, 123, 456)
+        # uid 0 -- never 123 -- with the watchdog group for read access only.
+        assert mock_chown.call_args_list[0].args == (runtime_dir, 0, 456)
+        assert mock_chmod.call_args_list[0].args == (runtime_dir, 0o750)
+
+
+def test_ensure_runtime_dir_gives_the_watchdog_its_own_subdirectory(_use_tmp_lock):
+    """The watchdog owns /run/ttp/watchdog, and nothing root creates by name."""
+    _, runtime_dir = _use_tmp_lock
+    mock_pw = MagicMock(pw_uid=123, pw_gid=456)
+    watchdog_dir = runtime_dir / "watchdog"
+
+    with (
+        patch("ttp.state.os.chmod") as mock_chmod,
+        patch("ttp.state.os.chown") as mock_chown,
+        patch("pwd.getpwnam", return_value=mock_pw),
+    ):
+        state.ensure_runtime_dir()
+
+        assert watchdog_dir.exists()
+        assert mock_chown.call_args_list[1].args == (watchdog_dir, 123, 456)
+        assert mock_chmod.call_args_list[1].args == (watchdog_dir, 0o700)
 
 
 # write_lock creates JSON with correct fields
@@ -294,10 +320,14 @@ def test_write_lock_reports_an_os_error_as_state_error(_use_tmp_lock):
 def test_lock_file_is_not_world_readable(_use_tmp_lock):
     """
     The lock records the interface, bypassed users and Tor UID of a live privacy
-    session. It is created 0600 and this asserts it stays that way.
+    session. Nothing outside root and the watchdog group may read it: no
+    world bits at all, and group read at most -- never group write, which
+    would let the watchdog rewrite the session state root acts on at teardown.
     """
     state.write_lock(pid=1)
-    assert state.LOCK_PATH.stat().st_mode & 0o077 == 0
+    mode = state.LOCK_PATH.stat().st_mode
+    assert mode & 0o007 == 0, "lock must not be accessible to other"
+    assert mode & 0o030 == 0, "lock must not be group-writable or group-executable"
 
 
 def test_write_lock_file_closes_the_descriptor_on_failure(_use_tmp_lock):
