@@ -43,12 +43,20 @@ def _write_watchdog_service_unit() -> None:
             [
                 "User=ttp-watchdog",
                 "Group=ttp-watchdog",
+                # docs/security-assessment.md already describes the watchdog as
+                # running with NoNewPrivileges=yes; it was never emitted.
+                "NoNewPrivileges=yes",
                 "CapabilityBoundingSet=CAP_NET_ADMIN",
                 "AmbientCapabilities=CAP_NET_ADMIN",
                 "StandardOutput=journal",
                 "StandardError=journal",
             ]
         )
+
+    # A watchdog that cannot start must end up visibly `failed`, not restart
+    # every few seconds for the whole session. With RestartSec=3 the stock
+    # 10s/5-start limiter is never reached, so the unit would loop silently.
+    service_lines.extend(["StartLimitIntervalSec=60", "StartLimitBurst=5"])
 
     service_str = "\n".join(service_lines)
 

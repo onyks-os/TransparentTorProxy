@@ -16,6 +16,7 @@ import pytest
 from ttp import watchdog as wd
 from ttp.exceptions import TorError
 from ttp.paths import resolve, resolve_optional
+from ttp.watchdog import service
 
 
 @pytest.fixture
@@ -989,3 +990,70 @@ def test_has_default_route_is_false_when_proc_cannot_be_read(mock_exists):
     """Same contract as above for an unreadable /proc."""
     with patch("builtins.open", side_effect=OSError("permission denied")):
         assert wd.has_default_route() is False
+
+
+# ---------------------------------------------------------------------------
+# The generated unit and the daemon entrypoint must agree on who may run it.
+# ---------------------------------------------------------------------------
+
+
+def test_watchdog_run_is_allowed_as_the_watchdog_account() -> None:
+    """The unit drops to ttp-watchdog, so the entrypoint must accept that uid.
+
+    Requiring euid 0 here made the daemon exit 1 before its first iteration on
+    every packaged install, while `ttp watchdog status` still reported ACTIVE.
+    """
+    from typer.testing import CliRunner
+
+    from ttp.cli import app
+
+    with (
+        patch("ttp.commands._validation.os.geteuid", return_value=964),
+        patch("pwd.getpwnam", return_value=MagicMock(pw_uid=964)),
+        patch("ttp.watchdog.run_watchdog_loop") as loop,
+    ):
+        result = CliRunner().invoke(app, ["watchdog", "run", "--interval", "10"])
+
+    assert result.exit_code == 0, result.output
+    loop.assert_called_once()
+
+
+def test_watchdog_run_still_refuses_an_unrelated_unprivileged_user() -> None:
+    """The guard is narrowed, not removed.
+
+    `ttp watchdog run` drives the FSM's auto-heal and killswitch paths, so an
+    arbitrary local user must not be able to start one by hand.
+    """
+    from typer.testing import CliRunner
+
+    from ttp.cli import app
+
+    with (
+        patch("ttp.commands._validation.os.geteuid", return_value=1000),
+        patch("pwd.getpwnam", return_value=MagicMock(pw_uid=964)),
+        patch("ttp.watchdog.run_watchdog_loop") as loop,
+    ):
+        result = CliRunner().invoke(app, ["watchdog", "run"])
+
+    assert result.exit_code == 1
+    loop.assert_not_called()
+
+
+def test_generated_unit_hardening_matches_what_the_docs_claim() -> None:
+    """NoNewPrivileges is documented for the watchdog; emit it.
+
+    StartLimit* is set too: with RestartSec=3 the stock 10s/5-start limiter is
+    never reached, so a daemon that cannot start would restart every few
+    seconds for the whole session instead of ending up visibly `failed`.
+    """
+    with (
+        patch("pwd.getpwnam", return_value=MagicMock(pw_uid=964, pw_gid=964)),
+        patch("ttp.watchdog.service.WATCHDOG_SERVICE_PATH") as path,
+    ):
+        service._write_watchdog_service_unit()
+
+    unit = path.write_text.call_args.args[0]
+    assert "User=ttp-watchdog" in unit
+    assert "NoNewPrivileges=yes" in unit
+    assert "StartLimitIntervalSec=60" in unit
+    assert "StartLimitBurst=5" in unit
