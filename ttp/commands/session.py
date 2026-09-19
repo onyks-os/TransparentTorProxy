@@ -120,7 +120,7 @@ def check_command() -> None:
     is_tor, ip = tor_control.verify_tor()
     latency = round((time.time() - start_time) * 1000)
 
-    if ip == "unknown":
+    if ip in (tor_control.NO_ANSWER, tor_control.MALFORMED_ANSWER):
         console.print(
             f"{_PREFIX} [bold red]Failed to reach any IP verification endpoint.[/bold red] "
             "Please check your internet connection or Tor service state."
@@ -180,7 +180,7 @@ def check_leak_command() -> None:
     from ttp import tor_control
 
     is_tor, ip = tor_control.verify_tor()
-    if not is_tor or ip == "unknown":
+    if not is_tor or ip in (tor_control.NO_ANSWER, tor_control.MALFORMED_ANSWER):
         has_leaks = True
         if cli_state.verbose:
             logger.debug("Tor verification failed: is_tor=%s, ip=%s", is_tor, ip)

@@ -259,3 +259,87 @@ def test_graceful_shutdown_signal_exception(mock_get_ctrl, mock_sleep):
 
     result = tor_control.graceful_shutdown(timeout=1)
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Only check.torproject.org may assert IsTor, and only an address may be
+# reported as one.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("index", [1, 2], ids=["ipify", "ifconfig-me"])
+def test_a_fallback_reflector_cannot_assert_is_tor(index: int) -> None:
+    """A fallback that answers with an IsTor field must not raise the verdict.
+
+    The fallbacks are ordinary IP echo services with no Tor knowledge. Making
+    check.torproject.org unreachable is free for anyone on the path -- it is
+    also routinely rate-limited for Tor clients -- so field presence alone
+    must never decide this.
+    """
+    responses = [None] * len(tor_control.VERIFY_ENDPOINTS)
+    responses[index] = {"IsTor": True, "IP": "203.0.113.66"}
+
+    def _fetch(endpoint: str):
+        return responses[tor_control.VERIFY_ENDPOINTS.index(endpoint)]
+
+    with (
+        patch.object(tor_control, "_fetch_endpoint", side_effect=_fetch),
+        patch("time.sleep"),
+    ):
+        is_tor, ip = tor_control.verify_tor()
+
+    assert is_tor is False
+    assert ip != "203.0.113.66"
+
+
+def test_the_authoritative_endpoint_is_still_believed() -> None:
+    with (
+        patch.object(tor_control, "_fetch_endpoint", return_value={"IsTor": True, "IP": "185.220.101.7"}),
+        patch("time.sleep"),
+    ):
+        assert tor_control.verify_tor() == (True, "185.220.101.7")
+
+
+def test_a_censored_network_is_unchanged() -> None:
+    """With the authoritative endpoint down, an honest fallback still reports."""
+    responses = [None, {"ip": "198.51.100.9"}, None]
+
+    def _fetch(endpoint: str):
+        return responses[tor_control.VERIFY_ENDPOINTS.index(endpoint)]
+
+    with (
+        patch.object(tor_control, "_fetch_endpoint", side_effect=_fetch),
+        patch("time.sleep"),
+    ):
+        assert tor_control.verify_tor() == (False, "198.51.100.9")
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        pytest.param("203.0.113.9[/bogus]", id="markup-tag"),
+        pytest.param("203.0.113.9\x1bc", id="terminal-reset"),
+        pytest.param("203.0.113.9\x1b[2J\x1b[H[TTP] Exit IP: 185.220.101.7", id="repaint"),
+        pytest.param("....", id="not-an-address"),
+        pytest.param("999.999.999.999", id="out-of-range"),
+        pytest.param(12345, id="wrong-type"),
+    ],
+)
+def test_a_reflector_value_that_is_not_an_address_never_reaches_a_caller(hostile) -> None:
+    """These strings are rendered into Rich markup and onto a terminal.
+
+    rich strips only BEL/BS/VT/FF/CR, never ESC, and an unbalanced markup tag
+    raises MarkupError out of console.print -- aborting the command mid-output.
+    """
+    with patch.object(tor_control, "_fetch_endpoint", return_value={"ip": hostile}):
+        assert tor_control.get_exit_ip() == tor_control.MALFORMED_ANSWER
+
+
+def test_no_reply_and_a_malformed_reply_are_distinguishable() -> None:
+    """Callers print a different message for "could not reach any endpoint"."""
+    with (
+        patch.object(tor_control, "_fetch_endpoint", return_value=None),
+        patch("time.sleep"),
+    ):
+        assert tor_control.get_exit_ip() == tor_control.NO_ANSWER
+    assert tor_control.NO_ANSWER != tor_control.MALFORMED_ANSWER
