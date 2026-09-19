@@ -367,17 +367,35 @@ def test_watchdog_status_inactive(mock_read):
     assert mock_read.call_count == 1
 
 
+@patch("ttp.watchdog.service.watchdog_liveness", return_value=(True, 9999))
 @patch(
     "ttp.state.read_lock",
     return_value={"watchdog_active": True, "watchdog_pid": 9999},
 )
-def test_watchdog_status_active(mock_read):
-    """watchdog status shows ACTIVE and PID if running."""
+def test_watchdog_status_active(mock_read, _mock_live):
+    """watchdog status shows ACTIVE and PID if the unit really is up."""
     result = runner.invoke(app, ["watchdog", "status"])
     assert result.exit_code == 0
     assert "Watchdog Status: ACTIVE" in result.output
     assert "Watchdog PID: 9999" in result.output
     assert mock_read.call_count == 1
+
+
+@patch("ttp.watchdog.service.watchdog_liveness", return_value=(False, None))
+@patch(
+    "ttp.state.read_lock",
+    return_value={"watchdog_active": True, "watchdog_pid": 9999},
+)
+def test_watchdog_status_does_not_trust_a_stale_active_flag(_mock_read, _mock_live):
+    """A lock that still says ACTIVE must not outvote the live unit state.
+
+    watchdog_active is written once at start and nothing ever wrote it back to
+    False except an explicit `ttp watchdog stop`, so it survived the daemon
+    exiting on the killswitch path, an OOM kill, or a direct systemctl stop.
+    """
+    result = runner.invoke(app, ["watchdog", "status"])
+    assert result.exit_code == 0
+    assert "Watchdog Status: INACTIVE" in result.output
 
 
 @patch("os.geteuid", return_value=0)

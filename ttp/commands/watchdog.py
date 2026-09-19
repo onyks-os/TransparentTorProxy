@@ -56,8 +56,11 @@ def watchdog_status() -> None:
         console.print(f"{_PREFIX} Status: [bold red]INACTIVE[/] (TTP is not running)")
         raise typer.Exit(code=0)
 
-    active = lock.get("watchdog_active", False)
-    pid = lock.get("watchdog_pid")
+    # Re-probe rather than trusting the lock: the daemon may have exited on
+    # the killswitch path, been OOM-killed, or been stopped directly.
+    from ttp.watchdog.service import watchdog_liveness
+
+    active, pid = watchdog_liveness()
 
     if active:
         console.print(f"{_PREFIX} Watchdog Status: [bold green]ACTIVE[/]")

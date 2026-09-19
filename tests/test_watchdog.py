@@ -82,17 +82,30 @@ def test_write_watchdog_service_unit(temp_watchdog_path):
 @patch("subprocess.run")
 @patch("ttp.state.update_lock_keys")
 def test_start_watchdog_success(mock_update, mock_run, temp_watchdog_path):
-    """start_watchdog writes unit, reloads daemon, starts service, queries PID, and updates state."""
-    # Mock systemctl show to return MainPID=12345
-    mock_run.return_value = MagicMock(stdout="MainPID=12345\n", returncode=0)
+    """start_watchdog writes the unit, starts it, confirms it is up, records it."""
+    mock_run.return_value = MagicMock(stdout="ActiveState=active\nMainPID=12345\n", returncode=0)
 
     wd.start_watchdog()
 
     assert temp_watchdog_path.exists()
-    # Check systemctl calls
-    assert mock_run.call_count == 3
-    # Check update_lock_keys
     mock_update.assert_called_once_with(watchdog_active=True, watchdog_pid=12345)
+
+
+@patch("subprocess.run")
+@patch("ttp.state.update_lock_keys")
+def test_start_watchdog_does_not_record_a_unit_that_did_not_stay_up(mock_update, mock_run, temp_watchdog_path):
+    """`systemctl start` returning 0 is not evidence the daemon is running.
+
+    On a Type=simple unit it returns as soon as the main process is forked.
+    Recording "active" on that alone made `ttp status` report a watchdog that
+    had already exited.
+    """
+    mock_run.return_value = MagicMock(stdout="ActiveState=failed\nMainPID=0\n", returncode=0)
+
+    with pytest.raises(TorError, match="did not stay active"):
+        wd.start_watchdog()
+
+    mock_update.assert_called_once_with(watchdog_active=False, watchdog_pid=None)
 
 
 @patch("subprocess.run", side_effect=Exception("systemd error"))
