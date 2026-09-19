@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ttp.exceptions import FirewallError
-from ttp.firewall import apply_rules, destroy_rules
+from ttp.firewall import apply_rules, destroy_rules, emergency
 from ttp.paths import resolve
 
 
@@ -733,3 +733,54 @@ class TestEmergencyTeardown:
         assert exc_info.value.__cause__ is root_cause
         assert "No space left on device" in str(exc_info.value)
         assert "Failed to apply emergency killswitch" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Teardown lockdown: the tor_uid reaching nft argv must be a plain integer.
+#
+# nft joins its non-option argv into one buffer and lexes it line-wise, so a
+# newline or ';' inside a single argument begins another nft command. The value
+# originates from the session lock, so a string there must never be formatted
+# straight into the rule.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        pytest.param("0\ninsert rule inet ttp filter_out accept #", id="newline-injection"),
+        pytest.param("0; insert rule inet ttp filter_out accept", id="semicolon-injection"),
+        pytest.param("not-a-uid", id="not-a-number"),
+        pytest.param("-1", id="negative"),
+        pytest.param(["0"], id="wrong-type"),
+    ],
+)
+def test_apply_teardown_lockdown_refuses_a_non_integer_tor_uid(hostile):
+    """A crafted tor_uid must never reach nft's argv."""
+    with patch("ttp.firewall.emergency._run_nft") as mock_nft:
+        with pytest.raises(ValueError):
+            emergency.apply_teardown_lockdown(hostile)
+        mock_nft.assert_not_called()
+
+
+def test_apply_teardown_lockdown_accepts_an_integer_uid():
+    """The ordinary path still emits the skuid exemption."""
+    with patch("ttp.firewall.emergency._run_nft") as mock_nft:
+        emergency.apply_teardown_lockdown(107)
+
+    args = mock_nft.call_args.args[0]
+    assert args == [
+        "insert",
+        "rule",
+        "inet",
+        "ttp",
+        "filter_out",
+        "meta",
+        "skuid",
+        "!=",
+        "107",
+        "oifname",
+        "!=",
+        "lo",
+        "drop",
+    ]

@@ -58,7 +58,17 @@ def apply_teardown_lockdown(tor_uid: int | None = None) -> None:
     """
     rule = ["insert", "rule", "inet", "ttp", "filter_out"]
     if tor_uid is not None:
-        rule += ["meta", "skuid", "!=", str(tor_uid)]
+        # nft joins its non-option argv into a single buffer and lexes it
+        # line-wise, so a newline or ';' inside one argument starts another
+        # nft command. This value comes from the session lock, so it must be
+        # proved to be a plain non-negative integer before it is formatted in.
+        try:
+            uid = int(tor_uid)
+        except (TypeError, ValueError):
+            raise ValueError(f"tor_uid must be an integer, got {tor_uid!r}")
+        if uid < 0:
+            raise ValueError(f"tor_uid must be non-negative, got {uid}")
+        rule += ["meta", "skuid", "!=", str(uid)]
     rule += ["oifname", "!=", "lo", "drop"]
 
     try:
