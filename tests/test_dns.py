@@ -56,19 +56,19 @@ def test_apply_dns_overlay(_mock_resolv_conf):
         # Check that runtime file was written
         assert "nameserver 127.0.0.1" in fake_runtime.read_text()
 
-        # Check mount command
-        mock_run.assert_any_call(
-            [resolve("mount"), "--bind", str(fake_runtime), str(fake_resolv)],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
+        # The mount source is the descriptor apply_dns just wrote, not the
+        # path: a name in /run/ttp could be re-pointed between the write and
+        # the mount, publishing an inode TTP never produced.
+        argv = mock_run.call_args.args[0]
+        assert argv[0] == resolve("mount")
+        assert argv[1] == "--bind"
+        assert argv[2].startswith("/proc/self/fd/")
+        assert argv[3] == str(fake_resolv)
 
 
 def test_apply_dns_symlink_overlay(_mock_resolv_conf):
     """apply_dns with resolv.conf symlink uses realpath for mount --bind."""
-    fake_resolv, fake_runtime = _mock_resolv_conf
+    fake_resolv, _fake_runtime = _mock_resolv_conf
     fake_target = fake_resolv.parent / "real_resolv.conf"
 
     with (
@@ -84,13 +84,10 @@ def test_apply_dns_symlink_overlay(_mock_resolv_conf):
         assert backup["mode"] == "overlay"
         assert backup["mount_target"] == str(fake_target)
 
-        mock_run.assert_any_call(
-            [resolve("mount"), "--bind", str(fake_runtime), str(fake_target)],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
+        argv = mock_run.call_args.args[0]
+        assert argv[1] == "--bind"
+        assert argv[2].startswith("/proc/self/fd/")
+        assert argv[3] == str(fake_target)
 
 
 # Restoration
@@ -454,7 +451,7 @@ def test_apply_dns_wraps_an_unexpected_failure_as_dnserror(_mock_resolv_conf):
     """
     with (
         patch("ttp.dns_resolved.apply_resolved", return_value=False),
-        patch.object(Path, "write_text", side_effect=PermissionError("read-only /run")),
+        patch("ttp.dns.os.open", side_effect=PermissionError("read-only /run")),
         pytest.raises(DNSError, match="Failed to apply DNS configuration"),
     ):
         dns.apply_dns("eth0")
@@ -656,3 +653,26 @@ class TestDnsResolved:
         calls = mock_run.call_args_list
         assert [resolve("systemctl"), "restart", "systemd-resolved"] in [c.args[0] for c in calls]
         assert [resolve("resolvectl"), "flush-caches"] in [c.args[0] for c in calls]
+
+
+def test_apply_dns_refuses_a_symlinked_runtime_resolv(_mock_resolv_conf, tmp_path):
+    """A symlink at /run/ttp/resolv.conf must not redirect root's write.
+
+    Without O_NOFOLLOW the write truncates and overwrites whatever the link
+    points at, as root, with no error and no indication to the operator.
+    """
+    _fake_resolv, fake_runtime = _mock_resolv_conf
+    victim = tmp_path / "victim"
+    victim.write_text("ORIGINAL", encoding="utf-8")
+    fake_runtime.unlink(missing_ok=True)
+    fake_runtime.symlink_to(victim)
+
+    with (
+        patch("ttp.dns.subprocess.run") as mock_run,
+        patch("ttp.dns_resolved.apply_resolved", return_value=False),
+        pytest.raises(DNSError),
+    ):
+        dns.apply_dns("eth0")
+
+    assert victim.read_text(encoding="utf-8") == "ORIGINAL"
+    mock_run.assert_not_called()
