@@ -63,9 +63,15 @@ def status_command() -> None:
     """Show current TTP session status."""
     import urllib.request
 
+    from ttp.tor_control import _canonical_ip
+
     try:
         with urllib.request.urlopen("https://api.ipify.org", timeout=3) as response:
-            current_ip = response.read().decode("utf-8").strip()
+            # Bounded read of an unauthenticated third-party body, then
+            # canonicalised: this value is interpolated into a Rich-markup
+            # f-string and printed to the operator's terminal, and the body is
+            # raw text, so it is entirely the reflector's to choose.
+            current_ip = _canonical_ip(response.read(64).decode("utf-8", "replace")) or "Unknown"
     except Exception:
         current_ip = "Unknown"
 

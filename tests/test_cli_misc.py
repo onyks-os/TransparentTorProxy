@@ -759,3 +759,33 @@ def test_diagnose_renders_every_section_it_collected(mock_collect, mock_euid):
     for key, value in sections.items():
         assert value in result.output, f"section {key!r} was collected but never rendered"
     assert "Diagnostic complete" in result.output
+
+
+@patch("ttp.state.read_lock", return_value=None)
+def test_status_does_not_render_a_reflector_body_as_markup(_mock_lock):
+    """api.ipify.org's body is raw text, entirely the reflector's to choose.
+
+    An unbalanced Rich tag raised MarkupError out of console.print and aborted
+    the command, suppressing the "Traffic is in cleartext." line right below;
+    an ESC sequence repainted the operator's terminal. rich strips only
+    BEL/BS/VT/FF/CR, never ESC.
+    """
+    hostile = b"  198.51.100.5[/nope]\x1b[2J\x1b[H  "
+
+    class _Resp:
+        def read(self, _n=None):
+            return hostile
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    with patch("urllib.request.urlopen", return_value=_Resp()):
+        result = runner.invoke(app, ["status"])
+
+    assert result.exit_code == 0
+    assert "Traffic is in cleartext." in result.output
+    assert "\x1b[2J" not in result.output
+    assert "[/nope]" not in result.output
