@@ -73,6 +73,7 @@ from ttp.commands._ports import (  # noqa: E402, F401
 from ttp.commands._validation import (  # noqa: E402, F401
     parse_txt_dig_ipv4,
     require_root,
+    require_root_or_watchdog_user,
     require_systemd,
     validate_bridge_line,
     verify_tor,

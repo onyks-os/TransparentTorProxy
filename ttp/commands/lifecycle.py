@@ -39,7 +39,17 @@ def do_stop() -> None:
 
     import pwd
 
-    tor_uid = lock.get("tor_uid")
+    # The lock is session state, not a trusted integer source: anything that is
+    # not a plain non-negative integer falls through to the real lookups below
+    # rather than being formatted into a root nft command.
+    raw_uid = lock.get("tor_uid")
+    try:
+        tor_uid = int(raw_uid) if raw_uid is not None else None
+        if tor_uid is not None and tor_uid < 0:
+            tor_uid = None
+    except (TypeError, ValueError):
+        logger.warning("Ignoring non-integer tor_uid %r from the session lock.", raw_uid)
+        tor_uid = None
     if tor_uid is None:
         transport_port = lock.get("transport_port", 9041)
         tor_uid = get_uid_from_port(transport_port)
@@ -92,12 +102,21 @@ def do_stop() -> None:
         logger.debug("conntrack binary not found, skipping flush.")
 
     console.print(f"{_PREFIX} Removing nftables rules...")
-    firewall.destroy_rules()
+    try:
+        firewall.destroy_rules()
 
-    console.print(f"{_PREFIX} Restoring DNS...")
-    dns.restore_dns(lock.get("dns_backup"))
-
-    state.delete_lock()
+        console.print(f"{_PREFIX} Restoring DNS...")
+        try:
+            dns.restore_dns(lock.get("dns_backup"))
+        except Exception as e:
+            logger.error("DNS restoration failed, continuing teardown: %s", e)
+    finally:
+        # The lock must not outlive the nftables table. A lock whose session is
+        # already torn down blocks the next `ttp start` behind a concurrency
+        # error while the host routes in cleartext, and makes `ttp status`
+        # report a session that no longer exists. attempt_recovery() has used
+        # this same try/finally shape all along.
+        state.delete_lock()
     console.print(f"{_PREFIX} [bold red]Session terminated. Traffic in cleartext.[/]")
 
 

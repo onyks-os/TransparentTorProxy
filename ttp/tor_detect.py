@@ -20,6 +20,7 @@ re-exported here for backward compatibility.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -120,26 +121,46 @@ def _detect_tor_user() -> str:
        fallback when Tor is not running yet.
     3. Hard fallback to ``"tor"``.
     """
-    # 1. Check the running process - most reliable.
-    #    Use ``user:32`` to avoid ps truncating long names like
-    #    ``debian-tor`` (10 chars) to ``debian-+`` (8 chars).
-    try:
-        result = subprocess.run(
-            [resolve("ps"), "-eo", "user:32,comm"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        for line in result.stdout.splitlines():
-            parts = line.split(None, 1)
-            if len(parts) == 2 and parts[1].strip() == "tor":
-                user = parts[0].strip()
+    # 1. Check the running process - but bind the match to the trusted binary,
+    #    not to the process name. The kernel ``comm`` field is set from the
+    #    basename of the file passed to execve, so any local user can hold a
+    #    process with comm=="tor" simply by copying a binary to a file of that
+    #    name. The account this function returns receives the firewall's
+    #    cleartext exemption, the torrc ``User`` directive and ownership of
+    #    Tor's runtime and data directories, so a name is not enough evidence.
+    #    ``_check_installed`` already refuses to identify the tor binary by
+    #    PATH name for the same reason; this uses the same resolved path.
+    #    Ask for the pid too, and trust a row only when /proc/<pid>/exe is
+    #    that binary.
+    trusted_bin = resolve_optional("tor")
+    if trusted_bin:
+        real_tor = os.path.realpath(trusted_bin)
+        try:
+            result = subprocess.run(
+                [resolve("ps"), "-eo", "pid,user:32,comm"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            for line in result.stdout.splitlines():
+                parts = line.split(None, 2)
+                if len(parts) != 3 or not parts[0].isdigit():
+                    continue
+                if parts[2].strip() != "tor":
+                    continue
+                try:
+                    exe = os.path.realpath(f"/proc/{parts[0]}/exe")
+                except OSError:
+                    continue
+                if exe != real_tor:
+                    continue  # comm says 'tor', the executable says otherwise
+                user = parts[1].strip()
                 # Sanity: reject truncated names (contain ``+``)
                 # and numeric UIDs (Tor requires a username string).
                 if "+" not in user and not user.isdigit():
                     return user
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
 
     # 2. Static fallback - known distro usernames.
     _KNOWN_USERS = ("debian-tor", "toranon", "tor", "_tor")

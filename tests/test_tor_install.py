@@ -35,6 +35,18 @@ from ttp.tor_install import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _tor_account_is_a_system_account():
+    """Make the detected Tor account look like a real system account.
+
+    ensure_tor_ready refuses to run managed Tor as a non-system account, and
+    the fixtures here use distro names (debian-tor, toranon) that need not
+    exist on the machine running the suite.
+    """
+    with patch("pwd.getpwnam", return_value=MagicMock(pw_uid=964, pw_gid=964)):
+        yield
+
+
 def _stub_lookup(value):
     """
     Patch the trusted binary lookup in every module that performs one.
@@ -731,3 +743,62 @@ def test_the_torrc_is_never_briefly_world_readable(mock_chown, mock_makedirs, tm
     assert modes_at_creation == [0o600], "the torrc was created with a permissive mode and narrowed afterwards"
     assert stat.S_IMODE((runtime_dir / "torrc").stat().st_mode) == 0o600
     assert "CERT=secret" in (runtime_dir / "torrc").read_text()
+
+
+@pytest.mark.parametrize(
+    ("uid", "why"),
+    [
+        pytest.param(0, "root", id="root"),
+        pytest.param(1000, "an ordinary login account", id="login-account"),
+        pytest.param(1001, "another ordinary login account", id="second-login-account"),
+    ],
+)
+def test_ensure_tor_ready_refuses_a_non_system_tor_account(uid: int, why: str) -> None:
+    """Managed Tor must not be run as root or as a login account.
+
+    This account drives root-privileged chowns of Tor's runtime and data
+    directories, the torrc ``User`` directive the daemon obeys, and the
+    firewall's cleartext exemption. A login account there means detection
+    picked the wrong process.
+    """
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True, "tor_user": "mallory"}),
+        patch("pwd.getpwnam", return_value=MagicMock(pw_uid=uid, pw_gid=uid)),
+        patch("ttp.tor_install.start_tor_service") as start,
+        pytest.raises(TorError, match="dedicated system account"),
+    ):
+        ensure_tor_ready()
+
+    start.assert_not_called()
+
+
+def test_ensure_tor_ready_refuses_an_account_that_does_not_exist() -> None:
+    """A detected name with no passwd entry is a detection failure, not a user."""
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True, "tor_user": "ghost"}),
+        patch("pwd.getpwnam", side_effect=KeyError("ghost")),
+        patch("ttp.tor_install.start_tor_service") as start,
+        pytest.raises(TorError, match="does not exist"),
+    ):
+        ensure_tor_ready()
+
+    start.assert_not_called()
+
+
+def test_build_torrc_refuses_a_bridge_value_that_spans_lines() -> None:
+    """The writer must not rely on the CLI validator having run.
+
+    _build_torrc_content is reached by several callers; a bridge value with a
+    newline would silently become extra directives in the configuration of the
+    Tor daemon that carries all host traffic.
+    """
+    with pytest.raises(ValueError, match="line separator"):
+        tor_config._build_torrc_content(
+            tor_user="debian-tor",
+            transport_port=9041,
+            dns_port=9054,
+            block_doh=False,
+            use_bridges=True,
+            bridges=["obfs4 192.0.2.10:9001 cert=AAAA\nControlPort 9051"],
+            ipv6_avail=False,
+        )

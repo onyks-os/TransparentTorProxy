@@ -211,7 +211,18 @@ def _build_ruleset(
             type filter hook output priority filter; policy accept;
 
             # 1. Allow the Tor daemon to send TCP traffic directly to WAN guards/bridges.
+            # Deliberately ahead of the kill-switch below: in --external-daemon mode TTP never
+            # writes the torrc, so an externally managed Tor may legitimately reach an IPv6 guard
+            # or bridge. In managed mode tor_config already emits "ClientUseIPv6 0" whenever IPv6
+            # is unavailable, so this exemption is inert there.
             meta skuid {tor_uid} accept
+
+            # 1a. IPv6 Leak Prevention: drop every remaining IPv6 packet when IPv6 is disabled or
+            # unrouteable. This MUST precede every exemption below. "meta skuid", "meta skgid" and
+            # "socket cgroupv2" are family-agnostic - unlike the ip-scoped LAN and loopback rules -
+            # and per nft(8) "accept" is an absolute verdict that terminates evaluation of this
+            # chain, so an exemption placed first hides this drop from the packet entirely.
+            {ipv6_leak_prevention}
 
             # 1b. Bypass users and groups: Allow whitelisted processes to transmit in cleartext.
             {bypass_rules_filter_str}
@@ -248,8 +259,8 @@ def _build_ruleset(
             {quic_doh_reject_ipv4}
             {quic_doh_reject_ipv6}
 
-            # 7. IPv6 Leak Prevention: Drop all IPv6 traffic if disabled or unrouteable.
-            {ipv6_leak_prevention}
+            # 7. (The IPv6 kill-switch used to live here, after every exemption above, which
+            # meant it never saw a packet from a bypassed principal. It is now at 1a.)
 
             # 8. Catch-all Reject: Drop/Reject all cleartext traffic not matching exemptions (e.g. UDP, ICMP, raw sockets, or pre-existing TCP connections).
             reject

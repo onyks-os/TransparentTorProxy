@@ -14,6 +14,9 @@ from ttp.commands._common import (
 from ttp.commands._common import (
     require_root as _require_root,
 )
+from ttp.commands._common import (
+    require_root_or_watchdog_user as _require_root_or_watchdog_user,
+)
 
 watchdog_app = typer.Typer(
     name="watchdog",
@@ -53,8 +56,11 @@ def watchdog_status() -> None:
         console.print(f"{_PREFIX} Status: [bold red]INACTIVE[/] (TTP is not running)")
         raise typer.Exit(code=0)
 
-    active = lock.get("watchdog_active", False)
-    pid = lock.get("watchdog_pid")
+    # Re-probe rather than trusting the lock: the daemon may have exited on
+    # the killswitch path, been OOM-killed, or been stopped directly.
+    from ttp.watchdog.service import watchdog_liveness
+
+    active, pid = watchdog_liveness()
 
     if active:
         console.print(f"{_PREFIX} Watchdog Status: [bold green]ACTIVE[/]")
@@ -67,8 +73,14 @@ def watchdog_status() -> None:
 def watchdog_run(
     interval: int = typer.Option(15, "--interval", help="Check interval in seconds."),
 ) -> None:
-    """Internal entrypoint for running the watchdog daemon loop."""
-    _require_root()
+    """Internal entrypoint for running the watchdog daemon loop.
+
+    Invoked by systemd via the generated ttp-watchdog.service unit, which
+    drops to the ttp-watchdog account when that account exists. Requiring
+    euid 0 here contradicted the unit's own privilege separation and left the
+    daemon unable to start at all.
+    """
+    _require_root_or_watchdog_user()
     from ttp import watchdog as wd
 
     try:

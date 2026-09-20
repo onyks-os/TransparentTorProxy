@@ -150,3 +150,138 @@ def test_fsm_invalid_transitions(mock_fsm_dependencies):
     fsm.disconnect()
     with pytest.raises(MachineError):
         fsm.integrity_fail(failed_comp="tor", err_msg="error")
+
+
+# ---------------------------------------------------------------------------
+# readd_watch and flush_event_buffers are the FSM's contact with the kernel.
+# Every failure here has to degrade quietly: the watchdog losing a watch must
+# not take the session down with it, and a half-drained queue must not wedge
+# the loop.
+# ---------------------------------------------------------------------------
+
+
+def test_readd_watch_drops_the_old_watches_first(mock_fsm_dependencies):
+    """Stale watch descriptors would leak on every re-add."""
+    fsm = WatchdogFSM()
+    fsm.initialize(interface="eth0", interval_seconds=15)
+    libc = mock_fsm_dependencies["libc"]
+    fsm.wd_real, fsm.wd_link = 7, 8
+    libc.inotify_rm_watch.reset_mock()
+
+    fsm.readd_watch()
+
+    removed = {c.args[1] for c in libc.inotify_rm_watch.call_args_list}
+    assert {7, 8} <= removed
+
+
+def test_readd_watch_survives_a_watch_that_cannot_be_added(mock_fsm_dependencies):
+    """A negative return is logged, not raised: the loop keeps running."""
+    fsm = WatchdogFSM()
+    fsm.initialize(interface="eth0", interval_seconds=15)
+    mock_fsm_dependencies["libc"].inotify_add_watch.return_value = -1
+
+    fsm.readd_watch()
+
+    assert fsm.wd_real == -1
+    assert fsm.wd_link == -1
+
+
+def test_readd_watch_survives_an_exception_from_the_kernel(mock_fsm_dependencies):
+    """inotify_add_watch raising must not escape into the monitoring loop."""
+    fsm = WatchdogFSM()
+    fsm.initialize(interface="eth0", interval_seconds=15)
+    mock_fsm_dependencies["libc"].inotify_add_watch.side_effect = OSError("ENOSPC")
+
+    fsm.readd_watch()  # must not raise
+
+    assert fsm.wd_real == -1
+
+
+def test_initialize_fires_the_killswitch_when_inotify_cannot_start(mock_fsm_dependencies):
+    """Losing the DNS watch is a fail-closed event, not a silent degradation."""
+    mock_fsm_dependencies["libc"].inotify_init.return_value = -1
+    fsm = WatchdogFSM()
+
+    with pytest.raises(OSError):
+        fsm.initialize(interface="eth0", interval_seconds=15)
+
+    mock_fsm_dependencies["killswitch"].assert_called_once()
+    assert mock_fsm_dependencies["killswitch"].call_args.args[0] == "dns"
+
+
+def test_flush_event_buffers_drains_both_queues(mock_fsm_dependencies):
+    """A queue left full re-fires the same event on the next poll."""
+    fsm = WatchdogFSM()
+    fsm.initialize(interface="eth0", interval_seconds=15)
+    sock = mock_fsm_dependencies["sock"]
+    sock.recv.side_effect = [b"event", b""]
+
+    with patch("os.read", side_effect=[b"event", b""]) as read:
+        fsm.flush_event_buffers([sock, fsm.inotify_fd])
+
+    assert sock.recv.call_count == 2
+    assert read.call_count == 2
+
+
+def test_flush_event_buffers_stops_on_would_block(mock_fsm_dependencies):
+    """Non-blocking descriptors signal "empty" by raising, not by returning b''."""
+    fsm = WatchdogFSM()
+    fsm.initialize(interface="eth0", interval_seconds=15)
+    sock = mock_fsm_dependencies["sock"]
+    sock.recv.side_effect = BlockingIOError()
+
+    with patch("os.read", side_effect=BlockingIOError()):
+        fsm.flush_event_buffers([sock, fsm.inotify_fd])  # must not raise
+
+
+def test_flush_event_buffers_swallows_an_unexpected_read_error(mock_fsm_dependencies):
+    """An unexpected error must not kill the loop mid-drain."""
+    fsm = WatchdogFSM()
+    fsm.initialize(interface="eth0", interval_seconds=15)
+    sock = mock_fsm_dependencies["sock"]
+    sock.recv.side_effect = OSError("ECONNRESET")
+
+    with patch("os.read", side_effect=OSError("EBADF")):
+        fsm.flush_event_buffers([sock, fsm.inotify_fd])  # must not raise
+
+
+def test_flush_event_buffers_ignores_descriptors_that_are_not_ready(mock_fsm_dependencies):
+    """Only the descriptors select() reported are drained."""
+    fsm = WatchdogFSM()
+    fsm.initialize(interface="eth0", interval_seconds=15)
+    sock = mock_fsm_dependencies["sock"]
+    sock.recv.reset_mock()
+
+    with patch("os.read") as read:
+        fsm.flush_event_buffers([])
+
+    sock.recv.assert_not_called()
+    read.assert_not_called()
+
+
+def test_shutdown_releases_every_descriptor(mock_fsm_dependencies):
+    """A leaked watch or socket outlives the session it was monitoring."""
+    fsm = WatchdogFSM()
+    fsm.initialize(interface="eth0", interval_seconds=15)
+    fsm.wd_real, fsm.wd_link = 3, 4
+    libc = mock_fsm_dependencies["libc"]
+    libc.inotify_rm_watch.reset_mock()
+
+    fsm.shutdown()
+
+    removed = {c.args[1] for c in libc.inotify_rm_watch.call_args_list}
+    assert {3, 4} <= removed
+    assert fsm.netlink_socket is None
+
+
+def test_shutdown_survives_descriptors_that_refuse_to_close(mock_fsm_dependencies):
+    """Teardown is best effort; it must not raise out of the loop's finally."""
+    fsm = WatchdogFSM()
+    fsm.initialize(interface="eth0", interval_seconds=15)
+    fsm.wd_real = 3
+    mock_fsm_dependencies["sock"].close.side_effect = OSError("EBADF")
+    mock_fsm_dependencies["libc"].inotify_rm_watch.side_effect = OSError("EINVAL")
+
+    fsm.shutdown()  # must not raise
+
+    assert fsm.netlink_socket is None

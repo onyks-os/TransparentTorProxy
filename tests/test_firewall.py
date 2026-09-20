@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ttp.exceptions import FirewallError
-from ttp.firewall import apply_rules, destroy_rules
+from ttp.firewall import apply_rules, destroy_rules, emergency
 from ttp.paths import resolve
 
 
@@ -47,13 +47,15 @@ def test_apply_rules_is_a_single_atomic_transaction(mock_run, mock_pwd, mock_loc
 
     apply_rules(tor_user="debian-tor")
 
-    # Exactly one nft invocation, and it is a file-driven (atomic) one.
+    # Exactly one nft invocation, and it is a script-driven (atomic) one.
+    # The script goes in on stdin: a fixed file under /run/ttp would be a name
+    # nft resolves a second time, after TTP has already written it.
     assert mock_run.call_count == 1
     argv = mock_run.call_args.args[0]
-    assert argv[:2] == [resolve("nft"), "-f"]
+    assert argv == [resolve("nft"), "-f", "-"]
 
     # The script itself carries the reset, ahead of the table definition.
-    script = mock_rules_path.write_text.call_args.args[0]
+    script = mock_run.call_args.kwargs["input"]
     reset_pos = script.index("flush table inet ttp")
     assert script.index("add table inet ttp") < reset_pos
     assert reset_pos < script.index("table inet ttp {")
@@ -637,9 +639,9 @@ class TestEmergencyTeardown:
         apply_emergency_killswitch()
 
         assert mock_run.call_count == 1
-        assert mock_run.call_args.args[0][:2] == [resolve("nft"), "-f"]
+        assert mock_run.call_args.args[0] == [resolve("nft"), "-f", "-"]
 
-        script = mock_rules_path.write_text.call_args.args[0]
+        script = mock_run.call_args.kwargs["input"]
         assert "add table inet ttp" in script
         assert script.index("flush table inet ttp") < script.index("table inet ttp {")
         # And the resulting table really is the drop-all one.
@@ -733,3 +735,177 @@ class TestEmergencyTeardown:
         assert exc_info.value.__cause__ is root_cause
         assert "No space left on device" in str(exc_info.value)
         assert "Failed to apply emergency killswitch" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Teardown lockdown: the tor_uid reaching nft argv must be a plain integer.
+#
+# nft joins its non-option argv into one buffer and lexes it line-wise, so a
+# newline or ';' inside a single argument begins another nft command. The value
+# originates from the session lock, so a string there must never be formatted
+# straight into the rule.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        pytest.param("0\ninsert rule inet ttp filter_out accept #", id="newline-injection"),
+        pytest.param("0; insert rule inet ttp filter_out accept", id="semicolon-injection"),
+        pytest.param("not-a-uid", id="not-a-number"),
+        pytest.param("-1", id="negative"),
+        pytest.param(["0"], id="wrong-type"),
+    ],
+)
+def test_apply_teardown_lockdown_refuses_a_non_integer_tor_uid(hostile):
+    """A crafted tor_uid must never reach nft's argv."""
+    with patch("ttp.firewall.emergency._run_nft") as mock_nft:
+        with pytest.raises(ValueError):
+            emergency.apply_teardown_lockdown(hostile)
+        mock_nft.assert_not_called()
+
+
+def test_apply_teardown_lockdown_accepts_an_integer_uid():
+    """The ordinary path still emits the skuid exemption."""
+    with patch("ttp.firewall.emergency._run_nft") as mock_nft:
+        emergency.apply_teardown_lockdown(107)
+
+    args = mock_nft.call_args.args[0]
+    assert args == [
+        "insert",
+        "rule",
+        "inet",
+        "ttp",
+        "filter_out",
+        "meta",
+        "skuid",
+        "!=",
+        "107",
+        "oifname",
+        "!=",
+        "lo",
+        "drop",
+    ]
+
+
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner.subprocess.run")
+def test_apply_rules_never_stages_the_ruleset_in_a_file(mock_run, mock_pwd):
+    """The ruleset must not be written to a path nft then reopens by name.
+
+    /run/ttp holds files root creates by fixed name. Writing the ruleset there
+    and passing nft the path resolves it twice: the write can follow a symlink
+    and truncate an arbitrary file as root, and the second resolution can be
+    steered at different content in between.
+    """
+    mock_run.return_value = MagicMock(returncode=0)
+    mock_pwd.return_value = MagicMock(pw_uid=123)
+
+    with patch("ttp.firewall.runner.RULES_TEMP_PATH") as mock_path:
+        apply_rules(tor_user="debian-tor")
+        mock_path.write_text.assert_not_called()
+
+    assert "-" in mock_run.call_args.args[0]
+    assert mock_run.call_args.kwargs["input"].startswith("add table inet ttp")
+
+
+# ---------------------------------------------------------------------------
+# The IPv6 kill-switch must outrank every family-agnostic exemption.
+#
+# "meta skuid", "meta skgid" and "socket cgroupv2" match IPv4 and IPv6 alike,
+# and per nft(8) `accept` terminates evaluation of the chain. An exemption
+# placed ahead of the drop therefore hides it, and that principal's IPv6
+# leaves in cleartext while README and the CLI banner both say all IPv6 is
+# dropped.
+# ---------------------------------------------------------------------------
+
+
+def _filter_out_block(ruleset: str) -> str:
+    start = ruleset.index("chain filter_out")
+    return ruleset[start : ruleset.index("chain filter_forward", start)]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "exemption"),
+    [
+        pytest.param({"allow_root": True}, "meta skuid 0 accept", id="allow-root"),
+        pytest.param({"bypass_uids": [9999]}, "meta skuid 9999 accept", id="bypass-uid"),
+        pytest.param({"bypass_gids": [8888]}, "meta skgid 8888 accept", id="bypass-gid"),
+        pytest.param(
+            {"cgroup_bypass": True},
+            'socket cgroupv2 level 1 "ttp-bypass.slice" accept',
+            id="cgroup-bypass",
+        ),
+    ],
+)
+def test_ipv6_killswitch_precedes_every_family_agnostic_exemption(kwargs, exemption):
+    block = _filter_out_block(_build_ruleset(**_base_kwargs(ipv6_avail=False, **kwargs)))
+
+    drop = block.index("meta nfproto ipv6 drop")
+    assert exemption in block, "test fixture no longer emits the exemption it checks"
+    assert drop < block.index(exemption), (
+        f"{exemption!r} is evaluated before the IPv6 drop, so that principal's IPv6 escapes"
+    )
+
+
+def test_ipv6_killswitch_still_follows_the_tor_daemon_exemption():
+    """Tor keeps its exemption ahead of the drop.
+
+    In --external-daemon mode TTP never writes the torrc, so an externally
+    managed Tor may legitimately reach an IPv6 guard or bridge. Putting the
+    drop first would strand it.
+    """
+    block = _filter_out_block(_build_ruleset(**_base_kwargs(ipv6_avail=False, tor_uid=110)))
+    assert block.index("meta skuid 110 accept") < block.index("meta nfproto ipv6 drop")
+
+
+def test_apply_rules_refuses_an_unknown_tor_user():
+    """An unresolvable account must fail closed, not become a stray uid."""
+    with patch("ttp.firewall.runner.pwd.getpwnam", side_effect=KeyError("ghost")):
+        with pytest.raises(FirewallError, match="not found on system"):
+            apply_rules(tor_user="ghost")
+
+
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner.subprocess.run")
+def test_apply_rules_tears_down_when_the_ruleset_is_rejected(mock_run, mock_pwd):
+    """A half-applied table is an open network; the failure path must destroy it."""
+    mock_pwd.return_value = MagicMock(pw_uid=123)
+    mock_run.side_effect = subprocess.CalledProcessError(1, ["nft"], stderr="syntax error")
+
+    with (
+        patch("ttp.firewall.runner.destroy_rules") as destroy,
+        pytest.raises(FirewallError),
+    ):
+        apply_rules(tor_user="debian-tor")
+
+    destroy.assert_called_once()
+
+
+@patch("ttp.firewall.runner.subprocess.run")
+def test_destroy_rules_raises_when_the_table_is_still_there(mock_run):
+    """ "destroy failed" and "already gone" must not be confused.
+
+    Reporting success while the table stands would leave the operator believing
+    the network was restored.
+    """
+    mock_run.side_effect = [
+        MagicMock(returncode=0),  # nft flush table
+        MagicMock(returncode=1, stderr=b"permission denied"),  # nft destroy
+        MagicMock(returncode=0),  # nft list table -> still present
+    ]
+
+    with pytest.raises(FirewallError, match="Failed to destroy"):
+        destroy_rules()
+
+
+@patch("ttp.firewall.runner.subprocess.run")
+def test_destroy_rules_treats_an_absent_table_as_success(mock_run):
+    """Tearing down twice is not an error."""
+    mock_run.side_effect = [
+        MagicMock(returncode=0),  # nft flush table
+        MagicMock(returncode=1, stderr=b"No such file or directory"),  # nft destroy
+        MagicMock(returncode=1),  # nft list table -> gone
+    ]
+
+    assert destroy_rules() is True

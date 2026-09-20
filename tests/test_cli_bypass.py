@@ -113,7 +113,13 @@ def test_bypass_requires_systemd_run(mock_which, mock_read, mock_exists):
 @patch("os.path.exists", return_value=True)
 @patch("ttp.state.read_lock", return_value={"pid": 123})
 @patch.dict("os.environ", {"SUDO_UID": "1000", "SUDO_GID": "1000"})
-@patch("ttp.commands.admin.resolve_optional", return_value="/usr/bin/systemd-run")
+@patch(
+    "ttp.commands.admin.resolve_optional",
+    side_effect=lambda name: {
+        "systemd-run": "/usr/bin/systemd-run",
+        "setpriv": "/usr/bin/setpriv",
+    }[name],
+)
 @patch("subprocess.run")
 def test_bypass_happy_path(mock_run, mock_which, mock_read, mock_exists):
     """bypass runs systemd-run and returns its exit code."""
@@ -124,11 +130,46 @@ def test_bypass_happy_path(mock_run, mock_which, mock_read, mock_exists):
 
     argv = mock_run.call_args[0][0]
     assert argv[0] == "/usr/bin/systemd-run"
-    assert "--uid=1000" in argv
-    assert "--gid=1000" in argv
     assert "--slice=ttp-bypass" in argv
     assert "--scope" in argv
-    assert argv[argv.index("--") + 1 :] == ["curl", "http://example.com"]
+    assert argv[argv.index("--") + 1 :] == [
+        "/usr/bin/setpriv",
+        "--reuid=1000",
+        "--regid=1000",
+        "--init-groups",
+        "--",
+        "curl",
+        "http://example.com",
+    ]
+
+
+@patch("os.path.exists", return_value=True)
+@patch("ttp.state.read_lock", return_value={"pid": 123})
+@patch.dict("os.environ", {"SUDO_UID": "1000", "SUDO_GID": "1000"})
+@patch(
+    "ttp.commands.admin.resolve_optional",
+    side_effect=lambda name: {
+        "systemd-run": "/usr/bin/systemd-run",
+        "setpriv": "/usr/bin/setpriv",
+    }[name],
+)
+@patch("subprocess.run")
+def test_bypass_resets_the_supplementary_group_vector(mock_run, mock_which, mock_read, mock_exists):
+    """The drop must reset groups, not only uid and gid.
+
+    systemd-run --scope execs the command itself -- setresgid, setresuid,
+    execvpe -- and never calls initgroups(), so --uid/--gid alone leaves
+    root's supplementary groups (gid 0 at minimum, and whatever else root is
+    a member of) on a process the docstring says is de-escalated.
+    """
+    mock_run.return_value = MagicMock(returncode=0)
+    runner.invoke(app, ["bypass", "id"])
+
+    argv = mock_run.call_args[0][0]
+    assert "--init-groups" in argv
+    # The credential change belongs to setpriv now, not to systemd-run.
+    assert not any(a.startswith("--uid=") for a in argv)
+    assert not any(a.startswith("--gid=") for a in argv)
 
 
 # ---------------------------------------------------------------------------

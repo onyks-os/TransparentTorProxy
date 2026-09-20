@@ -16,6 +16,7 @@ import pytest
 from ttp import watchdog as wd
 from ttp.exceptions import TorError
 from ttp.paths import resolve, resolve_optional
+from ttp.watchdog import service
 
 
 @pytest.fixture
@@ -81,17 +82,30 @@ def test_write_watchdog_service_unit(temp_watchdog_path):
 @patch("subprocess.run")
 @patch("ttp.state.update_lock_keys")
 def test_start_watchdog_success(mock_update, mock_run, temp_watchdog_path):
-    """start_watchdog writes unit, reloads daemon, starts service, queries PID, and updates state."""
-    # Mock systemctl show to return MainPID=12345
-    mock_run.return_value = MagicMock(stdout="MainPID=12345\n", returncode=0)
+    """start_watchdog writes the unit, starts it, confirms it is up, records it."""
+    mock_run.return_value = MagicMock(stdout="ActiveState=active\nMainPID=12345\n", returncode=0)
 
     wd.start_watchdog()
 
     assert temp_watchdog_path.exists()
-    # Check systemctl calls
-    assert mock_run.call_count == 3
-    # Check update_lock_keys
     mock_update.assert_called_once_with(watchdog_active=True, watchdog_pid=12345)
+
+
+@patch("subprocess.run")
+@patch("ttp.state.update_lock_keys")
+def test_start_watchdog_does_not_record_a_unit_that_did_not_stay_up(mock_update, mock_run, temp_watchdog_path):
+    """`systemctl start` returning 0 is not evidence the daemon is running.
+
+    On a Type=simple unit it returns as soon as the main process is forked.
+    Recording "active" on that alone made `ttp status` report a watchdog that
+    had already exited.
+    """
+    mock_run.return_value = MagicMock(stdout="ActiveState=failed\nMainPID=0\n", returncode=0)
+
+    with pytest.raises(TorError, match="did not stay active"):
+        wd.start_watchdog()
+
+    mock_update.assert_called_once_with(watchdog_active=False, watchdog_pid=None)
 
 
 @patch("subprocess.run", side_effect=Exception("systemd error"))
@@ -989,3 +1003,145 @@ def test_has_default_route_is_false_when_proc_cannot_be_read(mock_exists):
     """Same contract as above for an unreadable /proc."""
     with patch("builtins.open", side_effect=OSError("permission denied")):
         assert wd.has_default_route() is False
+
+
+# ---------------------------------------------------------------------------
+# The generated unit and the daemon entrypoint must agree on who may run it.
+# ---------------------------------------------------------------------------
+
+
+def test_watchdog_run_is_allowed_as_the_watchdog_account() -> None:
+    """The unit drops to ttp-watchdog, so the entrypoint must accept that uid.
+
+    Requiring euid 0 here made the daemon exit 1 before its first iteration on
+    every packaged install, while `ttp watchdog status` still reported ACTIVE.
+    """
+    from typer.testing import CliRunner
+
+    from ttp.cli import app
+
+    with (
+        patch("ttp.commands._validation.os.geteuid", return_value=964),
+        patch("pwd.getpwnam", return_value=MagicMock(pw_uid=964)),
+        patch("ttp.watchdog.run_watchdog_loop") as loop,
+    ):
+        result = CliRunner().invoke(app, ["watchdog", "run", "--interval", "10"])
+
+    assert result.exit_code == 0, result.output
+    loop.assert_called_once()
+
+
+def test_watchdog_run_still_refuses_an_unrelated_unprivileged_user() -> None:
+    """The guard is narrowed, not removed.
+
+    `ttp watchdog run` drives the FSM's auto-heal and killswitch paths, so an
+    arbitrary local user must not be able to start one by hand.
+    """
+    from typer.testing import CliRunner
+
+    from ttp.cli import app
+
+    with (
+        patch("ttp.commands._validation.os.geteuid", return_value=1000),
+        patch("pwd.getpwnam", return_value=MagicMock(pw_uid=964)),
+        patch("ttp.watchdog.run_watchdog_loop") as loop,
+    ):
+        result = CliRunner().invoke(app, ["watchdog", "run"])
+
+    assert result.exit_code == 1
+    loop.assert_not_called()
+
+
+def test_generated_unit_hardening_matches_what_the_docs_claim() -> None:
+    """NoNewPrivileges is documented for the watchdog; emit it.
+
+    StartLimit* is set too: with RestartSec=3 the stock 10s/5-start limiter is
+    never reached, so a daemon that cannot start would restart every few
+    seconds for the whole session instead of ending up visibly `failed`.
+    """
+    with (
+        patch("pwd.getpwnam", return_value=MagicMock(pw_uid=964, pw_gid=964)),
+        patch("ttp.watchdog.service.WATCHDOG_SERVICE_PATH") as path,
+    ):
+        service._write_watchdog_service_unit()
+
+    unit = path.write_text.call_args.args[0]
+    assert "User=ttp-watchdog" in unit
+    assert "NoNewPrivileges=yes" in unit
+    assert "StartLimitIntervalSec=60" in unit
+    assert "StartLimitBurst=5" in unit
+
+
+# ---------------------------------------------------------------------------
+# _unit_state / watchdog_liveness: the probe must fail safe.
+# ---------------------------------------------------------------------------
+
+
+def test_unit_state_reports_unknown_when_systemctl_cannot_be_run() -> None:
+    """A probe that cannot run must not look like a healthy unit."""
+    with patch("ttp.watchdog.service.subprocess.run", side_effect=OSError("no systemctl")):
+        assert service._unit_state() == ("unknown", None)
+
+
+def test_unit_state_treats_mainpid_zero_as_no_pid() -> None:
+    """systemd reports MainPID=0 for a unit with no running process."""
+    with patch("ttp.watchdog.service.subprocess.run") as run:
+        run.return_value = MagicMock(stdout="ActiveState=failed\nMainPID=0\n", returncode=0)
+        assert service._unit_state() == ("failed", None)
+
+
+def test_watchdog_liveness_never_upgrades_a_recorded_value_when_it_cannot_probe() -> None:
+    """An unprobeable unit is reported inactive, not "whatever the lock said"."""
+    with (
+        patch("ttp.watchdog.service._unit_state", return_value=("unknown", None)),
+        patch("ttp.state.update_lock_keys") as update,
+    ):
+        assert service.watchdog_liveness() == (False, None)
+
+    update.assert_not_called()
+
+
+def test_watchdog_liveness_repairs_a_stale_lock() -> None:
+    """A dead unit rewrites the lock, so the next reader sees the truth."""
+    with (
+        patch("ttp.watchdog.service._unit_state", return_value=("inactive", None)),
+        patch("ttp.state.update_lock_keys") as update,
+    ):
+        assert service.watchdog_liveness() == (False, None)
+
+    update.assert_called_once_with(watchdog_active=False, watchdog_pid=None)
+
+
+def test_watchdog_liveness_refreshes_the_pid_after_a_systemd_restart() -> None:
+    """Only start wrote watchdog_pid, so a restarted daemon showed a stale PID."""
+    with (
+        patch("ttp.watchdog.service._unit_state", return_value=("active", 5555)),
+        patch("ttp.state.update_lock_keys") as update,
+    ):
+        assert service.watchdog_liveness() == (True, 5555)
+
+    update.assert_called_once_with(watchdog_active=True, watchdog_pid=5555)
+
+
+def test_watchdog_liveness_survives_a_lock_that_cannot_be_written() -> None:
+    """Repairing the lock is best effort; reporting the truth is not."""
+    with (
+        patch("ttp.watchdog.service._unit_state", return_value=("active", 42)),
+        patch("ttp.state.update_lock_keys", side_effect=RuntimeError("no lock")),
+    ):
+        assert service.watchdog_liveness() == (True, 42)
+
+
+def test_generated_unit_omits_the_drop_when_the_account_is_absent() -> None:
+    """Without the account there is nothing to drop to, so no User= is emitted."""
+    with (
+        patch("pwd.getpwnam", side_effect=KeyError("ttp-watchdog")),
+        patch("ttp.watchdog.service.WATCHDOG_SERVICE_PATH") as path,
+    ):
+        service._write_watchdog_service_unit()
+
+    unit = path.write_text.call_args.args[0]
+    assert "User=ttp-watchdog" not in unit
+    assert "AmbientCapabilities" not in unit
+    # The start limiter is unconditional: a broken unit must latch to `failed`.
+    assert "StartLimitBurst=5" in unit

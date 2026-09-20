@@ -63,9 +63,15 @@ def status_command() -> None:
     """Show current TTP session status."""
     import urllib.request
 
+    from ttp.tor_control import _canonical_ip
+
     try:
         with urllib.request.urlopen("https://api.ipify.org", timeout=3) as response:
-            current_ip = response.read().decode("utf-8").strip()
+            # Bounded read of an unauthenticated third-party body, then
+            # canonicalised: this value is interpolated into a Rich-markup
+            # f-string and printed to the operator's terminal, and the body is
+            # raw text, so it is entirely the reflector's to choose.
+            current_ip = _canonical_ip(response.read(64).decode("utf-8", "replace")) or "Unknown"
     except Exception:
         current_ip = "Unknown"
 
@@ -120,7 +126,7 @@ def check_command() -> None:
     is_tor, ip = tor_control.verify_tor()
     latency = round((time.time() - start_time) * 1000)
 
-    if ip == "unknown":
+    if ip in (tor_control.NO_ANSWER, tor_control.MALFORMED_ANSWER):
         console.print(
             f"{_PREFIX} [bold red]Failed to reach any IP verification endpoint.[/bold red] "
             "Please check your internet connection or Tor service state."
@@ -180,7 +186,7 @@ def check_leak_command() -> None:
     from ttp import tor_control
 
     is_tor, ip = tor_control.verify_tor()
-    if not is_tor or ip == "unknown":
+    if not is_tor or ip in (tor_control.NO_ANSWER, tor_control.MALFORMED_ANSWER):
         has_leaks = True
         if cli_state.verbose:
             logger.debug("Tor verification failed: is_tor=%s, ip=%s", is_tor, ip)

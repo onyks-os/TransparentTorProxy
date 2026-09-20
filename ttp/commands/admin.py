@@ -168,13 +168,30 @@ def bypass_command(
         )
         raise typer.Exit(code=1)
 
+    # setpriv performs the actual credential transition. systemd-run --scope
+    # execs the command in its own process (setresgid, setresuid, execvpe) and
+    # never calls initgroups(), so --uid/--gid alone would leave root's
+    # supplementary group vector -- gid 0 at minimum -- on the bypassed
+    # process. Scope units accept no execution-environment properties, so
+    # --property=SupplementaryGroups= is not an alternative.
+    setpriv_bin = resolve_optional("setpriv")
+    if not setpriv_bin:
+        _print_error(
+            "setpriv Missing",
+            "The 'setpriv' command is required to drop root's supplementary groups.",
+        )
+        raise typer.Exit(code=1)
+
     # Construct the systemd-run command
     run_cmd = [
         systemd_run_bin,
-        f"--uid={sudo_uid}",
-        f"--gid={sudo_gid}",
         "--slice=ttp-bypass",
         "--scope",
+        "--",
+        setpriv_bin,
+        f"--reuid={sudo_uid}",
+        f"--regid={sudo_gid}",
+        "--init-groups",
         "--",
         *command,
     ]

@@ -137,9 +137,19 @@ TTP is designed to achieve the following security properties, in order of priori
 
 ### 3.7 `ttp-watchdog` — Privilege-Separated Watchdog Daemon
 
+> **Corrected in 0.4.9.** Until 0.4.9 this section overstated the separation in
+> two ways, both found by the [September 2026 audit](security/audit-2026-09.md).
+> `NoNewPrivileges=yes` was described here but never emitted into the generated
+> unit. And `ensure_runtime_dir()` chowned all of `/run/ttp` to the
+> `ttp-watchdog` account, so "no write access to system directories" did not
+> hold: that account could replace root's lock, log, `resolv.conf` and nftables
+> ruleset with symlinks and redirect a root-privileged write. Both are fixed —
+> the directory stays root-owned and the unit emits the directive — but the
+> residual risk below is stated for the *fixed* design, not the prior one.
+
 | Threat | STRIDE Category | Description | Mitigation | Residual Risk |
 | :--- | :--- | :--- | :--- | :--- |
-| Watchdog process compromise | Elevation of Privilege | An attacker exploits the watchdog to execute arbitrary code with full root privileges | The watchdog drops all root privileges, running under the unprivileged user `ttp-watchdog` with `NoNewPrivileges=yes` and the minimal set of capabilities (`CAP_NET_ADMIN`). | **Low.** The watchdog process has no write access to system directories and cannot run administrative shell commands. |
+| Watchdog process compromise | Elevation of Privilege | An attacker exploits the watchdog to execute arbitrary code with full root privileges | The watchdog drops all root privileges, running under the unprivileged user `ttp-watchdog` with `NoNewPrivileges=yes` and the minimal set of capabilities (`CAP_NET_ADMIN`). | **Low.** The watchdog holds `CAP_NET_ADMIN`, so it can program nftables directly; it has no write access to system directories and cannot run administrative shell commands. |
 | Insecure Polkit rules authorization | Tampering | An attacker bypasses authentication checks to start/stop the watchdog service | Polkit rules explicitly restrict starting/stopping `ttp-watchdog.service` to root users and the TTP controller. | **Low.** Standard Polkit controls prevent unauthorized service state tampering. |
 
 ### 3.8 systemd-resolved — DNS Resolution Edge Cases

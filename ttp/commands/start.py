@@ -315,7 +315,9 @@ def start_command(
             f"everything except explicitly bypassed traffic is blocked. "
             f"Check the Tor service, or run 'ttp stop' to restore the network.[/]"
         )
-        if exit_ip != "unknown":
+        from ttp.tor_control import MALFORMED_ANSWER, NO_ANSWER
+
+        if exit_ip not in (NO_ANSWER, MALFORMED_ANSWER):
             console.print(f"{_PREFIX} [yellow]Detected IP: {exit_ip}[/]")
 
     if watchdog:

@@ -30,11 +30,11 @@ jobs:
     steps:
       # On a release event the default ref is the tag, so this checks out the
       # released source rather than main.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
           cache: "pip"
@@ -53,7 +53,7 @@ jobs:
           mkdocs build --strict --site-dir "${RUNNER_TEMP}/site"
 
       - name: Check out the documentation site
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: onyks-os/onyks-os.github.io
           path: site-repo

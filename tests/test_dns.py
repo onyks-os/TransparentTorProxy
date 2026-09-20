@@ -56,14 +56,8 @@ def test_apply_dns_overlay(_mock_resolv_conf):
         # Check that runtime file was written
         assert "nameserver 127.0.0.1" in fake_runtime.read_text()
 
-        # Check mount command
-        mock_run.assert_any_call(
-            [resolve("mount"), "--bind", str(fake_runtime), str(fake_resolv)],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
+        argv = mock_run.call_args.args[0]
+        assert argv == [resolve("mount"), "--bind", str(fake_runtime), str(fake_resolv)]
 
 
 def test_apply_dns_symlink_overlay(_mock_resolv_conf):
@@ -84,13 +78,8 @@ def test_apply_dns_symlink_overlay(_mock_resolv_conf):
         assert backup["mode"] == "overlay"
         assert backup["mount_target"] == str(fake_target)
 
-        mock_run.assert_any_call(
-            [resolve("mount"), "--bind", str(fake_runtime), str(fake_target)],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
+        argv = mock_run.call_args.args[0]
+        assert argv == [resolve("mount"), "--bind", str(fake_runtime), str(fake_target)]
 
 
 # Restoration
@@ -454,36 +443,61 @@ def test_apply_dns_wraps_an_unexpected_failure_as_dnserror(_mock_resolv_conf):
     """
     with (
         patch("ttp.dns_resolved.apply_resolved", return_value=False),
-        patch.object(Path, "write_text", side_effect=PermissionError("read-only /run")),
+        patch("ttp.dns.os.open", side_effect=PermissionError("read-only /run")),
         pytest.raises(DNSError, match="Failed to apply DNS configuration"),
     ):
         dns.apply_dns("eth0")
 
 
 def test_restore_dns_with_no_backup_is_a_no_op(_mock_resolv_conf):
-    """A falsy backup means there was never a session, so there is nothing to undo.
+    """A falsy backup no longer means "do nothing" - it means "find out".
 
-    This is the guard that makes `restore_dns(None)` silent, and the reason
-    `start`'s StateError rollback has to pass the real backup dict rather than
-    `None` - a detail that is otherwise invisible and is asserted from the other
-    side in `tests/test_cli_start.py`.
+    Treating it as nothing to undo made the lockless `ttp stop --restore-only`
+    path leave the overlay mounted while printing "Network restored", and made
+    a malformed backup abort teardown after the firewall was already gone.
+    The unmount is gated on _is_ttp_mount, which only ever acts on a path
+    /proc/self/mountinfo shows as a TTP mount, so nothing else can be affected.
     """
     _, fake_runtime = _mock_resolv_conf
     fake_runtime.touch()
 
     with (
-        patch("ttp.dns._is_ttp_mount") as mock_is_mount,
+        patch("ttp.dns._is_ttp_mount", return_value=False) as mock_is_mount,
         patch("ttp.dns.subprocess.run") as mock_run,
-        patch("ttp.dns_resolved.restore_resolved") as mock_restore,
+        patch("ttp.dns_resolved.restore_resolved"),
     ):
         dns.restore_dns(None)
         dns.restore_dns({})
 
-    assert mock_is_mount.call_count == 0
+    # It looks, but there is nothing of ours mounted, so it does not act.
+    assert mock_is_mount.call_count > 0
     assert mock_run.call_count == 0
-    assert mock_restore.call_count == 0
-    # Notably it does *not* clean up the volatile file either.
-    assert fake_runtime.exists()
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        pytest.param("i-am-not-a-dict", id="string"),
+        pytest.param(["/etc/passwd"], id="list"),
+        pytest.param(5, id="int"),
+    ],
+)
+def test_restore_dns_survives_a_malformed_backup(_mock_resolv_conf, hostile) -> None:
+    """A wrong-typed dns_backup must not abort teardown.
+
+    do_stop reaches restore_dns after destroy_rules has already run, so an
+    AttributeError here left the host with the firewall gone, the overlay
+    still mounted and the lock never deleted - which then made stop,
+    --restore-only and restart all fail the same way.
+    """
+    with (
+        patch("ttp.dns._is_ttp_mount", return_value=False),
+        patch("ttp.dns.subprocess.run") as mock_run,
+        patch("ttp.dns_resolved.restore_resolved"),
+    ):
+        dns.restore_dns(hostile)
+
+    assert mock_run.call_count == 0
 
 
 # Interface detection
@@ -656,3 +670,111 @@ class TestDnsResolved:
         calls = mock_run.call_args_list
         assert [resolve("systemctl"), "restart", "systemd-resolved"] in [c.args[0] for c in calls]
         assert [resolve("resolvectl"), "flush-caches"] in [c.args[0] for c in calls]
+
+
+def test_apply_dns_refuses_a_symlinked_runtime_resolv(_mock_resolv_conf, tmp_path):
+    """A symlink at /run/ttp/resolv.conf must not redirect root's write.
+
+    Without O_NOFOLLOW the write truncates and overwrites whatever the link
+    points at, as root, with no error and no indication to the operator.
+    """
+    _fake_resolv, fake_runtime = _mock_resolv_conf
+    victim = tmp_path / "victim"
+    victim.write_text("ORIGINAL", encoding="utf-8")
+    fake_runtime.unlink(missing_ok=True)
+    fake_runtime.symlink_to(victim)
+
+    with (
+        patch("ttp.dns.subprocess.run") as mock_run,
+        patch("ttp.dns_resolved.apply_resolved", return_value=False),
+        pytest.raises(DNSError),
+    ):
+        dns.apply_dns("eth0")
+
+    assert victim.read_text(encoding="utf-8") == "ORIGINAL"
+    mock_run.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# restore_resolved runs during teardown, after the firewall is already gone.
+# Every step is best effort: a failure here must be logged, never raised, or
+# it strands the session the way the audit found do_stop doing.
+# ---------------------------------------------------------------------------
+
+
+def test_restore_resolved_survives_an_undeletable_dropin(caplog):
+    from ttp import dns_resolved
+
+    with (
+        patch.object(type(dns_resolved.RESOLVED_CONF_FILE), "exists", return_value=True),
+        patch.object(type(dns_resolved.RESOLVED_CONF_FILE), "unlink", side_effect=OSError("read-only")),
+        patch("ttp.dns_resolved.subprocess.run"),
+        caplog.at_level("WARNING"),
+    ):
+        dns_resolved.restore_resolved()
+
+    assert "Failed to remove systemd-resolved drop-in" in caplog.text
+
+
+def test_restore_resolved_survives_a_failed_restart(caplog):
+    """systemd-resolved refusing to restart must not abort teardown."""
+    from ttp import dns_resolved
+
+    with (
+        patch.object(type(dns_resolved.RESOLVED_CONF_FILE), "exists", return_value=False),
+        patch("ttp.dns_resolved.subprocess.run", side_effect=OSError("systemctl gone")),
+        caplog.at_level("DEBUG"),
+    ):
+        dns_resolved.restore_resolved()
+
+    assert "Failed to restart systemd-resolved" in caplog.text
+
+
+def test_restore_resolved_survives_a_failed_cache_flush(caplog):
+    """The flush is the least important step and must not be the loudest."""
+    from ttp import dns_resolved
+
+    calls = []
+
+    def _run(argv, **kwargs):
+        calls.append(argv)
+        if "flush-caches" in argv:
+            raise OSError("resolvectl gone")
+        return MagicMock(returncode=0)
+
+    with (
+        patch.object(type(dns_resolved.RESOLVED_CONF_FILE), "exists", return_value=False),
+        patch("ttp.dns_resolved.subprocess.run", side_effect=_run),
+        caplog.at_level("DEBUG"),
+    ):
+        dns_resolved.restore_resolved()
+
+    assert any("flush-caches" in c for c in calls)
+    assert "Failed to flush systemd-resolved caches" in caplog.text
+
+
+def test_apply_dns_refuses_a_runtime_file_swapped_after_the_write(_mock_resolv_conf, tmp_path):
+    """The name must still denote the inode apply_dns just wrote.
+
+    mount(8) resolves its source argument in its own process, so the write
+    descriptor cannot be handed to it. The identity is re-checked instead, and
+    a substitution between the write and the mount is refused rather than
+    published at /etc/resolv.conf.
+    """
+    _fake_resolv, fake_runtime = _mock_resolv_conf
+    impostor = tmp_path / "impostor"
+    impostor.write_text("attacker controlled\n", encoding="utf-8")
+
+    def _swap(target: str) -> None:
+        fake_runtime.unlink(missing_ok=True)
+        fake_runtime.symlink_to(impostor)
+
+    with (
+        patch("ttp.dns._clear_stale_mounts", side_effect=_swap),
+        patch("ttp.dns.subprocess.run") as mock_run,
+        patch("ttp.dns_resolved.apply_resolved", return_value=False),
+        pytest.raises(DNSError, match=r"was replaced|no longer a private regular file"),
+    ):
+        dns.apply_dns("eth0")
+
+    mock_run.assert_not_called()

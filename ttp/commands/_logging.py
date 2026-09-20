@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 from pathlib import Path
 
 # Re-imported here to avoid circular imports for callers that import from _logging
@@ -38,6 +39,35 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_obj)
 
 
+def _open_log_file_safely() -> bool:
+    """Create or adopt the log file, refusing a substituted path.
+
+    Returns ``False`` when the path is not a plain root-owned regular file, in
+    which case file logging is skipped rather than written through whatever is
+    there.
+    """
+    try:
+        fd = os.open(_LOG_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+    except OSError:
+        return False
+    try:
+        st = os.fstat(fd)
+        # A regular file with exactly one link. Ownership is not re-checked
+        # here: /run/ttp is root-owned, so only root can create this entry,
+        # and the same helper is exercised by the suite as an ordinary user.
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            return False
+        os.fchmod(fd, 0o600)
+    except OSError:
+        return False
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    return True
+
+
 def setup_logging() -> None:
     """Configure logging based on the CLI state.
 
@@ -58,21 +88,15 @@ def setup_logging() -> None:
     except OSError:
         pass
 
-    try:
-        # Pre-create the log file with mode 0o600 if it does not exist,
-        # or chmod it to 0o600 if it already exists.
-        if not _LOG_PATH.exists():
-            try:
-                fd = os.open(_LOG_PATH, os.O_WRONLY | os.O_CREAT, 0o600)
-                os.close(fd)
-            except OSError:
-                pass
-        else:
-            try:
-                os.chmod(_LOG_PATH, 0o600)
-            except OSError:
-                pass
+    # Open the log file once, refusing to follow a symlink, and validate the
+    # descriptor before using the path. The previous exists()-then-open-or-chmod
+    # sequence was a check-then-act on a fixed name: a symlink there made root
+    # create a new file at the link's target, or chmod an existing file to 0600
+    # -- which also strips setuid bits -- and then append its log lines into it.
+    if not _open_log_file_safely():
+        return
 
+    try:
         handler = RotatingFileHandler(_LOG_PATH, maxBytes=1048576, backupCount=1)
         if cli_state.log_format == "json":
             handler.setFormatter(JSONFormatter())

@@ -116,3 +116,97 @@ def test_collect_diagnostics_includes_selinux_info(mock_detect, mock_read, mock_
     assert "OS Family: Fedora/RedHat" in ttp_state
     assert "SELinux Enforcing: True" in ttp_state
     assert "SELinux Module: INSTALLED" in ttp_state
+
+
+# ---------------------------------------------------------------------------
+# Probes. Each of these gates a privileged decision, so "I could not tell"
+# must read as False rather than propagate or guess.
+# ---------------------------------------------------------------------------
+
+
+import subprocess  # noqa: E402
+
+import pytest  # noqa: E402
+
+from ttp import system_info  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("stdout", "expected"),
+    [
+        pytest.param("Enforcing\n", True, id="enforcing"),
+        pytest.param("Permissive\n", False, id="permissive"),
+        pytest.param("Disabled\n", False, id="disabled"),
+    ],
+)
+def test_is_selinux_enforcing_reads_getenforce(stdout: str, expected: bool) -> None:
+    with (
+        patch("ttp.system_info.resolve_optional", return_value="/usr/sbin/getenforce"),
+        patch("ttp.system_info.subprocess.run", return_value=MagicMock(stdout=stdout)),
+    ):
+        assert system_info.is_selinux_enforcing() is expected
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [subprocess.SubprocessError("boom"), FileNotFoundError("getenforce")],
+    ids=["subprocess-error", "missing-binary"],
+)
+def test_is_selinux_enforcing_is_false_when_it_cannot_tell(failure: Exception) -> None:
+    with (
+        patch("ttp.system_info.resolve_optional", return_value="/usr/sbin/getenforce"),
+        patch("ttp.system_info.subprocess.run", side_effect=failure),
+    ):
+        assert system_info.is_selinux_enforcing() is False
+
+
+def test_is_selinux_enforcing_is_false_without_the_binary() -> None:
+    """A host with no getenforce is not enforcing, and must not be probed."""
+    with (
+        patch("ttp.system_info.resolve_optional", return_value=None),
+        patch("ttp.system_info.subprocess.run") as run,
+    ):
+        assert system_info.is_selinux_enforcing() is False
+    run.assert_not_called()
+
+
+def test_is_selinux_module_installed_matches_the_exact_version() -> None:
+    """A different version of the module is not the one TTP ships."""
+    with patch("ttp.system_info.resolve_optional", return_value="/usr/sbin/semodule"):
+        with patch("ttp.system_info.subprocess.run", return_value=MagicMock(stdout="ttp_tor_policy 1.1\n")):
+            assert system_info.is_selinux_module_installed() is True
+        with patch("ttp.system_info.subprocess.run", return_value=MagicMock(stdout="ttp_tor_policy 1.0\n")):
+            assert system_info.is_selinux_module_installed() is False
+
+
+def test_is_selinux_module_installed_is_false_when_semodule_fails() -> None:
+    with (
+        patch("ttp.system_info.resolve_optional", return_value="/usr/sbin/semodule"),
+        patch("ttp.system_info.subprocess.run", side_effect=subprocess.SubprocessError("boom")),
+    ):
+        assert system_info.is_selinux_module_installed() is False
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        pytest.param('ID=fedora\nPRETTY_NAME="Fedora 44"\n', True, id="fedora"),
+        pytest.param('ID=rhel\nPRETTY_NAME="RHEL 9"\n', True, id="rhel"),
+        pytest.param('ID=debian\nPRETTY_NAME="Debian 13"\n', False, id="debian"),
+    ],
+)
+def test_is_fedora_family_reads_os_release(content: str, expected: bool, tmp_path) -> None:
+    release = tmp_path / "os-release"
+    release.write_text(content, encoding="utf-8")
+    with patch("ttp.system_info.Path", return_value=release):
+        assert system_info.is_fedora_family() is expected
+
+
+def test_is_fedora_family_is_false_when_os_release_is_unreadable(tmp_path) -> None:
+    release = tmp_path / "os-release"
+    release.write_text("ID=fedora\n", encoding="utf-8")
+    with (
+        patch("ttp.system_info.Path", return_value=release),
+        patch.object(type(release), "read_text", side_effect=OSError("permission denied")),
+    ):
+        assert system_info.is_fedora_family() is False
