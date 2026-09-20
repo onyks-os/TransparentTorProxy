@@ -41,6 +41,7 @@ import contextlib
 import os
 import socket
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Iterator
 from unittest.mock import MagicMock, patch
@@ -70,6 +71,7 @@ try:
     from nse.core.rule_engine import RuleEngine
     from nse.core.scapy_injector import _get_mac_address
     from nse.core.sniffer import PCAPAsserter
+    from nse.core.trace_harvester import HarvestState, TraceHarvester
 
     NSE_IMPORT_ERROR: str | None = None
 except ImportError as exc:  # pragma: no cover - environment-dependent
@@ -209,6 +211,59 @@ def udp_to(host: str, port: int, uid: int | None = None) -> Callable[[str], None
         )
 
     return stimulus
+
+
+def udp_roundtrip_to(host: str, port: int, uid: int | None = None) -> Callable[[str], None]:
+    """A UDP datagram that also *waits* for the answer.
+
+    ``udp_to`` proves egress only, which is weaker than the claim the bypass
+    test makes: "must still get out" implies something is reachable. A bypass
+    rule that lets packets out but breaks the return path satisfies egress and
+    is still a broken proxy.
+    """
+
+    def stimulus(ns_name: str) -> None:
+        family = "AF_INET6" if ":" in host else "AF_INET"
+        _python_in_ns(
+            ns_name,
+            "import socket, contextlib\n"
+            f"s = socket.socket(socket.{family}, socket.SOCK_DGRAM)\n"
+            "s.settimeout(2.0)\n"
+            "with contextlib.suppress(OSError):\n"
+            f"    s.sendto(b'ttp-roundtrip-probe', ({host!r}, {port}))\n"
+            "    s.recvfrom(64)\n",
+            uid=uid,
+        )
+
+    return stimulus
+
+
+@contextlib.contextmanager
+def host_udp_echo(bind_ip: str, port: int) -> Iterator[None]:
+    """A UDP echo server on the host side of the veth, for the duration."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind((bind_ip, port))
+    sock.settimeout(0.2)
+    stop = threading.Event()
+
+    def _serve() -> None:
+        while not stop.is_set():
+            try:
+                data, peer = sock.recvfrom(64)
+            except (TimeoutError, OSError):
+                continue
+            with contextlib.suppress(OSError):
+                sock.sendto(b"ack:" + data[:16], peer)
+
+    thread = threading.Thread(target=_serve, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+        sock.close()
 
 
 def tcp_to(host: str, port: int, uid: int | None = None) -> Callable[[str], None]:
@@ -421,6 +476,75 @@ def observe_with_canary(ns, loop, stimulus, settle: float = 0.4) -> list:  # typ
     return loop.run_until_complete(asserter.stop())
 
 
+def observe_trace(ns, loop, stimulus, settle: float = 1.0):  # type: ignore[no-untyped-def]
+    """Run *stimulus* under ``nft monitor trace`` and return what the kernel said.
+
+    Every other assertion in this file is about an **absence**: no cleartext
+    packet appeared on the wire. An absence has many causes, and the canary
+    only proves the *instrument* was working -- not *which rule* acted. A trace
+    names the rule, so "the packet was DNAT'd to Tor's DNSPort" replaces
+    "nothing showed up".
+
+    Returns ``(saw_readiness_event, terminal_state, events)``. The first is the
+    proof the monitor was really subscribed to the kernel's netlink group
+    before the stimulus ran: ``wait_ready`` alone only proves this process is
+    reading. Readiness traffic is discarded, so the events returned are the
+    stimulus's own.
+    """
+    harvester = TraceHarvester()
+    events: list = []
+
+    async def _run():  # type: ignore[no-untyped-def]
+        queue: asyncio.Queue = asyncio.Queue()
+        await harvester.start(
+            netns_name=ns.name,
+            queue=queue,
+            timeout=20.0,
+            use_nsenter=True,
+            on_event=events.append,
+        )
+        try:
+            await harvester.wait_ready(timeout=2.0)
+
+            # Readiness: keep poking with the canary until a trace event comes
+            # back. Until one does, the monitor may not be attached and any
+            # silence that follows means nothing.
+            ready = False
+            for _ in range(5):
+                harvester.arm_event_signal()
+                harvester.extend_deadline(10.0)
+                canary_stimulus()(ns.name)
+                if await harvester.wait_for_event(timeout=1.0):
+                    ready = True
+                    break
+
+            events.clear()  # the canary is the instrument, not the subject
+            harvester.arm_event_signal()
+            harvester.extend_deadline(10.0)
+            stimulus(ns.name)
+            await asyncio.sleep(settle)
+        finally:
+            state = await harvester.aclose()
+        return ready, state
+
+    ready, state = loop.run_until_complete(_run())
+    return ready, state, list(events)
+
+
+def assert_trace_usable(ready: bool, state, description: str) -> None:  # type: ignore[no-untyped-def]
+    """Refuse to read a trace that the harvester cannot vouch for."""
+    assert ready, (
+        f"HARNESS FAILED for {description}: no trace event was ever observed "
+        f"for the readiness canary, so `nft monitor trace` was not attached to "
+        f"the kernel and the absence of a match below would mean nothing."
+    )
+    assert state in (HarvestState.CLEAN_EOF, HarvestState.STOPPED), (
+        f"HARNESS FAILED for {description}: the trace monitor ended in state "
+        f"{state!r} rather than a clean stop, so the event stream is truncated "
+        f"and a missing match cannot be distinguished from a lost one."
+    )
+
+
 def _engine():
     """
     A RuleEngine that enters the namespace with ``nsenter``, not ``ip netns exec``.
@@ -540,6 +664,70 @@ def test_ipv6_is_not_allowed_to_escape(ns_sandbox, ttp_ruleset) -> None:
     if not has_ipv6(ns):
         pytest.skip("no IPv6 default route in this sandbox")
     assert_contained(ns, loop, ttp_ruleset, tcp_to(WAN_V6, 80), "IPv6 TCP to the WAN")
+
+
+# ---------------------------------------------------------------------------
+# Attribution: which rule acted, not merely that nothing escaped
+# ---------------------------------------------------------------------------
+
+
+def _matched_rules(events) -> list[str]:  # type: ignore[no-untyped-def]
+    """Rule texts from the trace, in the order the kernel reported them."""
+    return [e.rule_text for e in events if e.type == "match" and e.rule_text]
+
+
+def test_dns_is_attributed_to_the_redirect_rule(ns_sandbox, ttp_ruleset) -> None:
+    """The DNS query must be seen being DNAT'd, not merely seen not escaping.
+
+    "No cleartext packet on the wire" is also what a missing route, a downed
+    interface or a dropped packet look like. The trace says the redirect is
+    what acted.
+    """
+    ns, loop = ns_sandbox
+    _engine().load(ttp_ruleset, ns.name)
+
+    ready, state, events = observe_trace(ns, loop, udp_to(WAN_V4, 53))
+    assert_trace_usable(ready, state, "UDP DNS to 8.8.8.8:53")
+
+    matched = _matched_rules(events)
+    assert any("dnat" in text and "9054" in text for text in matched), (
+        f"the DNS query was not attributed to the DNSPort redirect. Rules that matched: {matched or 'none'}"
+    )
+
+
+def test_tcp_is_attributed_to_the_transport_redirect(ns_sandbox, ttp_ruleset) -> None:
+    """Ordinary web traffic must be seen entering Tor's TransPort."""
+    ns, loop = ns_sandbox
+    _engine().load(ttp_ruleset, ns.name)
+
+    ready, state, events = observe_trace(ns, loop, tcp_to(WAN_V4, 80))
+    assert_trace_usable(ready, state, "TCP to 8.8.8.8:80")
+
+    matched = _matched_rules(events)
+    assert any("dnat" in text and "9041" in text for text in matched), (
+        f"the TCP connection was not attributed to the TransPort redirect. Rules that matched: {matched or 'none'}"
+    )
+
+
+def test_icmp_is_attributed_to_a_reject(ns_sandbox, ttp_ruleset) -> None:
+    """Tor cannot carry ICMP, so the guillotine is what should stop it.
+
+    This is the case where attribution matters most: an ICMP echo produces no
+    redirect and no accept, so "nothing on the wire" is indistinguishable from
+    "the stimulus never ran" -- which is the failure `icmp_to` hit once before,
+    when it shelled out to a `ping` binary the test image did not ship.
+    """
+    ns, loop = ns_sandbox
+    _engine().load(ttp_ruleset, ns.name)
+
+    ready, state, events = observe_trace(ns, loop, icmp_to(WAN_V4))
+    assert_trace_usable(ready, state, "ICMP echo to 8.8.8.8")
+
+    verdicts = [e.verdict for e in events if e.verdict]
+    assert any(v and "REJECT" in v.upper() for v in verdicts), (
+        f"the ICMP echo was not attributed to a reject. Verdicts seen: "
+        f"{verdicts or 'none'}; rules matched: {_matched_rules(events) or 'none'}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -762,6 +950,45 @@ def test_bypassed_user_traffic_still_reaches_the_lan(ns_sandbox, ttp_ruleset) ->
     assert passed_through, (
         f"bypassed UID 1000 could not reach {HOST_V4}: TTP blocked traffic it is "
         f"configured to exempt. {len(captured)} packet(s) captured."
+    )
+
+
+def test_bypassed_user_traffic_gets_an_answer_back(ns_sandbox, ttp_ruleset) -> None:
+    """Egress is not reachability: the reply has to come back too.
+
+    The test above asserts a packet left. A bypass rule that lets packets out
+    but breaks the return path satisfies that and is still a broken proxy --
+    and nothing was listening, so nothing could ever have answered. This puts
+    a real echo server on the host side of the veth and asserts the round trip.
+    """
+    ns, loop = ns_sandbox
+    _engine().load(ttp_ruleset, ns.name)
+
+    from scapy.layers.inet import IP, UDP
+
+    with host_udp_echo(HOST_V4, CANARY_PORT):
+        captured = observe(ns, loop, udp_roundtrip_to(HOST_V4, CANARY_PORT, uid=1000), settle=2.5)
+
+    outbound = [
+        p
+        for p in captured
+        if p.haslayer(IP) and p[IP].dst == HOST_V4 and p.haslayer(UDP) and p[UDP].dport == CANARY_PORT
+    ]
+    assert outbound, (
+        f"bypassed UID 1000 could not reach {HOST_V4}:{CANARY_PORT}: TTP blocked "
+        f"traffic it is configured to exempt. {len(captured)} packet(s) captured."
+    )
+
+    replies = [
+        p
+        for p in captured
+        if p.haslayer(IP) and p[IP].src == HOST_V4 and p.haslayer(UDP) and p[UDP].sport == CANARY_PORT
+    ]
+    assert replies, (
+        f"the request reached {HOST_V4}:{CANARY_PORT} but no reply came back. "
+        f"The bypass is one-way: traffic leaves and the return path is blocked, "
+        f"which is a broken proxy rather than an exempted one. "
+        f"{len(captured)} packet(s) captured, {len(outbound)} outbound."
     )
 
 

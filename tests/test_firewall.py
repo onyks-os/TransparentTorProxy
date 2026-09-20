@@ -251,8 +251,9 @@ def test_destroy_rules(mock_run, mock_rules_path):
     mock_rules_path.unlink.assert_called_once_with(missing_ok=True)
 
 
+@patch("ttp.firewall.runner.RULES_TEMP_PATH")
 @patch("ttp.firewall.runner.subprocess.run")
-def test_destroy_rules_idempotent(mock_run):
+def test_destroy_rules_idempotent(mock_run, _mock_rules_path):
     """destroy_rules does not raise if nft returns non-zero (table missing)."""
     mock_run.return_value = MagicMock(returncode=1, stderr="Error: No such file")
 
@@ -882,8 +883,9 @@ def test_apply_rules_tears_down_when_the_ruleset_is_rejected(mock_run, mock_pwd)
     destroy.assert_called_once()
 
 
+@patch("ttp.firewall.runner.RULES_TEMP_PATH")
 @patch("ttp.firewall.runner.subprocess.run")
-def test_destroy_rules_raises_when_the_table_is_still_there(mock_run):
+def test_destroy_rules_raises_when_the_table_is_still_there(mock_run, _mock_rules_path):
     """ "destroy failed" and "already gone" must not be confused.
 
     Reporting success while the table stands would leave the operator believing
@@ -899,8 +901,9 @@ def test_destroy_rules_raises_when_the_table_is_still_there(mock_run):
         destroy_rules()
 
 
+@patch("ttp.firewall.runner.RULES_TEMP_PATH")
 @patch("ttp.firewall.runner.subprocess.run")
-def test_destroy_rules_treats_an_absent_table_as_success(mock_run):
+def test_destroy_rules_treats_an_absent_table_as_success(mock_run, _mock_rules_path):
     """Tearing down twice is not an error."""
     mock_run.side_effect = [
         MagicMock(returncode=0),  # nft flush table
@@ -909,3 +912,30 @@ def test_destroy_rules_treats_an_absent_table_as_success(mock_run):
     ]
 
     assert destroy_rules() is True
+
+
+def test_the_unit_suite_never_touches_the_real_runtime_directory():
+    """No test may reach into /run/ttp.
+
+    destroy_rules() unlinks a stale ruleset file on every exit path, so a test
+    that does not redirect RULES_TEMP_PATH operates on the live system: it
+    fails on a host where TTP has run (the directory is root-owned 0750) and,
+    run as root, would delete a real session's artifact. The isolation is easy
+    to drop by accident when adding a test, so it is asserted rather than
+    remembered.
+    """
+    from ttp.firewall import runner
+
+    assert str(runner.RULES_TEMP_PATH).startswith("/run/ttp/"), (
+        "fixture drift: this test is meaningless if the real path moved"
+    )
+
+    with (
+        patch("ttp.firewall.runner.RULES_TEMP_PATH") as mock_path,
+        patch("ttp.firewall.runner.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = MagicMock(returncode=0)
+        destroy_rules()
+
+    # It was asked to clean up, and it asked the *patched* path, not the real one.
+    mock_path.unlink.assert_called_once_with(missing_ok=True)
