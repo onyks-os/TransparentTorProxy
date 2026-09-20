@@ -56,19 +56,13 @@ def test_apply_dns_overlay(_mock_resolv_conf):
         # Check that runtime file was written
         assert "nameserver 127.0.0.1" in fake_runtime.read_text()
 
-        # The mount source is the descriptor apply_dns just wrote, not the
-        # path: a name in /run/ttp could be re-pointed between the write and
-        # the mount, publishing an inode TTP never produced.
         argv = mock_run.call_args.args[0]
-        assert argv[0] == resolve("mount")
-        assert argv[1] == "--bind"
-        assert argv[2].startswith("/proc/self/fd/")
-        assert argv[3] == str(fake_resolv)
+        assert argv == [resolve("mount"), "--bind", str(fake_runtime), str(fake_resolv)]
 
 
 def test_apply_dns_symlink_overlay(_mock_resolv_conf):
     """apply_dns with resolv.conf symlink uses realpath for mount --bind."""
-    fake_resolv, _fake_runtime = _mock_resolv_conf
+    fake_resolv, fake_runtime = _mock_resolv_conf
     fake_target = fake_resolv.parent / "real_resolv.conf"
 
     with (
@@ -85,9 +79,7 @@ def test_apply_dns_symlink_overlay(_mock_resolv_conf):
         assert backup["mount_target"] == str(fake_target)
 
         argv = mock_run.call_args.args[0]
-        assert argv[1] == "--bind"
-        assert argv[2].startswith("/proc/self/fd/")
-        assert argv[3] == str(fake_target)
+        assert argv == [resolve("mount"), "--bind", str(fake_runtime), str(fake_target)]
 
 
 # Restoration
@@ -759,3 +751,30 @@ def test_restore_resolved_survives_a_failed_cache_flush(caplog):
 
     assert any("flush-caches" in c for c in calls)
     assert "Failed to flush systemd-resolved caches" in caplog.text
+
+
+def test_apply_dns_refuses_a_runtime_file_swapped_after_the_write(_mock_resolv_conf, tmp_path):
+    """The name must still denote the inode apply_dns just wrote.
+
+    mount(8) resolves its source argument in its own process, so the write
+    descriptor cannot be handed to it. The identity is re-checked instead, and
+    a substitution between the write and the mount is refused rather than
+    published at /etc/resolv.conf.
+    """
+    _fake_resolv, fake_runtime = _mock_resolv_conf
+    impostor = tmp_path / "impostor"
+    impostor.write_text("attacker controlled\n", encoding="utf-8")
+
+    def _swap(target: str) -> None:
+        fake_runtime.unlink(missing_ok=True)
+        fake_runtime.symlink_to(impostor)
+
+    with (
+        patch("ttp.dns._clear_stale_mounts", side_effect=_swap),
+        patch("ttp.dns.subprocess.run") as mock_run,
+        patch("ttp.dns_resolved.apply_resolved", return_value=False),
+        pytest.raises(DNSError, match=r"was replaced|no longer a private regular file"),
+    ):
+        dns.apply_dns("eth0")
+
+    mock_run.assert_not_called()
