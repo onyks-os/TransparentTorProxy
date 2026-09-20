@@ -37,13 +37,19 @@ nothing to do with the firewall.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
+import socket
 import subprocess
 import time
 from collections.abc import Callable, Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# The classifier needs neither nse nor root, so it lives outside this module
+# and is unit-tested on its own.
+from tests.nse_classifier import canary_seen, is_cleartext_leak
 
 # Import TTP firewall dynamic rule builder
 from ttp.firewall import apply_rules
@@ -56,8 +62,10 @@ from ttp.firewall import apply_rules
 # in the gate a missing or shadowed NSE is a hard error rather than a skip.
 REQUIRE_NSE = os.environ.get("TTP_REQUIRE_NSE") == "1"
 
+
 try:
     import nse
+    from nse.core.mock_listener import start_mock_listener
     from nse.core.netns_controller import NetnsController
     from nse.core.rule_engine import RuleEngine
     from nse.core.scapy_injector import _get_mac_address
@@ -368,26 +376,15 @@ def has_ipv6(ns) -> bool:  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 
 
-def is_cleartext_leak(pkt) -> bool:  # type: ignore[no-untyped-def]
-    """True if *pkt* is a WAN-bound cleartext packet, i.e. a leak."""
-    from scapy.layers.inet import IP
-    from scapy.layers.inet6 import IPv6
+#: The canary is UDP to the veth peer from a bypassed UID: traffic TTP is
+#: configured to permit, so it is not itself a leak, and ``is_cleartext_leak``
+#: already excludes 10.0.1.* so it cannot be miscounted as one.
+CANARY_PORT = 9999
 
-    if pkt.haslayer(IP):
-        dst = pkt[IP].dst
-        if dst.startswith(("127.", "10.0.1.")):
-            return False
-        try:
-            first_octet = int(dst.split(".")[0])
-            if 224 <= first_octet <= 239:  # multicast
-                return False
-        except (ValueError, IndexError):
-            pass
-        return True
-    if pkt.haslayer(IPv6):
-        dst = pkt[IPv6].dst
-        return not (dst == "::1" or dst.startswith(("fd00:1::", "fe80:", "ff")))
-    return False
+
+def canary_stimulus():  # type: ignore[no-untyped-def]
+    """The stimulus whose arrival proves the capture window was open."""
+    return udp_to(HOST_V4, CANARY_PORT, uid=1000)
 
 
 def observe(ns, loop, stimulus, settle: float = 0.4) -> list:  # type: ignore[no-untyped-def]
@@ -397,6 +394,29 @@ def observe(ns, loop, stimulus, settle: float = 0.4) -> list:  # type: ignore[no
     # Give AsyncSniffer's thread time to attach before generating traffic.
     loop.run_until_complete(asyncio.sleep(0.2))
     stimulus(ns.name)
+    loop.run_until_complete(asyncio.sleep(settle))
+    return loop.run_until_complete(asserter.stop())
+
+
+def observe_with_canary(ns, loop, stimulus, settle: float = 0.4) -> list:  # type: ignore[no-untyped-def]
+    """Fire *stimulus*, then the canary, inside **one** capture session.
+
+    The positive control in ``assert_contained`` runs in its own capture, so it
+    proves the instrument worked a moment ago and the containment assertion
+    assumes it still does. A sniffer that failed to attach for the second
+    capture -- a slow scheduler, a socket error swallowed inside AsyncSniffer's
+    thread, the veth renumbered by the intervening rule load -- captures zero
+    packets, which reads as containment.
+
+    The canary closes that. It is emitted *after* the leak stimulus and inside
+    the same session, so observing it proves the capture window was open across
+    the whole of the leak stimulus rather than merely at some earlier time.
+    """
+    asserter = PCAPAsserter(iface=ns.ext_iface)
+    loop.run_until_complete(asserter.start())
+    loop.run_until_complete(asyncio.sleep(0.2))
+    stimulus(ns.name)
+    canary_stimulus()(ns.name)
     loop.run_until_complete(asyncio.sleep(settle))
     return loop.run_until_complete(asserter.stop())
 
@@ -445,7 +465,20 @@ def assert_contained(ns, loop, ruleset: str, stimulus, description: str) -> None
     )
 
     engine.load(ruleset, ns.name)
-    observed = observe(ns, loop, stimulus)
+    observed = observe_with_canary(ns, loop, stimulus)
+
+    # The canary rides in this capture, not the previous one, so it speaks for
+    # the window the assertion below is about. Check it first: "no leak" and
+    # "no packets at all" look identical, and only one of them is containment.
+    assert canary_seen(observed, HOST_V4, CANARY_PORT), (
+        f"HARNESS FAILED for {description}: the canary ({HOST_V4}:{CANARY_PORT} "
+        f"from a bypassed UID, which TTP is configured to permit) was not "
+        f"observed in the same capture as the assertion "
+        f"({len(observed)} packet(s) captured in total). The sniffer was not "
+        f"measuring during this window, so the zero-leak assertion below would "
+        f"pass for the wrong reason."
+    )
+
     leaks = [p.summary() for p in observed if is_cleartext_leak(p)]
     assert not leaks, f"{description} LEAKED to the WAN despite TTP's ruleset: {leaks}"
 
@@ -507,6 +540,104 @@ def test_ipv6_is_not_allowed_to_escape(ns_sandbox, ttp_ruleset) -> None:
     if not has_ipv6(ns):
         pytest.skip("no IPv6 default route in this sandbox")
     assert_contained(ns, loop, ttp_ruleset, tcp_to(WAN_V6, 80), "IPv6 TCP to the WAN")
+
+
+# ---------------------------------------------------------------------------
+# filter_forward: the forwarding plane
+#
+# Every other test in this file injects *from* the sandbox namespace, which
+# only ever traverses `output`. The forward hook was reached by nothing, so
+# `policy drop` in filter_forward -- a stated invariant, with a stated threat
+# model of a VM or container routing through the host to escape the proxy --
+# was asserted by no test at all.
+#
+# This builds the three-namespace shape that hook needs: host -> router ->
+# server, with TTP's ruleset loaded on the *router*.
+# ---------------------------------------------------------------------------
+
+GATEWAY_ROUTER_NS = "nse_ttp_router"
+GATEWAY_SERVER_NS = "nse_ttp_server"
+GATEWAY_SERVER_V4 = "10.0.2.2"
+GATEWAY_PORT = 9999
+
+
+@pytest.fixture
+def gateway_sandbox() -> Iterator[object]:
+    """host <-> router <-> server, with a listener answering in the server."""
+    controller = NetnsController()
+    listener = None
+    try:
+        controller.create_gateway_topology(
+            router_ns=GATEWAY_ROUTER_NS,
+            server_ns=GATEWAY_SERVER_NS,
+            veth_host="veth_ttp_gw",
+            veth_router_host="veth_ttp_rh",
+            veth_router_server="veth_ttp_rs",
+            veth_server="veth_ttp_sv",
+        )
+        # Let the veth carriers come up before anything tries to route over them.
+        time.sleep(0.5)
+        listener = start_mock_listener(GATEWAY_SERVER_NS, "tcp", GATEWAY_PORT, host="0.0.0.0", use_nsenter=True)
+        time.sleep(0.5)
+        yield controller
+    finally:
+        if listener is not None:
+            listener.terminate()
+            with contextlib.suppress(Exception):
+                listener.wait(timeout=5)
+        with contextlib.suppress(Exception):
+            controller.destroy_netns(GATEWAY_SERVER_NS)
+        with contextlib.suppress(Exception):
+            controller.destroy_netns(GATEWAY_ROUTER_NS)
+        # The host-side veth and its transit route go with the pair.
+        _original_subprocess_run(
+            ["ip", "link", "del", "veth_ttp_gw"],
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+
+
+def _can_reach_the_server(timeout: float = 3.0) -> bool:
+    """True if a TCP connection completes through the router."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        try:
+            sock.connect((GATEWAY_SERVER_V4, GATEWAY_PORT))
+        except OSError:
+            return False
+        return True
+
+
+def test_forwarded_traffic_is_dropped(gateway_sandbox, ttp_ruleset) -> None:
+    """A packet routed *through* the host must not reach the far side.
+
+    This is the Docker/VM escape: a guest whose default route is the host can
+    reach the WAN without ever traversing `output`, so none of the redirect or
+    reject rules apply to it. filter_forward's `policy drop` is the only thing
+    that stops it.
+
+    Positive control first, as everywhere else in this file: with the router's
+    ruleset flushed the connection must complete, or the topology -- not the
+    firewall -- is what the assertion below would be measuring.
+    """
+    engine = _engine()
+
+    engine.flush(GATEWAY_ROUTER_NS)
+    assert _can_reach_the_server(), (
+        "POSITIVE CONTROL FAILED: with the router's firewall flushed, a TCP "
+        f"connection to {GATEWAY_SERVER_V4}:{GATEWAY_PORT} did not complete. "
+        "Forwarding or the listener is broken, so the drop assertion below "
+        "would pass for the wrong reason."
+    )
+
+    engine.load(ttp_ruleset, GATEWAY_ROUTER_NS)
+    assert not _can_reach_the_server(), (
+        f"Traffic forwarded through the host reached {GATEWAY_SERVER_V4}:"
+        f"{GATEWAY_PORT} despite TTP's ruleset. filter_forward's policy drop "
+        "is not containing the forwarding plane, which is the path a VM or "
+        "container uses to escape the proxy."
+    )
 
 
 # ---------------------------------------------------------------------------
