@@ -49,7 +49,7 @@ import pytest
 
 # The classifier needs neither nse nor root, so it lives outside this module
 # and is unit-tested on its own.
-from tests.nse_classifier import is_cleartext_leak
+from tests.nse_classifier import canary_seen, is_cleartext_leak
 
 # Import TTP firewall dynamic rule builder
 from ttp.firewall import apply_rules
@@ -376,6 +376,17 @@ def has_ipv6(ns) -> bool:  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 
 
+#: The canary is UDP to the veth peer from a bypassed UID: traffic TTP is
+#: configured to permit, so it is not itself a leak, and ``is_cleartext_leak``
+#: already excludes 10.0.1.* so it cannot be miscounted as one.
+CANARY_PORT = 9999
+
+
+def canary_stimulus():  # type: ignore[no-untyped-def]
+    """The stimulus whose arrival proves the capture window was open."""
+    return udp_to(HOST_V4, CANARY_PORT, uid=1000)
+
+
 def observe(ns, loop, stimulus, settle: float = 0.4) -> list:  # type: ignore[no-untyped-def]
     """Run *stimulus* with the sniffer armed on the host veth; return what it saw."""
     asserter = PCAPAsserter(iface=ns.ext_iface)
@@ -383,6 +394,29 @@ def observe(ns, loop, stimulus, settle: float = 0.4) -> list:  # type: ignore[no
     # Give AsyncSniffer's thread time to attach before generating traffic.
     loop.run_until_complete(asyncio.sleep(0.2))
     stimulus(ns.name)
+    loop.run_until_complete(asyncio.sleep(settle))
+    return loop.run_until_complete(asserter.stop())
+
+
+def observe_with_canary(ns, loop, stimulus, settle: float = 0.4) -> list:  # type: ignore[no-untyped-def]
+    """Fire *stimulus*, then the canary, inside **one** capture session.
+
+    The positive control in ``assert_contained`` runs in its own capture, so it
+    proves the instrument worked a moment ago and the containment assertion
+    assumes it still does. A sniffer that failed to attach for the second
+    capture -- a slow scheduler, a socket error swallowed inside AsyncSniffer's
+    thread, the veth renumbered by the intervening rule load -- captures zero
+    packets, which reads as containment.
+
+    The canary closes that. It is emitted *after* the leak stimulus and inside
+    the same session, so observing it proves the capture window was open across
+    the whole of the leak stimulus rather than merely at some earlier time.
+    """
+    asserter = PCAPAsserter(iface=ns.ext_iface)
+    loop.run_until_complete(asserter.start())
+    loop.run_until_complete(asyncio.sleep(0.2))
+    stimulus(ns.name)
+    canary_stimulus()(ns.name)
     loop.run_until_complete(asyncio.sleep(settle))
     return loop.run_until_complete(asserter.stop())
 
@@ -431,7 +465,20 @@ def assert_contained(ns, loop, ruleset: str, stimulus, description: str) -> None
     )
 
     engine.load(ruleset, ns.name)
-    observed = observe(ns, loop, stimulus)
+    observed = observe_with_canary(ns, loop, stimulus)
+
+    # The canary rides in this capture, not the previous one, so it speaks for
+    # the window the assertion below is about. Check it first: "no leak" and
+    # "no packets at all" look identical, and only one of them is containment.
+    assert canary_seen(observed, HOST_V4, CANARY_PORT), (
+        f"HARNESS FAILED for {description}: the canary ({HOST_V4}:{CANARY_PORT} "
+        f"from a bypassed UID, which TTP is configured to permit) was not "
+        f"observed in the same capture as the assertion "
+        f"({len(observed)} packet(s) captured in total). The sniffer was not "
+        f"measuring during this window, so the zero-leak assertion below would "
+        f"pass for the wrong reason."
+    )
+
     leaks = [p.summary() for p in observed if is_cleartext_leak(p)]
     assert not leaks, f"{description} LEAKED to the WAN despite TTP's ruleset: {leaks}"
 

@@ -51,3 +51,18 @@ def is_cleartext_leak(pkt: Any) -> bool:
         dst = pkt[IPv6].dst
         return not (dst == "::1" or dst.startswith(_LOCAL_V6_PREFIXES))
     return False
+
+
+def canary_seen(captured: list, host: str, port: int) -> bool:
+    """True if the canary packet is among *captured*.
+
+    The canary is the marker that proves a capture session was actually
+    measuring. It is checked with the same kind of predicate as a leak, and for
+    the same reason: "no leak" and "no packets at all" look identical from the
+    outside, and only one of them is containment.
+    """
+    from scapy.layers.inet import IP, UDP
+
+    return any(
+        pkt.haslayer(IP) and pkt[IP].dst == host and pkt.haslayer(UDP) and pkt[UDP].dport == port for pkt in captured
+    )
