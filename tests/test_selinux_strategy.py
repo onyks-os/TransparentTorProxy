@@ -123,7 +123,7 @@ def test_is_selinux_module_installed_true():
     """Returns True if semodule -l lists the policy."""
     with _stub_lookup("/usr/bin/semodule"):
         with patch("ttp.tor_detect.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="ttp_tor_policy  1.1\nother_mod\n", returncode=0)
+            mock_run.return_value = MagicMock(stdout="ttp_tor_policy  1.2\nother_mod\n", returncode=0)
             assert is_selinux_module_installed() is True
 
 

@@ -83,7 +83,7 @@ if command -v getenforce >/dev/null 2>&1; then
         echo "[TTP] SELinux Enforcing mode detected."
         
         # We only install the module if it's not already there.
-        if ! semodule -l | grep -qE "ttp_tor_policy[[:space:]]+1\.1"; then
+        if ! semodule -l | grep -qE "ttp_tor_policy[[:space:]]+1\.2"; then
             echo "[TTP] Compiling and optimizing kernel policies..."
             if ! command -v checkmodule >/dev/null 2>&1; then
                 echo "[TTP] SELinux build tools missing. Attempting to install 'checkpolicy'..."

@@ -139,6 +139,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **On SELinux Enforcing hosts, TTP's own port labelling made Tor's DNSPort
+  unbindable, and `ttp start` hung at "Waiting for Tor to bootstrap... 0%".**
+  `label_ports_selinux` relabels the TransPort and the DNSPort to `tor_port_t`,
+  which takes them *out* of `unreserved_port_t` — the only type
+  `ttp_tor_policy.te` granted `name_bind` on. Fedora's base policy lets `tor_t`
+  bind a `tor_port_t` TCP socket but not a UDP one, so the TransPort came up and
+  the DNSPort was denied: `avc: denied { name_bind } ... tclass=udp_socket`.
+  Tor treats a failed listener as a fatal config error and exits during parsing,
+  but the `ttp-tor` unit is `Type=simple`, so `systemctl restart` had already
+  returned `0` and nothing in the start path noticed. TTP went on to apply the
+  nftables rules and the DNS overlay against a daemon that was no longer
+  running, then waited 60s for a control socket that would never be created —
+  the whole time showing a bootstrap bar at 0%, which read as a slow network
+  rather than a dead daemon. The module (now `1.2`) grants `name_bind` on
+  `tor_port_t` for both socket classes, and the invariant is now a test: every
+  `(type, protocol)` pair the labeller asks `semanage` for must have a matching
+  grant in the policy source, derived from the labeller's own calls rather than
+  hardcoded.
+
 - **The chaos monkey reported a clean run whenever it could not measure.**
   `run_connectivity_audit` returned a bool, and every path that failed to
   observe anything returned `True` — "no leak". The sharpest case was the

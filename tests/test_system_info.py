@@ -173,9 +173,9 @@ def test_is_selinux_enforcing_is_false_without_the_binary() -> None:
 def test_is_selinux_module_installed_matches_the_exact_version() -> None:
     """A different version of the module is not the one TTP ships."""
     with patch("ttp.system_info.resolve_optional", return_value="/usr/sbin/semodule"):
-        with patch("ttp.system_info.subprocess.run", return_value=MagicMock(stdout="ttp_tor_policy 1.1\n")):
+        with patch("ttp.system_info.subprocess.run", return_value=MagicMock(stdout="ttp_tor_policy 1.2\n")):
             assert system_info.is_selinux_module_installed() is True
-        with patch("ttp.system_info.subprocess.run", return_value=MagicMock(stdout="ttp_tor_policy 1.0\n")):
+        with patch("ttp.system_info.subprocess.run", return_value=MagicMock(stdout="ttp_tor_policy 1.1\n")):
             assert system_info.is_selinux_module_installed() is False
 
 
