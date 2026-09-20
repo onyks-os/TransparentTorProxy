@@ -1238,3 +1238,59 @@ def test_byod_uid_detection_requires_an_exact_tor_account_name(username: str) ->
     ):
         # Falls through to the known-usernames fallback, never to 4242.
         assert _resolve_external_tor_uid(9041, None) == "110"
+
+
+# ---------------------------------------------------------------------------
+# _parse_bridges and the bypass parser: operator input that is wrong must be
+# refused with a message, never carried into the generated torrc or the
+# firewall's exemption list.
+# ---------------------------------------------------------------------------
+
+
+def test_bridge_file_with_an_invalid_line_is_refused(tmp_path) -> None:
+    bridge_file = tmp_path / "bridges.txt"
+    bridge_file.write_text("192.0.2.10:9001\njust some words here\n", encoding="utf-8")
+
+    with pytest.raises(typer.Exit) as exc:
+        _parse_bridges(bridge_file, None, False)
+    assert exc.value.exit_code == 1
+
+
+def test_bridge_file_with_a_multiline_value_is_refused(tmp_path) -> None:
+    """Each physical line is validated, so the file path was never injectable.
+
+    Pinned here so it stays that way.
+    """
+    bridge_file = tmp_path / "bridges.txt"
+    bridge_file.write_text("obfs4 192.0.2.10:9001 cert=A\nControlPort 9051\n", encoding="utf-8")
+
+    with pytest.raises(typer.Exit):
+        _parse_bridges(bridge_file, None, False)
+
+
+def test_an_unreadable_bridge_file_is_reported(tmp_path) -> None:
+    missing = tmp_path / "nope" / "bridges.txt"
+
+    with pytest.raises(typer.Exit) as exc:
+        _parse_bridges(missing, None, False)
+    assert exc.value.exit_code == 1
+
+
+def test_a_valid_bridge_file_is_accepted(tmp_path) -> None:
+    bridge_file = tmp_path / "bridges.txt"
+    bridge_file.write_text("# a comment\n\n192.0.2.10:9001\nobfs4 192.0.2.11:9002 cert=AAAA\n", encoding="utf-8")
+
+    bridges, use_bridges = _parse_bridges(bridge_file, None, False)
+
+    assert use_bridges is True
+    assert bridges == ["192.0.2.10:9001", "obfs4 192.0.2.11:9002 cert=AAAA"]
+
+
+def test_byod_uid_detection_ignores_a_uid_with_no_passwd_entry() -> None:
+    """A UID that is not in the passwd database names no account to trust."""
+    with (
+        patch("ttp.commands.start._get_uid_from_port", return_value=4242),
+        patch("pwd.getpwuid", side_effect=KeyError(4242)),
+        patch("pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110)),
+    ):
+        assert _resolve_external_tor_uid(9041, None) == "110"

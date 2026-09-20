@@ -701,3 +701,61 @@ def test_apply_dns_refuses_a_symlinked_runtime_resolv(_mock_resolv_conf, tmp_pat
 
     assert victim.read_text(encoding="utf-8") == "ORIGINAL"
     mock_run.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# restore_resolved runs during teardown, after the firewall is already gone.
+# Every step is best effort: a failure here must be logged, never raised, or
+# it strands the session the way the audit found do_stop doing.
+# ---------------------------------------------------------------------------
+
+
+def test_restore_resolved_survives_an_undeletable_dropin(caplog):
+    from ttp import dns_resolved
+
+    with (
+        patch.object(type(dns_resolved.RESOLVED_CONF_FILE), "exists", return_value=True),
+        patch.object(type(dns_resolved.RESOLVED_CONF_FILE), "unlink", side_effect=OSError("read-only")),
+        patch("ttp.dns_resolved.subprocess.run"),
+        caplog.at_level("WARNING"),
+    ):
+        dns_resolved.restore_resolved()
+
+    assert "Failed to remove systemd-resolved drop-in" in caplog.text
+
+
+def test_restore_resolved_survives_a_failed_restart(caplog):
+    """systemd-resolved refusing to restart must not abort teardown."""
+    from ttp import dns_resolved
+
+    with (
+        patch.object(type(dns_resolved.RESOLVED_CONF_FILE), "exists", return_value=False),
+        patch("ttp.dns_resolved.subprocess.run", side_effect=OSError("systemctl gone")),
+        caplog.at_level("DEBUG"),
+    ):
+        dns_resolved.restore_resolved()
+
+    assert "Failed to restart systemd-resolved" in caplog.text
+
+
+def test_restore_resolved_survives_a_failed_cache_flush(caplog):
+    """The flush is the least important step and must not be the loudest."""
+    from ttp import dns_resolved
+
+    calls = []
+
+    def _run(argv, **kwargs):
+        calls.append(argv)
+        if "flush-caches" in argv:
+            raise OSError("resolvectl gone")
+        return MagicMock(returncode=0)
+
+    with (
+        patch.object(type(dns_resolved.RESOLVED_CONF_FILE), "exists", return_value=False),
+        patch("ttp.dns_resolved.subprocess.run", side_effect=_run),
+        caplog.at_level("DEBUG"),
+    ):
+        dns_resolved.restore_resolved()
+
+    assert any("flush-caches" in c for c in calls)
+    assert "Failed to flush systemd-resolved caches" in caplog.text

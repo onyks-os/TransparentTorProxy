@@ -261,3 +261,51 @@ def test_a_dangling_symlink_does_not_create_a_file_at_its_target(tmp_path):
         assert _open_log_file_safely() is False
 
     assert not target.exists()
+
+
+def test_a_hardlinked_log_file_is_refused(tmp_path):
+    """A second link to the log is another name root's writes can be read from."""
+    real = tmp_path / "ttp.log"
+    real.write_text("", encoding="utf-8")
+    (tmp_path / "second-name").hardlink_to(real)
+
+    with patch("ttp.commands._logging._LOG_PATH", real):
+        assert _open_log_file_safely() is False
+
+
+def test_a_directory_at_the_log_path_is_refused(tmp_path):
+    """Only a regular file is acceptable; anything else skips file logging."""
+    d = tmp_path / "ttp.log"
+    d.mkdir()
+
+    with patch("ttp.commands._logging._LOG_PATH", d):
+        assert _open_log_file_safely() is False
+
+
+def test_an_unwritable_directory_skips_file_logging(tmp_path):
+    """The helper reports failure rather than raising into the CLI callback."""
+    missing = tmp_path / "no-such-dir" / "ttp.log"
+
+    with patch("ttp.commands._logging._LOG_PATH", missing):
+        assert _open_log_file_safely() is False
+
+
+def test_setup_logging_skips_the_file_handler_when_the_path_is_unusable(tmp_path):
+    """A refused path must not stop the CLI from running."""
+    from ttp.commands._common import cli_state, logger
+
+    link = tmp_path / "ttp.log"
+    link.symlink_to(tmp_path / "nowhere")
+
+    orig = list(logger.handlers)
+    try:
+        logger.handlers.clear()
+        with (
+            patch("ttp.commands._logging._LOG_PATH", link),
+            patch("ttp.state.ensure_runtime_dir"),
+            patch.object(cli_state, "quiet", True),
+        ):
+            setup_logging()
+        assert not any(h.__class__.__name__ == "RotatingFileHandler" for h in logger.handlers)
+    finally:
+        logger.handlers[:] = orig

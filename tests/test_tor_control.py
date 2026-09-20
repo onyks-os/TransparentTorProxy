@@ -343,3 +343,75 @@ def test_no_reply_and_a_malformed_reply_are_distinguishable() -> None:
     ):
         assert tor_control.get_exit_ip() == tor_control.NO_ANSWER
     assert tor_control.NO_ANSWER != tor_control.MALFORMED_ANSWER
+
+
+# ---------------------------------------------------------------------------
+# Control-socket failure modes. Each must be a clean refusal, never a crash:
+# the callers decide whether the session is usable on the back of these.
+# ---------------------------------------------------------------------------
+
+
+def test_get_controller_returns_none_without_stem() -> None:
+    """stem is optional; its absence is not an error."""
+    with patch.object(tor_control, "Controller", None):
+        assert tor_control.get_controller() is None
+
+
+@pytest.mark.parametrize(
+    "exc_name",
+    ["SocketError", "AuthenticationFailure", "ControllerError", "OSError"],
+    ids=["unreachable", "auth-failed", "controller-error", "oserror"],
+)
+def test_get_controller_reports_every_failure_as_none(exc_name: str) -> None:
+    """A failure to reach or authenticate the control socket yields None.
+
+    Anything else would propagate into `ttp start` after the firewall is
+    already applied.
+    """
+    import stem
+    import stem.connection
+
+    exc = {
+        "SocketError": stem.SocketError("refused"),
+        "AuthenticationFailure": stem.connection.AuthenticationFailure("bad cookie"),
+        "ControllerError": stem.ControllerError("boom"),
+        "OSError": OSError("no socket"),
+    }[exc_name]
+
+    fake = MagicMock()
+    fake.from_socket_file.side_effect = exc
+    with patch.object(tor_control, "Controller", fake):
+        assert tor_control.get_controller() is None
+
+
+def test_request_new_circuit_refuses_without_a_controller() -> None:
+    with patch.object(tor_control, "get_controller", return_value=None):
+        with pytest.raises(TorError, match="Cannot connect to Tor control interface"):
+            tor_control.request_new_circuit()
+
+
+def test_request_new_circuit_wraps_a_controller_error() -> None:
+    import stem
+
+    ctrl = MagicMock()
+    ctrl.__enter__.return_value = ctrl
+    ctrl.signal.side_effect = stem.ControllerError("NEWNYM refused")
+    with (
+        patch.object(tor_control, "get_controller", return_value=ctrl),
+        patch.object(tor_control, "Signal", MagicMock()),
+    ):
+        with pytest.raises(TorError, match="Failed to request new circuit"):
+            tor_control.request_new_circuit()
+
+
+def test_the_authoritative_endpoint_answering_without_istor_is_not_an_upgrade() -> None:
+    """A trusted origin with an unexpected shape must not fall through.
+
+    Letting the loop continue would hand the verdict to a fallback reflector,
+    which is exactly what the origin binding exists to prevent.
+    """
+    with (
+        patch.object(tor_control, "_fetch_endpoint", return_value={"IP": "185.220.101.7"}),
+        patch("time.sleep"),
+    ):
+        assert tor_control.verify_tor() == (False, "185.220.101.7")

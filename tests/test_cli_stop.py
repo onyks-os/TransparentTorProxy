@@ -426,3 +426,68 @@ def test_do_stop_clears_the_lock_even_when_dns_restore_fails():
         lifecycle.do_stop()
 
     delete_lock.assert_called_once()
+
+
+def test_do_stop_is_a_no_op_without_a_lock():
+    """No session, nothing to tear down -- and nothing to report as torn down."""
+    with (
+        patch("ttp.state.read_lock", return_value=None),
+        patch("ttp.commands.lifecycle.firewall") as firewall,
+        patch("ttp.state.delete_lock") as delete_lock,
+    ):
+        lifecycle.do_stop()
+
+    firewall.destroy_rules.assert_not_called()
+    delete_lock.assert_not_called()
+
+
+def test_do_stop_ignores_a_non_integer_tor_uid_from_the_lock():
+    """A lock value that is not a uid falls through to the real lookups.
+
+    It must never be formatted into the nft rule: nft lexes its joined argv
+    line-wise, so a newline there becomes another root command.
+    """
+    with (
+        patch(
+            "ttp.state.read_lock",
+            return_value={"pid": 1, "tor_uid": "0\ninsert rule inet ttp filter_out accept #"},
+        ),
+        patch("ttp.commands.lifecycle.firewall") as firewall,
+        patch("ttp.commands.lifecycle.tor_install"),
+        patch("ttp.commands.lifecycle.dns"),
+        patch("ttp.commands.lifecycle.get_uid_from_port", return_value=107),
+        patch("ttp.commands.lifecycle.resolve_optional", return_value=None),
+        patch("ttp.state.delete_lock"),
+    ):
+        lifecycle.do_stop()
+
+    firewall.apply_teardown_lockdown.assert_called_once_with(107)
+
+
+def test_do_stop_survives_a_watchdog_that_will_not_stop():
+    """A stuck watchdog must not prevent the firewall from being torn down."""
+    with (
+        patch("ttp.state.read_lock", return_value={"pid": 1, "watchdog_active": True, "tor_uid": 107}),
+        patch("ttp.watchdog.stop_watchdog", side_effect=RuntimeError("systemctl hung")),
+        patch("ttp.commands.lifecycle.firewall") as firewall,
+        patch("ttp.commands.lifecycle.tor_install"),
+        patch("ttp.commands.lifecycle.dns"),
+        patch("ttp.commands.lifecycle.resolve_optional", return_value=None),
+        patch("ttp.state.delete_lock") as delete_lock,
+    ):
+        lifecycle.do_stop()
+
+    firewall.destroy_rules.assert_called_once()
+    delete_lock.assert_called_once()
+
+
+def test_signal_handler_tears_down_and_exits_zero():
+    """SIGINT/SIGTERM during a foreground session must restore the network."""
+    with (
+        patch("ttp.commands.lifecycle.do_stop") as do_stop,
+        pytest.raises(SystemExit) as exc,
+    ):
+        lifecycle.signal_handler(15, None)
+
+    do_stop.assert_called_once()
+    assert exc.value.code == 0

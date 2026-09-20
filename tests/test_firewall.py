@@ -857,3 +857,55 @@ def test_ipv6_killswitch_still_follows_the_tor_daemon_exemption():
     """
     block = _filter_out_block(_build_ruleset(**_base_kwargs(ipv6_avail=False, tor_uid=110)))
     assert block.index("meta skuid 110 accept") < block.index("meta nfproto ipv6 drop")
+
+
+def test_apply_rules_refuses_an_unknown_tor_user():
+    """An unresolvable account must fail closed, not become a stray uid."""
+    with patch("ttp.firewall.runner.pwd.getpwnam", side_effect=KeyError("ghost")):
+        with pytest.raises(FirewallError, match="not found on system"):
+            apply_rules(tor_user="ghost")
+
+
+@patch("ttp.firewall.runner.pwd.getpwnam")
+@patch("ttp.firewall.runner.subprocess.run")
+def test_apply_rules_tears_down_when_the_ruleset_is_rejected(mock_run, mock_pwd):
+    """A half-applied table is an open network; the failure path must destroy it."""
+    mock_pwd.return_value = MagicMock(pw_uid=123)
+    mock_run.side_effect = subprocess.CalledProcessError(1, ["nft"], stderr="syntax error")
+
+    with (
+        patch("ttp.firewall.runner.destroy_rules") as destroy,
+        pytest.raises(FirewallError),
+    ):
+        apply_rules(tor_user="debian-tor")
+
+    destroy.assert_called_once()
+
+
+@patch("ttp.firewall.runner.subprocess.run")
+def test_destroy_rules_raises_when_the_table_is_still_there(mock_run):
+    """ "destroy failed" and "already gone" must not be confused.
+
+    Reporting success while the table stands would leave the operator believing
+    the network was restored.
+    """
+    mock_run.side_effect = [
+        MagicMock(returncode=0),  # nft flush table
+        MagicMock(returncode=1, stderr=b"permission denied"),  # nft destroy
+        MagicMock(returncode=0),  # nft list table -> still present
+    ]
+
+    with pytest.raises(FirewallError, match="Failed to destroy"):
+        destroy_rules()
+
+
+@patch("ttp.firewall.runner.subprocess.run")
+def test_destroy_rules_treats_an_absent_table_as_success(mock_run):
+    """Tearing down twice is not an error."""
+    mock_run.side_effect = [
+        MagicMock(returncode=0),  # nft flush table
+        MagicMock(returncode=1, stderr=b"No such file or directory"),  # nft destroy
+        MagicMock(returncode=1),  # nft list table -> gone
+    ]
+
+    assert destroy_rules() is True

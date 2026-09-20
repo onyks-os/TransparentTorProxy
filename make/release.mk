@@ -61,7 +61,11 @@ release-check: ## Verify the repository is ready to be tagged
 		|| { echo "!!! README.md or SECURITY.md still contains template placeholders."; exit 1; }
 	@echo "==> Ready to tag: git tag -s v$(VERSION) -m \"$(PROJECT_SHORT) v$(VERSION)\""
 
-release-dry: release-check verify build sbom checksums ## Full local release rehearsal
+# `verify` runs lint, test and audit, but never measured coverage, so a release
+# could be rehearsed without the ratchet the CI job enforces ever being checked
+# locally. It is cheap next to the packaging steps and it is the last point
+# before a tag, so it runs here.
+release-dry: release-check verify coverage build sbom checksums ## Full local release rehearsal
 	@echo "======================================================================"
 	@echo "[$(PROJECT_SHORT)] Release rehearsal complete. Artifacts in $(DIST_DIR)/:"
 	@ls -la $(DIST_DIR)/

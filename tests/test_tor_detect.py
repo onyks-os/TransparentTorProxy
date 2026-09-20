@@ -359,3 +359,53 @@ def test_detect_tor_ipv6_propagation(mock_ipv6, mock_user, mock_run):
     mock_ipv6.return_value = False
     res_false = detect_tor()
     assert res_false["ipv6_supported"] is False
+
+
+def test_detect_tor_user_skips_a_row_whose_proc_entry_vanished():
+    """A process that exits between `ps` and the /proc read is not ours."""
+    ps_output = "  PID USER     COMMAND\n  910 mallory  tor\n"
+    with (
+        patch("ttp.tor_detect.subprocess.run") as mock_run,
+        patch("ttp.tor_detect.resolve_optional", return_value="/usr/bin/tor"),
+        patch(
+            "ttp.tor_detect.os.path.realpath",
+            side_effect=lambda path: (
+                (_ for _ in ()).throw(OSError("gone")) if path.startswith("/proc/") else "/usr/bin/tor"
+            ),
+        ),
+        patch.object(Path, "read_text", return_value="toranon:x:964:964::/var/lib/tor:/sbin/nologin\n"),
+    ):
+        mock_run.return_value = MagicMock(stdout=ps_output, returncode=0)
+        assert _detect_tor_user() == "toranon"
+
+
+def test_detect_tor_user_falls_back_when_no_tor_binary_is_installed():
+    """With no trusted binary there is nothing to compare a row against."""
+    with (
+        patch("ttp.tor_detect.resolve_optional", return_value=None),
+        patch("ttp.tor_detect.subprocess.run") as mock_run,
+        patch.object(Path, "read_text", return_value="debian-tor:x:110:110::/var/lib/tor:/bin/false\n"),
+    ):
+        assert _detect_tor_user() == "debian-tor"
+
+    # It must not even ask `ps`: there is no binary to validate against.
+    mock_run.assert_not_called()
+
+
+def test_detect_tor_user_survives_an_unreadable_passwd():
+    """The hard fallback is the last resort, not an exception."""
+    with (
+        patch("ttp.tor_detect.resolve_optional", return_value=None),
+        patch.object(Path, "read_text", side_effect=OSError("permission denied")),
+    ):
+        assert _detect_tor_user() == "tor"
+
+
+def test_detect_tor_user_survives_ps_being_absent():
+    """A missing `ps` falls through rather than propagating."""
+    with (
+        patch("ttp.tor_detect.resolve_optional", return_value="/usr/bin/tor"),
+        patch("ttp.tor_detect.subprocess.run", side_effect=FileNotFoundError("ps")),
+        patch.object(Path, "read_text", return_value="toranon:x:964:964::/var/lib/tor:/sbin/nologin\n"),
+    ):
+        assert _detect_tor_user() == "toranon"
