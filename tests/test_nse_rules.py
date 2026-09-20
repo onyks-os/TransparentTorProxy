@@ -743,10 +743,12 @@ def test_icmp_is_attributed_to_a_reject(ns_sandbox, ttp_ruleset) -> None:
     ready, state, events = observe_trace(ns, loop, icmp_to(WAN_V4))
     assert_trace_usable(ready, state, "ICMP echo to 8.8.8.8")
 
-    verdicts = [e.verdict for e in events if e.verdict]
-    assert any(v and "REJECT" in v.upper() for v in verdicts), (
-        f"the ICMP echo was not attributed to a reject. Verdicts seen: "
-        f"{verdicts or 'none'}; rules matched: {_matched_rules(events) or 'none'}"
+    # The rule text, not the verdict field: nft reports a reject by naming the
+    # rule that matched, and leaves `verdict` as CONTINUE/ACCEPT/DROP for the
+    # chain traversal around it.
+    matched = _matched_rules(events)
+    assert any(text.strip() == "reject" for text in matched), (
+        f"the ICMP echo was not attributed to the catch-all reject. Rules that matched: {matched or 'none'}"
     )
 
 
