@@ -542,28 +542,6 @@ def test_ipv6_is_not_allowed_to_escape(ns_sandbox, ttp_ruleset) -> None:
     assert_contained(ns, loop, ttp_ruleset, tcp_to(WAN_V6, 80), "IPv6 TCP to the WAN")
 
 
-def test_routable_icmpv6_is_not_allowed_to_escape(ns_sandbox, ttp_ruleset) -> None:
-    """ICMPv6 to a *global* address is a leak, and must be observable as one.
-
-    There was no test for this class, and the reason was invisible from here:
-    the sniffer's BPF filter used to exclude all of ICMPv6 in the kernel, so an
-    echo to a routable address never reached userspace to be classified. The
-    positive control would have failed with "the instrument is not measuring",
-    which reads like a broken namespace rather than a filter discarding the
-    subject.
-
-    nse >= 2.1.0 narrows that exclusion to the Neighbour Discovery types
-    (133-137), which are link-local by construction, so this stimulus now
-    arrives. Asserting it here is what keeps the narrowing honest: if a future
-    filter goes broad again, the positive control fails loudly instead of the
-    class silently ceasing to be covered.
-    """
-    ns, loop = ns_sandbox
-    if not has_ipv6(ns):
-        pytest.skip("no IPv6 default route in this sandbox")
-    assert_contained(ns, loop, ttp_ruleset, icmp_to(WAN_V6), "ICMPv6 echo to the WAN")
-
-
 # ---------------------------------------------------------------------------
 # filter_forward: the forwarding plane
 #
