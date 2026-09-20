@@ -543,6 +543,106 @@ def test_ipv6_is_not_allowed_to_escape(ns_sandbox, ttp_ruleset) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Competing rulesets
+#
+# Every other test here runs against a pristine nftables state: a fresh
+# namespace with TTP's table and nothing else. No real machine looks like that
+# -- a Fedora host has firewalld, an Ubuntu one ufw, anything with containers
+# has Docker's chains -- and they all install base chains into the same hooks.
+#
+# #29 states the threat as "a competing chain at a lower priority number runs
+# first and can accept a packet before TTP's chain ever sees it". These tests
+# are what decides whether that is true. In nftables a verdict of `accept` is
+# scoped to the chain that issued it: the packet continues to the next base
+# chain at the same hook, and only `drop` is terminal across the hook. If that
+# holds, a foreign `accept` cannot bypass TTP and the threat is narrower than
+# stated. If it does not hold, these fail and the bypass is real.
+#
+# The fixtures are deliberately accept-only. A foreign ruleset that dropped
+# would break the positive control and the canary, and the failure would read
+# as a broken harness rather than as the answer to the question.
+# ---------------------------------------------------------------------------
+
+COMPETING_RULESETS = {
+    # The direct form of the claim: an output base chain evaluated *before*
+    # TTP's filter_out (priority filter = 0), accepting unconditionally.
+    "accept_all_at_lower_priority": """
+    table inet competitor {
+        chain out {
+            type filter hook output priority -300; policy accept;
+            counter accept
+        }
+    }
+    """,
+    # Docker's shape: its own nat table with prerouting and output chains, at
+    # the same dstnat priority TTP's redirect uses.
+    "docker_like": """
+    table ip docker_like {
+        chain prerouting {
+            type nat hook prerouting priority dstnat; policy accept;
+            fib daddr type local counter accept
+        }
+        chain output {
+            type nat hook output priority dstnat; policy accept;
+            ip daddr != 127.0.0.0/8 fib daddr type local counter accept
+        }
+        chain postrouting {
+            type nat hook postrouting priority srcnat; policy accept;
+            counter accept
+        }
+    }
+    """,
+    # ufw/firewalld's shape: an inet filter table with its own output chain at
+    # the standard filter priority, i.e. the same one TTP uses.
+    "ufw_like": """
+    table inet ufw_like {
+        chain output {
+            type filter hook output priority filter; policy accept;
+            counter accept
+        }
+    }
+    """,
+}
+
+
+@pytest.mark.parametrize("competitor", sorted(COMPETING_RULESETS))
+def test_containment_holds_alongside_a_competing_ruleset(ns_sandbox, ttp_ruleset, competitor: str) -> None:
+    """TTP must still contain cleartext with someone else's rules loaded too.
+
+    The zero-leak claim is made about hosts, and hosts have other firewalls.
+    Asserting it only against a pristine table makes the claim narrower than
+    the README's, in a way no test name reveals.
+    """
+    ns, loop = ns_sandbox
+    engine = _engine()
+
+    engine.flush(ns.name)
+    control = observe(ns, loop, udp_to(WAN_V4, 53))
+    assert [p for p in control if is_cleartext_leak(p)], (
+        f"POSITIVE CONTROL FAILED for {competitor}: with everything flushed the "
+        f"sniffer saw no cleartext packet, so the assertion below would pass "
+        f"for the wrong reason."
+    )
+
+    # Foreign rules first, TTP's second: the order an operator's host produces.
+    engine.load(COMPETING_RULESETS[competitor], ns.name)
+    engine.load(ttp_ruleset, ns.name)
+
+    observed = observe_with_canary(ns, loop, udp_to(WAN_V4, 53))
+    assert canary_seen(observed, HOST_V4, CANARY_PORT), (
+        f"HARNESS FAILED for {competitor}: the canary was not observed in the "
+        f"same capture as the assertion ({len(observed)} packet(s) captured)."
+    )
+
+    leaks = [p.summary() for p in observed if is_cleartext_leak(p)]
+    assert not leaks, (
+        f"DNS escaped to the WAN with the '{competitor}' ruleset loaded "
+        f"alongside TTP's: {leaks}. A foreign base chain changed the outcome, "
+        f"so TTP's containment is conditional on being the only firewall."
+    )
+
+
+# ---------------------------------------------------------------------------
 # filter_forward: the forwarding plane
 #
 # Every other test in this file injects *from* the sandbox namespace, which
