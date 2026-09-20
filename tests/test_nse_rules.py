@@ -476,6 +476,17 @@ def observe_with_canary(ns, loop, stimulus, settle: float = 0.4) -> list:  # typ
     return loop.run_until_complete(asserter.stop())
 
 
+#: Enables tracing for locally generated packets. See observe_trace.
+_TRACE_LOCAL_EGRESS = """
+table inet ttp_trace {
+    chain out {
+        type filter hook output priority -350; policy accept;
+        meta nftrace set 1
+    }
+}
+"""
+
+
 def observe_trace(ns, loop, stimulus, settle: float = 1.0):  # type: ignore[no-untyped-def]
     """Run *stimulus* under ``nft monitor trace`` and return what the kernel said.
 
@@ -493,6 +504,15 @@ def observe_trace(ns, loop, stimulus, settle: float = 1.0):  # type: ignore[no-u
     """
     harvester = TraceHarvester()
     events: list = []
+
+    # NSE's trace-init ruleset enables tracing in a *prerouting* chain, and a
+    # locally generated packet never traverses prerouting -- it goes out
+    # through output/postrouting. Without this, the only rule that ever
+    # matches is nse's own `meta nftrace set 1`, from incoming traffic, and
+    # every assertion about TTP's rules fails for a reason that has nothing to
+    # do with TTP. Priority -350 puts it ahead of TTP's nat output (-150), so
+    # the flag is set before any of TTP's chains are evaluated.
+    _engine().load(_TRACE_LOCAL_EGRESS, ns.name)
 
     async def _run():  # type: ignore[no-untyped-def]
         queue: asyncio.Queue = asyncio.Queue()
@@ -673,7 +693,7 @@ def test_ipv6_is_not_allowed_to_escape(ns_sandbox, ttp_ruleset) -> None:
 
 def _matched_rules(events) -> list[str]:  # type: ignore[no-untyped-def]
     """Rule texts from the trace, in the order the kernel reported them."""
-    return [e.rule_text for e in events if e.type == "match" and e.rule_text]
+    return [e.rule_text for e in events if e.type == "match" and e.rule_text and "nftrace" not in e.rule_text]
 
 
 def test_dns_is_attributed_to_the_redirect_rule(ns_sandbox, ttp_ruleset) -> None:
