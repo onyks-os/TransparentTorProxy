@@ -789,3 +789,34 @@ def test_status_does_not_render_a_reflector_body_as_markup(_mock_lock):
     assert "Traffic is in cleartext." in result.output
     assert "\x1b[2J" not in result.output
     assert "[/nope]" not in result.output
+
+
+@patch("ttp.firewall.read_counters", return_value={"cleartext_rejected": 47})
+@patch("ttp.watchdog.service.watchdog_liveness", return_value=(False, None))
+@patch("ttp.tor_control.get_exit_ip", return_value="185.220.101.7")
+@patch("ttp.tor_detect.is_ipv6_supported", return_value=False)
+@patch(
+    "ttp.state.read_lock",
+    return_value={"pid": 1, "timestamp": "2026-09-20T00:00:00", "transport_port": 9041},
+)
+def test_status_reports_how_much_cleartext_was_blocked(_lock, _ipv6, _ip, _live, _counters):
+    """ "ACTIVE" says the rules are loaded; this says they caught something.
+
+    A non-zero catch-all count means a process on this host tried to send
+    cleartext and was stopped, which is the number an operator can act on.
+    """
+
+    class _Resp:
+        def read(self, _n=None):
+            return b"203.0.113.9"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    with patch("urllib.request.urlopen", return_value=_Resp()):
+        result = runner.invoke(app, ["status"])
+
+    assert "Cleartext blocked: 47 packet(s)" in result.output

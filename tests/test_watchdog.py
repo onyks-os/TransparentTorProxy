@@ -1145,3 +1145,59 @@ def test_generated_unit_omits_the_drop_when_the_account_is_absent() -> None:
     assert "AmbientCapabilities" not in unit
     # The start limiter is unconditional: a broken unit must latch to `failed`.
     assert "StartLimitBurst=5" in unit
+
+
+# ---------------------------------------------------------------------------
+# A DoH/DoT reject that fired is an alarm about TTP, not about the user.
+#
+# Per ADR 0012, `nat output` rewrites a non-bypassed process's destination to
+# 127.0.0.1 before filter_out runs, so `ip daddr { ... }` cannot match; and a
+# bypassed process is accepted above these rules. The only way either fires is
+# that the redirect the whole design rests on did not happen.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("counter", "expected"),
+    [
+        pytest.param("doh_rejected", "DoH", id="doh"),
+        pytest.param("dot_rejected", "DoT", id="dot"),
+    ],
+)
+def test_a_fired_leak_reject_is_an_integrity_failure(counter: str, expected: str) -> None:
+    from ttp.watchdog import integrity
+
+    with (
+        patch("ttp.watchdog.integrity.dns._is_mount_point", return_value=True),
+        patch.object(Path, "read_text", return_value="nameserver 127.0.0.1\n"),
+        patch("ttp.watchdog.integrity.state.read_lock", return_value=None),
+        patch("ttp.watchdog.integrity.subprocess.run") as run,
+        patch("ttp.watchdog.integrity.firewall.read_counters", return_value={counter: 3}),
+    ):
+        run.return_value = MagicMock(returncode=0, stdout="chain filter_out {}")
+        component, message = integrity.check_system_integrity()
+
+    assert component == "firewall"
+    assert expected in message
+    assert "3 packet(s)" in message
+
+
+def test_counters_that_cannot_be_read_are_not_an_integrity_failure() -> None:
+    """An empty reading means "could not measure", which is not evidence of a leak.
+
+    Escalating on it would let an unreadable counter fire the killswitch.
+    """
+    from ttp.watchdog import integrity
+
+    with (
+        patch("ttp.watchdog.integrity.dns._is_mount_point", return_value=True),
+        patch.object(Path, "read_text", return_value="nameserver 127.0.0.1\n"),
+        patch("ttp.watchdog.integrity.state.read_lock", return_value=None),
+        patch("ttp.watchdog.integrity.subprocess.run") as run,
+        patch("ttp.watchdog.integrity.firewall.read_counters", return_value={}),
+        patch("ttp.watchdog.integrity.tor_control.get_controller", return_value=None),
+    ):
+        run.return_value = MagicMock(returncode=0, stdout="chain filter_out {}", stderr="")
+        component, _ = integrity.check_system_integrity()
+
+    assert component != "firewall"

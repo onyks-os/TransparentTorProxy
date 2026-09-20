@@ -3,6 +3,7 @@
 
 """Stateless Firewall Module - Low-level nftables execution engine."""
 
+import json
 import logging
 import pwd
 import subprocess
@@ -53,6 +54,39 @@ def _run_nft(args: list[str]) -> None:
         check=True,
         timeout=10,
     )
+
+
+def read_counters() -> dict[str, int]:
+    """Return the packet count of each named counter in ``inet ttp``.
+
+    Empty when the table is absent or nft cannot be reached, so a caller that
+    cannot measure is never handed a zero it might read as evidence.
+    """
+    try:
+        res = subprocess.run(
+            [resolve("nft"), "-j", "list", "counters", "table", "inet", "ttp"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return {}
+
+    try:
+        payload = json.loads(res.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+    counters: dict[str, int] = {}
+    for entry in payload.get("nftables", []):
+        counter = entry.get("counter") if isinstance(entry, dict) else None
+        if isinstance(counter, dict) and "name" in counter:
+            try:
+                counters[str(counter["name"])] = int(counter.get("packets", 0))
+            except (TypeError, ValueError):
+                continue
+    return counters
 
 
 def _run_nft_string(ruleset: str) -> None:

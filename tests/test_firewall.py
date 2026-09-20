@@ -8,6 +8,7 @@ All tests mock subprocess.run so no real firewall rules are ever touched.
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 from unittest.mock import MagicMock, patch
@@ -15,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ttp.exceptions import FirewallError
-from ttp.firewall import apply_rules, destroy_rules, emergency
+from ttp.firewall import apply_rules, destroy_rules, emergency, read_counters
 from ttp.paths import resolve
 
 
@@ -120,11 +121,11 @@ def test_ruleset_logic_content(mock_ipv6, mock_run_nft, mock_run_string, mock_pw
     assert lan_bypass_rule in filter_block
 
     # DoT leak prevention must be present
-    assert "tcp dport 853 reject" in filter_block
+    assert 'tcp dport 853 counter name "dot_rejected" reject' in filter_block
 
     # DoH leak prevention must be present (IPv4)
     assert (
-        "ip daddr { 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112, 208.67.222.222, 208.67.220.220 } tcp dport 443 reject"
+        'ip daddr { 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112, 208.67.222.222, 208.67.220.220 } tcp dport 443 counter name "doh_rejected" reject'
         in filter_block
     )
 
@@ -173,15 +174,15 @@ def test_ruleset_logic_content_ipv6(mock_ipv6, mock_run_nft, mock_run_string, mo
     assert "ip6 daddr { fc00::/7, fe80::/10 } accept" in ruleset
 
     # 3. Check redirection targets
-    assert "udp dport 53 dnat ip6 to [::1]:9054" in ruleset
-    assert "meta l4proto tcp dnat ip6 to [::1]:9041" in ruleset
+    assert 'udp dport 53 counter name "dns_redirected" dnat ip6 to [::1]:9054' in ruleset
+    assert 'meta l4proto tcp counter name "tcp_redirected" dnat ip6 to [::1]:9041' in ruleset
 
     # 4. Ensure IPv6 is NOT dropped in filter_out
     assert "meta nfproto ipv6 drop" not in ruleset
 
     # 5. Check DoH IPv6 block
     assert (
-        "ip6 daddr { 2606:4700:4700::1111, 2606:4700:4700::1001, 2001:4860:4860::8888, 2001:4860:4860::8844, 2620:fe::fe, 2620:fe::9, 2620:0:ccc::2, 2620:0:ccd::2 } tcp dport 443 reject"
+        'ip6 daddr { 2606:4700:4700::1111, 2606:4700:4700::1001, 2001:4860:4860::8888, 2001:4860:4860::8844, 2620:fe::fe, 2620:fe::9, 2620:0:ccc::2, 2620:0:ccd::2 } tcp dport 443 counter name "doh_rejected" reject'
         in ruleset
     )
 
@@ -575,7 +576,7 @@ class TestBuildRuleset:
         result = _build_ruleset(**_base_kwargs(ipv6_avail=False))
         assert "1.1.1.1" in result
         assert "8.8.8.8" in result
-        assert "tcp dport 443 reject" in result
+        assert 'tcp dport 443 counter name "doh_rejected" reject' in result
 
     def test_doh_reject_ipv6_present_when_ipv6_enabled(self):
         result = _build_ruleset(**_base_kwargs(ipv6_avail=True))
@@ -587,7 +588,7 @@ class TestBuildRuleset:
 
     def test_dot_reject_always_present(self):
         result = _build_ruleset(**_base_kwargs())
-        assert "tcp dport 853 reject" in result
+        assert 'tcp dport 853 counter name "dot_rejected" reject' in result
 
     def test_catchall_reject_present(self):
         result = _build_ruleset(**_base_kwargs())
@@ -939,3 +940,101 @@ def test_the_unit_suite_never_touches_the_real_runtime_directory():
 
     # It was asked to clean up, and it asked the *patched* path, not the real one.
     mock_path.unlink.assert_called_once_with(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Named counters. A counter answers a question an absence cannot: whether a
+# rule that should be unreachable ever fired, and whether the redirect a probe
+# relies on actually matched.
+# ---------------------------------------------------------------------------
+
+
+def test_the_ruleset_declares_every_counter_it_references():
+    """A rule naming a counter that was never declared makes nft reject the load."""
+    import re
+
+    ruleset = _build_ruleset(**_base_kwargs(ipv6_avail=True, cgroup_bypass=True))
+
+    declared = set(re.findall(r"^\s*counter (\w+) \{ \}", ruleset, re.M))
+    referenced = set(re.findall(r'counter name "(\w+)"', ruleset))
+
+    assert referenced, "no counters are referenced; the test fixture has drifted"
+    assert referenced <= declared, f"undeclared counters referenced: {referenced - declared}"
+
+
+def test_the_catch_all_reject_is_counted():
+    """This is the number `ttp status` reports as blocked cleartext."""
+    block = _filter_out_block(_build_ruleset(**_base_kwargs()))
+    assert 'counter name "cleartext_rejected" reject' in block
+
+
+@patch("ttp.firewall.runner.subprocess.run")
+def test_read_counters_parses_nft_json(mock_run):
+    mock_run.return_value = MagicMock(
+        returncode=0,
+        stdout=json.dumps(
+            {
+                "nftables": [
+                    {"metainfo": {"version": "1.1.0"}},
+                    {"counter": {"family": "inet", "name": "doh_rejected", "packets": 7, "bytes": 420}},
+                    {"counter": {"family": "inet", "name": "cleartext_rejected", "packets": 0, "bytes": 0}},
+                ]
+            }
+        ),
+    )
+
+    assert read_counters() == {"doh_rejected": 7, "cleartext_rejected": 0}
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(OSError("no nft"), id="binary-missing"),
+        pytest.param(subprocess.CalledProcessError(1, ["nft"]), id="table-absent"),
+        pytest.param(subprocess.TimeoutExpired(["nft"], 10), id="timeout"),
+    ],
+)
+@patch("ttp.firewall.runner.subprocess.run")
+def test_read_counters_returns_empty_when_it_cannot_measure(mock_run, failure):
+    """An unreadable counter must not be handed back as a zero.
+
+    A caller that reads 0 as "nothing fired" would treat "I could not look" as
+    evidence of health -- the defect class this project has been removing
+    everywhere else.
+    """
+    mock_run.side_effect = failure
+    assert read_counters() == {}
+
+
+@patch("ttp.firewall.runner.subprocess.run")
+def test_read_counters_survives_unparseable_output(mock_run):
+    mock_run.return_value = MagicMock(returncode=0, stdout="not json at all")
+    assert read_counters() == {}
+
+
+@patch("ttp.firewall.runner.subprocess.run")
+def test_a_malformed_counter_entry_does_not_lose_the_readable_ones(mock_run):
+    """One unusable entry must not cost the caller every other counter.
+
+    `read_counters` feeds a security decision - the watchdog treats a non-zero
+    DoH reject as an integrity failure - so dropping the whole reading because
+    one entry is unparseable would turn a measurable state into an unmeasured
+    one, silently.
+    """
+    mock_run.return_value = MagicMock(
+        returncode=0,
+        stdout=json.dumps(
+            {
+                "nftables": [
+                    {"counter": {"name": "dns_redirected", "packets": "not-a-number"}},
+                    {"counter": {"name": "doh_rejected", "packets": 7}},
+                    {"counter": {"packets": 3}},
+                    {"metainfo": {"version": "1.0.9"}},
+                ]
+            }
+        ),
+    )
+
+    counters = read_counters()
+
+    assert counters == {"doh_rejected": 7}

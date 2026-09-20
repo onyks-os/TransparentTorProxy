@@ -129,34 +129,49 @@ def _build_ruleset(
 
     # DNS redirection
     dns_redirect_ipv4 = (
-        f"udp dport 53 dnat ip to 127.0.0.1:{dns_port}\n                tcp dport 53 dnat ip to 127.0.0.1:{dns_port}"
+        f'udp dport 53 counter name "dns_redirected" dnat ip to 127.0.0.1:{dns_port}'
+        f'\n                tcp dport 53 counter name "dns_redirected" dnat ip to 127.0.0.1:{dns_port}'
     )
     dns_redirect_ipv6 = (
-        f"\n                udp dport 53 dnat ip6 to [::1]:{dns_port}"
-        f"\n                tcp dport 53 dnat ip6 to [::1]:{dns_port}"
+        f'\n                udp dport 53 counter name "dns_redirected" dnat ip6 to [::1]:{dns_port}'
+        f'\n                tcp dport 53 counter name "dns_redirected" dnat ip6 to [::1]:{dns_port}'
         if ipv6_avail
         else ""
     )
 
     # TCP transparent proxy redirection
-    tcp_redirect_ipv4 = f"ip protocol tcp dnat ip to 127.0.0.1:{transport_port}"
-    tcp_redirect_ipv6 = f"\n                meta l4proto tcp dnat ip6 to [::1]:{transport_port}" if ipv6_avail else ""
+    tcp_redirect_ipv4 = f'ip protocol tcp counter name "tcp_redirected" dnat ip to 127.0.0.1:{transport_port}'
+    tcp_redirect_ipv6 = (
+        f'\n                meta l4proto tcp counter name "tcp_redirected" dnat ip6 to [::1]:{transport_port}'
+        if ipv6_avail
+        else ""
+    )
 
     ipv6_leak_prevention = "" if ipv6_avail else "meta nfproto ipv6 drop"
 
     # DoH IP blocks (TCP & QUIC/UDP 443)
     doh_ips_v4 = "{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112, 208.67.222.222, 208.67.220.220 }"
-    doh_reject_ipv4 = f"ip daddr {doh_ips_v4} tcp dport 443 reject"
-    quic_doh_reject_ipv4 = f"ip daddr {doh_ips_v4} udp dport 443 reject"
+    doh_reject_ipv4 = f'ip daddr {doh_ips_v4} tcp dport 443 counter name "doh_rejected" reject'
+    quic_doh_reject_ipv4 = f'ip daddr {doh_ips_v4} udp dport 443 counter name "doh_rejected" reject'
     doh_reject_ipv6 = ""
     quic_doh_reject_ipv6 = ""
     if ipv6_avail:
         doh_ips_v6 = "{ 2606:4700:4700::1111, 2606:4700:4700::1001, 2001:4860:4860::8888, 2001:4860:4860::8844, 2620:fe::fe, 2620:fe::9, 2620:0:ccc::2, 2620:0:ccd::2 }"
-        doh_reject_ipv6 = f"ip6 daddr {doh_ips_v6} tcp dport 443 reject"
-        quic_doh_reject_ipv6 = f"ip6 daddr {doh_ips_v6} udp dport 443 reject"
+        doh_reject_ipv6 = f'ip6 daddr {doh_ips_v6} tcp dport 443 counter name "doh_rejected" reject'
+        quic_doh_reject_ipv6 = f'ip6 daddr {doh_ips_v6} udp dport 443 counter name "doh_rejected" reject'
 
     return f"""
     table inet ttp {{
+        # Named counters. A counter is per-rule state that survives the rule
+        # being matched, so it answers questions an absence cannot: whether the
+        # redirect a probe relies on actually fired, and whether a rule that
+        # should be unreachable ever did.
+        counter dns_redirected {{ }}
+        counter tcp_redirected {{ }}
+        counter dot_rejected {{ }}
+        counter doh_rejected {{ }}
+        counter cleartext_rejected {{ }}
+
         # nat prerouting: Handles redirection for incoming traffic from other network namespaces/interfaces
         # (e.g., virtual interfaces for VMs or Docker containers).
         # Hook: prerouting (runs before routing decisions are made for incoming packets).
@@ -242,7 +257,7 @@ def _build_ruleset(
             {loopback_ipv6}
 
             # 5. DoT (DNS-over-TLS) Leak Prevention: Block direct connections to port 853.
-            tcp dport 853 reject
+            tcp dport 853 counter name "dot_rejected" reject
 
             # 6. DoH (DNS-over-HTTPS) & QUIC: defence in depth against a failed NAT redirect.
             #
@@ -263,7 +278,7 @@ def _build_ruleset(
             # meant it never saw a packet from a bypassed principal. It is now at 1a.)
 
             # 8. Catch-all Reject: Drop/Reject all cleartext traffic not matching exemptions (e.g. UDP, ICMP, raw sockets, or pre-existing TCP connections).
-            reject
+            counter name "cleartext_rejected" reject
         }}
 
         chain filter_forward {{

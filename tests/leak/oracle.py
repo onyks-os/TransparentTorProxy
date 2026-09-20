@@ -214,3 +214,26 @@ def session_is_active() -> bool:
     from ttp import state
 
     return state.read_lock() is not None
+
+
+def redirect_delta(before: int | None, after: int | None) -> int | None:
+    """How many packets the redirect rule matched between two readings.
+
+    ``None`` whenever the pair cannot support a count:
+
+    * either reading failed - ``read_counters`` returns an absent entry rather
+      than 0 when nft cannot be reached or the table is gone, and subtracting
+      one of those would turn "could not measure" into "did not redirect";
+    * the second reading is lower than the first, which means the table was
+      destroyed and rebuilt between them (``ttp restart`` resets every counter).
+      The readings then belong to different rulesets, and their difference
+      describes nothing.
+
+    Zero is a real answer and is reported as one: two good readings that agree
+    are evidence that the redirect did not fire.
+    """
+    if before is None or after is None:
+        return None
+    if after < before:
+        return None
+    return after - before

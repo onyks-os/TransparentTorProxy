@@ -48,7 +48,7 @@ import socket
 
 import pytest
 
-from tests.leak.oracle import Observation, Outcome, assert_contained, session_is_active
+from tests.leak.oracle import Observation, Outcome, assert_contained, redirect_delta, session_is_active
 
 # A TXT query for example.com, hand-packed to avoid a dnspython dependency in a
 # test whose whole job is to not trust its tools.
@@ -98,6 +98,18 @@ def _classify(data: bytes, peer_addr: str) -> tuple[Outcome, str]:
     )
 
 
+def _redirect_count() -> int | None:
+    """Packets matched by the DNS redirect rule, or ``None`` if unreadable.
+
+    ``None`` rather than 0 on failure: a caller that read a missing counter as
+    zero would treat "could not measure" as "did not redirect", which is the
+    inference this probe exists to stop making.
+    """
+    from ttp.firewall import read_counters
+
+    return read_counters().get("dns_redirected")
+
+
 def _probe(family: int, resolver: str, probe_name: str) -> Observation:
     """Send the query and record what happened, without deciding what it means."""
     session_active = session_is_active()
@@ -107,10 +119,36 @@ def _probe(family: int, resolver: str, probe_name: str) -> Observation:
 
     sock = socket.socket(family, socket.SOCK_DGRAM)
     sock.settimeout(5.0)
+    # Read the redirect counter before and after. A reply alone cannot say
+    # where it came from: under a correct session the query is DNAT'd to Tor's
+    # DNSPort and Tor answers it, under no session Cloudflare answers it, and
+    # the NAT translation is undone on the way back -- so from inside the
+    # socket the two are identical. The counter is a direct, local observation
+    # of whether the packet actually traversed the redirect.
+    before = _redirect_count()
+
     try:
         sock.sendto(_QUERY, (resolver, 53))
         data, peer = sock.recvfrom(1232)
         outcome, detail = _classify(data, peer[0])
+        redirected = redirect_delta(before, _redirect_count())
+        if redirected:
+            # Decisive, and it outranks the shape-based guess above: the packet
+            # is *known* to have gone through the redirect.
+            #
+            # The counter is global to the rule, not to this socket, so DNS
+            # traffic from another process during the probe window also
+            # increments it. That is tolerable here because the rule is keyed
+            # on `udp dport 53` alone: it cannot match someone else's query
+            # while missing ours. A bypassed process is accepted above the
+            # redirect and so increments nothing. What this cannot survive is
+            # a future redirect keyed on the sender - at which point the
+            # attribution has to become per-flow.
+            outcome = Outcome.ANSWERED_BY_PROXY
+            detail = (
+                f"the DNS redirect rule matched {redirected} packet(s) during this "
+                f"probe, so the query reached Tor's DNSPort rather than {peer[0]}"
+            )
     except TimeoutError:
         outcome = Outcome.BLOCKED
         detail = "no reply within 5s: the query was dropped before leaving the host"
