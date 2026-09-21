@@ -134,6 +134,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A Tor that died while starting was reported as a successful start.**
+  `ttp-tor.service` was `Type=simple`, so `systemctl restart` returned `0` as
+  soon as the process was forked. If Tor then exited — a fatal config error, a
+  listener it could not bind, an unusable `DataDirectory` — `check=True` had
+  nothing to raise on. `ttp start` printed `found (vX), managed via system
+  service`, applied the nftables rules and the DNS overlay against a daemon
+  that was already gone, and noticed only 60s later in `wait_for_bootstrap`,
+  as a progress bar pinned at 0% — which reads as a slow network rather than a
+  dead daemon.
+
+  The unit is now `Type=notify`. Tor signals readiness through `sd_notify` when
+  run with `--RunAsDaemon 0`, which is how the unit already invoked it and what
+  the stock `tor.service` on Fedora and Debian relies on, so `systemctl
+  restart` blocks until Tor is up and fails loudly otherwise — at step 1 of
+  `start`, before the first firewall rule exists. The failure carries the last
+  lines of the unit's journal, because `systemctl` reports only that the job
+  failed while Tor's own log names the cause (`Could not bind to
+  127.0.0.1:9054: Permission denied`). Reading the journal is best-effort: no
+  `journalctl`, or one that fails, degrades the message and never replaces the
+  error it decorates.
+
+  Fedora's stock unit also runs `tor --verify-config` as an `ExecStartPre`.
+  That was tested and deliberately not copied: `--verify-config` does not open
+  listeners — it reports `Configuration was valid` for a `TransPort` on a port
+  that is already occupied — so it would not have caught the failure this fixes,
+  at the cost of a second `tor` exec on every start.
+
+  One trade-off is accepted: a Tor built without systemd support never sends
+  the readiness signal, so `systemctl restart` waits out `TimeoutStartSec` and
+  fails. That is a named failure carrying the journal rather than a session
+  built on a daemon that is not running.
 - **The SELinux policy version gate could never match, so the module was
   recompiled on every `ttp start` and never removed on uninstall.**
   `is_selinux_module_installed` asked `semodule -l` for
