@@ -139,6 +139,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The SELinux policy version gate could never match, so the module was
+  recompiled on every `ttp start` and never removed on uninstall.**
+  `is_selinux_module_installed` asked `semodule -l` for
+  `ttp_tor_policy 1.2`, but current policycoreutils print only the module
+  name - on Fedora 44 (policycoreutils-3.11-2.fc44) the output is the bare
+  `ttp_tor_policy`, and `--list-modules=full` adds a priority and a language
+  rather than a revision. The regex therefore never matched, and three things
+  followed from that one line: `setup_selinux_if_needed` rebuilt and reloaded
+  the policy on every start; `remove_selinux_module` returned early every
+  time, so `ttp uninstall` left behind the policy it had installed; and
+  `ttp diagnose` reported `selinux_module: false` on hosts that were carrying
+  it. The same dead gate sat in `scripts/install.sh`.
+
+  Presence and currency are separate questions and `semodule` can only answer
+  the first. It is now asked only that, per line and per field, so the bare
+  name, the ancient `name version` form and `--list-modules=full` all read
+  correctly and a module merely *containing* the name (`ttp_tor_policy_local`)
+  does not. Which revision is loaded is answered against a stamp TTP writes
+  itself, `/var/lib/ttp/selinux-policy-version`, compared with the
+  `module ttp_tor_policy X.Y;` line of the shipped policy source. Both halves
+  are required: the stamp alone would miss a module an administrator removed
+  with `semodule -r`, and the kernel alone cannot tell an outdated policy from
+  a current one. A missing, unreadable or malformed stamp reads as "not
+  current", so the failure direction is a redundant recompile rather than a
+  host whose Tor cannot bind its DNSPort. The installer and the RPM `%post`
+  write the stamp, and `%preun` clears it.
+
+  The tests covering the old gate all fed a fabricated `"ttp_tor_policy  1.2"`
+  that no supported system produces, so the suite was green against impossible
+  output; they now use output in the shape `semodule -l` actually emits. The
+  fuzz target, which fuzzed the dead regex, now fuzzes the parser that reads
+  the revision out of the `.te`.
+
 - **On SELinux Enforcing hosts, TTP's own port labelling made Tor's DNSPort
   unbindable, and `ttp start` hung at "Waiting for Tor to bootstrap... 0%".**
   `label_ports_selinux` relabels the TransPort and the DNSPort to `tor_port_t`,
