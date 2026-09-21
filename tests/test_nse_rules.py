@@ -746,8 +746,14 @@ def test_icmp_is_attributed_to_a_reject(ns_sandbox, ttp_ruleset) -> None:
     # The rule text, not the verdict field: nft reports a reject by naming the
     # rule that matched, and leaves `verdict` as CONTINUE/ACCEPT/DROP for the
     # chain traversal around it.
+    #
+    # Two accepted forms, because the catch-all carries a named counter since
+    # the counters landed and an exact match on "reject" broke the moment it
+    # did. `cleartext_rejected` names that one rule and nothing else: the DoT
+    # and DoH rejects carry `dot_rejected` and `doh_rejected`, so neither can
+    # satisfy this assertion in the catch-all's place.
     matched = _matched_rules(events)
-    assert any(text.strip() == "reject" for text in matched), (
+    assert any(text.strip() == "reject" or "cleartext_rejected" in text for text in matched), (
         f"the ICMP echo was not attributed to the catch-all reject. Rules that matched: {matched or 'none'}"
     )
 

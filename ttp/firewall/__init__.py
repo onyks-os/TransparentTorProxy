@@ -36,6 +36,9 @@ from ttp.firewall.runner import (
 from ttp.firewall.runner import (
     destroy_rules as destroy_rules,
 )
+from ttp.firewall.runner import (
+    read_counters as read_counters,
+)
 from ttp.state import LOCK_DIR as LOCK_DIR
 
 __all__ = [
@@ -51,5 +54,6 @@ __all__ = [
     "apply_teardown_lockdown",
     "destroy_rules",
     "pwd",
+    "read_counters",
     "subprocess",
 ]

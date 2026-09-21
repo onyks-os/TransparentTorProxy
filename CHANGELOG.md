@@ -29,6 +29,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Named nftables counters on the security-critical rules**, and three things
+  that read them. The DNS and TCP redirects, the DoT and DoH rejects and the
+  catch-all reject are now counted, which answers questions an absence cannot.
+  - `ttp status` reports how much cleartext the catch-all actually caught.
+    "ACTIVE" says the rules are loaded; this says they stopped something.
+  - The DNS leak probe reads the redirect counter around its query instead of
+    guessing from the reply shape. A reply alone cannot say where it came from:
+    under a session the query is DNAT'd to Tor's DNSPort and Tor answers it,
+    under no session Cloudflare answers it, and the NAT translation is undone
+    on the way back, so the two are identical from inside the socket.
+  - The watchdog treats a **non-zero DoH or DoT counter as an integrity
+    failure**. Per ADR 0012 those rules are unreachable for a non-bypassed
+    process (`nat output` has already rewritten the destination) and for a
+    bypassed one (accepted above them), so the only way either fires is that
+    the redirect the whole design rests on did not happen.
+
+  A counter that cannot be read comes back absent rather than zero, so
+  "could not measure" is never mistaken for "nothing fired". The subtraction
+  the probe performs is a function of its own for the same reason: an
+  unreadable reading on either side, or a second reading lower than the first
+  (`ttp restart` rebuilds the table and resets every counter), yields "no
+  measurement" rather than a difference that describes two different rulesets.
+
 - **ADR 0012 — DoH, DoT and browser-level leaks are out of scope for the
   firewall.** The DoH rules are a hardcoded blocklist of sixteen resolver
   addresses, and tracing the chain shows they almost never fire: for a

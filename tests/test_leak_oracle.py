@@ -366,3 +366,56 @@ def test_every_probe_records_whether_a_session_was_live() -> None:
 
     assert observation.session_active is False
     assert verdict_for(observation)[0] is Verdict.INCONCLUSIVE
+
+
+# ---------------------------------------------------------------------------
+# The redirect counter delta
+#
+# The probe reads the DNS redirect counter around its query. Subtracting two
+# readings is where "could not measure" can quietly become a number, so the
+# subtraction is a function of its own rather than an expression inline.
+# ---------------------------------------------------------------------------
+
+
+def test_a_redirect_that_happened_is_counted():
+    from tests.leak.oracle import redirect_delta
+
+    assert redirect_delta(41, 42) == 1
+
+
+def test_a_redirect_that_did_not_happen_is_zero_not_unknown():
+    """Two good readings that agree are evidence, and the evidence is 'no'."""
+    from tests.leak.oracle import redirect_delta
+
+    assert redirect_delta(42, 42) == 0
+
+
+def test_an_unreadable_first_reading_is_not_a_delta():
+    from tests.leak.oracle import redirect_delta
+
+    assert redirect_delta(None, 42) is None
+
+
+def test_an_unreadable_second_reading_is_not_a_delta():
+    """`ttp stop` racing the probe used to raise TypeError out of the probe.
+
+    `None - int` is not an error the probe handled: its `except` clauses cover
+    TimeoutError and OSError, so the exception escaped and took the whole run
+    with it - and it happened precisely when the session was being torn down
+    underneath the query, which is a case a leak test must survive to report.
+    """
+    from tests.leak.oracle import redirect_delta
+
+    assert redirect_delta(41, None) is None
+
+
+def test_a_counter_that_went_backwards_is_not_a_delta():
+    """A lower second reading means the table was rebuilt mid-probe.
+
+    `ttp restart` destroys and reloads `inet ttp`, which resets every counter.
+    The two readings then describe different rulesets and their difference
+    describes nothing; reporting 0 would claim the redirect did not fire.
+    """
+    from tests.leak.oracle import redirect_delta
+
+    assert redirect_delta(42, 0) is None

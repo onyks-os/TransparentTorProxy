@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from ttp import dns, state, tor_control
+from ttp import dns, firewall, state, tor_control
 from ttp.paths import resolve
 
 logger = logging.getLogger("ttp")
@@ -161,6 +161,22 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
                     )
             except KeyError:
                 return "firewall", f"bypass group '{g}' cannot be resolved on system"
+
+    # 2b. The DoH/DoT rejects must be unreachable, so a non-zero count is an alarm
+    # about TTP itself rather than about the user's DNS habits. Per ADR 0012,
+    # `nat output` has already rewritten a non-bypassed process's destination to
+    # 127.0.0.1 before filter_out runs, so `ip daddr { ... }` cannot match; and a
+    # bypassed process is accepted above these rules. The only way either fires
+    # is that the redirect the whole design rests on did not happen.
+    counters = firewall.read_counters()
+    for name, what in (("doh_rejected", "DoH"), ("dot_rejected", "DoT")):
+        fired = counters.get(name, 0)
+        if fired:
+            return (
+                "firewall",
+                f"{what} reject rule matched {fired} packet(s), which is only reachable "
+                f"when the NAT redirect has failed",
+            )
 
     # 3. Tor Connection check: perform an *active* query to the control socket
     ctrl = tor_control.get_controller()

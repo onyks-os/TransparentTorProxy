@@ -109,6 +109,15 @@ def status_command() -> None:
     console.print(f"{_PREFIX} Watchdog: {wd_status_str}")
 
     console.print(f"{_PREFIX} Exit IP: {exit_ip}")
+    # What the guillotine actually caught. A static "ACTIVE" says the rules are
+    # loaded; this says something on the host tried to send cleartext and was
+    # stopped, which is the number worth showing.
+    from ttp import firewall
+
+    blocked = firewall.read_counters().get("cleartext_rejected")
+    if blocked is not None:
+        console.print(f"{_PREFIX} Cleartext blocked: {blocked} packet(s) this session")
+
     console.print(f"{_PREFIX} Session started: {lock.get('timestamp', 'unknown')}")
     console.print(f"{_PREFIX} Process PID: {lock.get('pid', 'unknown')}")
 
