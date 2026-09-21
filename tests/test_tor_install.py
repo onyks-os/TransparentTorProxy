@@ -9,6 +9,7 @@ All tests mock subprocess.run, shutil.which, and system paths.
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 from pathlib import Path
@@ -102,7 +103,7 @@ def test_write_service_unit(mock_resolve, tmp_path: Path):
     assert "/run/tor/ttp" in content
     assert "ExecStart=/usr/bin/tor -f" in content
     assert "--RunAsDaemon 0" in content
-    assert "Type=simple" in content
+    assert "Type=notify" in content
     assert "LimitNOFILE=32768" in content
 
 
@@ -210,6 +211,157 @@ def test_start_tor_service_failure(mock_run):
         patch("ttp.tor_service.generate_torrc"),
         patch("ttp.tor_service.label_ports_selinux"),
         pytest.raises(TorError, match="Failed to start 'ttp-tor'"),
+    ):
+        start_tor_service("tor")
+
+
+# ---------------------------------------------------------------------------
+# A Tor that dies at startup must be reported as one
+#
+# See issue #49. The unit was `Type=simple`, so `systemctl restart` returned 0
+# the moment the process was forked. A Tor that then exited - a fatal config
+# error, a listener it could not bind, an unusable DataDirectory - left
+# `check=True` with nothing to raise on. `ttp start` printed "found (vX),
+# managed via system service", applied the nftables rules and the DNS overlay
+# against a daemon that was already gone, and only noticed 60s later in
+# `wait_for_bootstrap`, as a progress bar pinned at 0% that reads as a slow
+# network rather than a dead daemon.
+#
+# `Type=notify` makes systemd wait for Tor's own readiness signal, so the
+# failure arrives from `systemctl restart` itself - before step 2 of `start`,
+# which is where the first firewall rule is written.
+
+
+def test_the_unit_waits_for_tor_to_signal_readiness():
+    """`Type=simple` cannot fail: it reports success at fork.
+
+    Tor signals readiness through sd_notify when run with `--RunAsDaemon 0`,
+    which is how this unit already invokes it, and which is what Fedora's own
+    `tor.service` relies on.
+    """
+    content = _build_service_unit_content(tor_user="debian-tor", tor_bin="/usr/sbin/tor")
+    assert "Type=notify" in content
+    assert "Type=simple" not in content
+
+
+def test_the_unit_accepts_the_readiness_signal_the_way_the_distro_unit_does():
+    """Mirrors `NotifyAccess=all` from Fedora's stock tor.service.
+
+    The default (`main`) would be stricter, and Tor does notify from its main
+    process - but the stock unit is the configuration known to work on the
+    distributions TTP targets, and this is not something the test suite can
+    verify without a live systemd.
+    """
+    content = _build_service_unit_content(tor_user="debian-tor", tor_bin="/usr/sbin/tor")
+    assert "NotifyAccess=all" in content
+
+
+@patch("ttp.tor_service.subprocess.run")
+def test_a_tor_that_dies_at_startup_names_the_reason(mock_run):
+    """The journal holds the reason; the exception must carry it."""
+    journal = (
+        "Tor 0.4.9.11 running on Linux...\n"
+        "[warn] Could not bind to 127.0.0.1:9054: Permission denied\n"
+        "[warn] Failed to parse/validate config: Failed to bind one of the listener ports.\n"
+        "[err] Reading config failed--see warnings above."
+    )
+
+    def run(argv, **kwargs):
+        if "journalctl" in argv[0]:
+            return MagicMock(returncode=0, stdout=journal, stderr="")
+        raise subprocess.CalledProcessError(1, argv, stderr="Job for ttp-tor.service failed.")
+
+    mock_run.side_effect = run
+
+    with (
+        patch("ttp.tor_service._write_service_unit"),
+        patch("ttp.tor_service.generate_torrc"),
+        patch("ttp.tor_service.label_ports_selinux"),
+        patch("ttp.tor_service.resolve_optional", return_value="/usr/bin/journalctl"),
+        pytest.raises(TorError) as excinfo,
+    ):
+        start_tor_service("tor")
+
+    message = str(excinfo.value)
+    assert "Could not bind to 127.0.0.1:9054: Permission denied" in message
+    assert "Job for ttp-tor.service failed." in message
+
+
+@patch("ttp.tor_service.subprocess.run")
+def test_the_journal_is_read_for_our_unit_only(mock_run):
+    """A tail of the whole journal would bury the reason in unrelated logs."""
+    seen: list[list[str]] = []
+
+    def run(argv, **kwargs):
+        seen.append(argv)
+        if "journalctl" in argv[0]:
+            return MagicMock(returncode=0, stdout="", stderr="")
+        raise subprocess.CalledProcessError(1, argv, stderr="boom")
+
+    mock_run.side_effect = run
+
+    with (
+        patch("ttp.tor_service._write_service_unit"),
+        patch("ttp.tor_service.generate_torrc"),
+        patch("ttp.tor_service.label_ports_selinux"),
+        patch("ttp.tor_service.resolve_optional", return_value="/usr/bin/journalctl"),
+        pytest.raises(TorError),
+    ):
+        start_tor_service("tor")
+
+    journal_calls = [argv for argv in seen if "journalctl" in argv[0]]
+    assert journal_calls, "the failure was reported without consulting the journal"
+    assert "-u" in journal_calls[0]
+    assert f"{TTP_SERVICE_NAME}.service" in journal_calls[0]
+
+
+@patch("ttp.tor_service.subprocess.run")
+def test_the_failure_is_still_reported_without_journalctl(mock_run):
+    """No journalctl is a degraded message, never a lost error.
+
+    And no attempt to run one either: `resolve` refuses a binary that is
+    absent or unsafely owned, so falling back to a bare path would execute
+    whatever sits there.
+    """
+    seen: list[list[str]] = []
+
+    def run(argv, **kwargs):
+        seen.append(argv)
+        raise subprocess.CalledProcessError(1, argv, stderr="Failed to restart")
+
+    mock_run.side_effect = run
+
+    with (
+        patch("ttp.tor_service._write_service_unit"),
+        patch("ttp.tor_service.generate_torrc"),
+        patch("ttp.tor_service.label_ports_selinux"),
+        patch("ttp.tor_service.resolve_optional", return_value=None),
+        pytest.raises(TorError, match="Failed to restart"),
+    ):
+        start_tor_service("tor")
+
+    assert not [argv for argv in seen if "journalctl" in argv[0]], (
+        "journalctl was executed although the trusted lookup found none"
+    )
+
+
+@patch("ttp.tor_service.subprocess.run")
+def test_a_journalctl_that_fails_does_not_mask_the_start_failure(mock_run):
+    """The diagnostic is best-effort; the error it decorates is not."""
+
+    def run(argv, **kwargs):
+        if "journalctl" in argv[0]:
+            raise OSError("journalctl exploded")
+        raise subprocess.CalledProcessError(1, argv, stderr="Job for ttp-tor.service failed.")
+
+    mock_run.side_effect = run
+
+    with (
+        patch("ttp.tor_service._write_service_unit"),
+        patch("ttp.tor_service.generate_torrc"),
+        patch("ttp.tor_service.label_ports_selinux"),
+        patch("ttp.tor_service.resolve_optional", return_value="/usr/bin/journalctl"),
+        pytest.raises(TorError, match=re.escape("Job for ttp-tor.service failed.")),
     ):
         start_tor_service("tor")
 

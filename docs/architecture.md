@@ -134,7 +134,7 @@ Orchestrates Tor readiness and native systemd service configuration. Enforces a 
 1. **`tor_install.py`**: Verifies Tor presence and required Pluggable Transport binaries. If missing, displays distro package guidance (`apt`, `dnf`, `pacman`, `zypper`), official Tor Project documentation links, and exits with status code `0`.
 2. **SELinux Optimization**: If on Fedora and enforcing, compiles the custom SELinux policy on-the-fly via `selinux.py`. The policy source (`.te`) is stored as an internal package resource and accessed via `importlib.resources`.
 3. **`tor_config.py`**: Generates a volatile `torrc` in `/run/tor/ttp/torrc`, appending `UseBridges 1`, `ClientTransportPlugin` executable paths, and target `Bridge` lines if configured.
-4. **`tor_service.py`**: Writes a dedicated `ttp-tor.service` unit to `/run/systemd/system/` (volatile, evaporates on reboot) and manages start/stop/reload calls via `systemctl`.
+4. **`tor_service.py`**: Writes a dedicated `ttp-tor.service` unit to `/run/systemd/system/` (volatile, evaporates on reboot) and manages start/stop/reload calls via `systemctl`. The unit is `Type=notify`: Tor signals readiness through `sd_notify` when run with `--RunAsDaemon 0`, so `systemctl restart` blocks until the daemon is actually up and fails otherwise. A `Type=simple` unit reports success at fork, which meant a Tor that died while parsing its config was indistinguishable from one that started — the session was then built on a daemon that was not there, and the failure surfaced 60s later as a bootstrap stuck at 0%. When the start does fail, the last lines of the unit's journal are quoted into the raised `TorError`: `systemctl` reports only that the job failed, while Tor's own log names the cause.
 
 ### 3.3 `firewall/` Package
 

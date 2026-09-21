@@ -41,7 +41,20 @@ Description=TTP Managed Tor Instance
 After=network.target
 
 [Service]
-Type=simple
+# Type=notify, not simple: a simple unit reports success the moment the process
+# is forked, so a Tor that dies while parsing its config - an unbindable
+# listener, an unusable DataDirectory - was reported as a successful start and
+# only surfaced 60s later as a bootstrap stuck at 0%. Tor signals readiness
+# through sd_notify when run with --RunAsDaemon 0, which is how ExecStart below
+# already invokes it, and which is what the stock tor.service on Fedora and
+# Debian relies on. NotifyAccess mirrors that unit.
+#
+# The trade-off: a Tor built without systemd support never sends the signal, so
+# `systemctl restart` waits out TimeoutStartSec and fails. That is a loud,
+# named failure carrying the journal, rather than a session built on a daemon
+# that is not there.
+Type=notify
+NotifyAccess=all
 # Ensure directories exist and have correct permissions via privileged ExecStartPre
 ExecStartPre=+/bin/mkdir -p {TOR_CACHE_DIR} {TOR_RUNTIME_DIR}
 ExecStartPre=+/bin/chown -R {tor_user}:{tor_user} {TOR_CACHE_DIR} {TOR_RUNTIME_DIR}
@@ -72,6 +85,34 @@ def _write_service_unit(tor_user: str) -> None:
     TTP_SERVICE_PATH.parent.mkdir(parents=True, exist_ok=True)
     TTP_SERVICE_PATH.write_text(unit, encoding="utf-8")
     logger.debug("Wrote volatile service unit to %s", TTP_SERVICE_PATH)
+
+
+#: How much of the unit's journal to quote when a start fails. Enough to carry
+#: Tor's own [warn]/[err] lines, short enough to read in a terminal.
+_JOURNAL_TAIL_LINES = 20
+
+
+def _recent_journal(unit: str = TTP_SERVICE_NAME, lines: int = _JOURNAL_TAIL_LINES) -> str:
+    """Return the last lines the unit logged, or ``""`` if they cannot be read.
+
+    Strictly best-effort: this decorates an error that has already happened, so
+    every failure of its own - no journalctl, a non-systemd log stack, a
+    timeout - degrades to a less informative message and never replaces the
+    failure being reported.
+    """
+    journalctl = resolve_optional("journalctl")
+    if not journalctl:
+        return ""
+    try:
+        result = subprocess.run(
+            [journalctl, "-u", f"{unit}.service", "-n", str(lines), "--no-pager", "-o", "cat"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return ""
+    return result.stdout.strip()
 
 
 def start_tor_service(
@@ -129,7 +170,17 @@ def start_tor_service(
             check=True,
         )
     except subprocess.CalledProcessError as e:
-        raise TorError(f"Failed to start '{TTP_SERVICE_NAME}': {e.stderr.strip()}") from e
+        detail = (e.stderr or "").strip()
+        message = f"Failed to start '{TTP_SERVICE_NAME}': {detail}"
+        # systemctl says only that the job failed. The reason Tor refused to
+        # run is in its own journal, and it is the whole point of failing here
+        # rather than 60s later: "Could not bind to 127.0.0.1:9054: Permission
+        # denied" tells an operator what to do, "Job for ttp-tor.service
+        # failed" does not.
+        journal = _recent_journal()
+        if journal:
+            message += f"\nLast lines from the Tor journal:\n{journal}"
+        raise TorError(message) from e
     logger.info("TTP Tor service started with dedicated config.")
 
 
