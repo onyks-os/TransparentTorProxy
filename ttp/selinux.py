@@ -66,7 +66,11 @@ def recorded_policy_version() -> str | None:
 def record_policy_version(version: str) -> None:
     """Record *version* as the policy revision now loaded."""
     try:
-        PERSISTENT_DIR.mkdir(parents=True, exist_ok=True)
+        # The parent of the path actually being written, not the module-level
+        # default: those are the same in production and differ under test, and
+        # aiming the mkdir at the constant made the stamp tests pass only on a
+        # host that already had /var/lib/ttp.
+        POLICY_VERSION_STAMP.parent.mkdir(parents=True, exist_ok=True)
         POLICY_VERSION_STAMP.write_text(f"{version}\n", encoding="utf-8")
     except OSError as e:
         # Best effort. An unwritten stamp costs a recompile on the next start,

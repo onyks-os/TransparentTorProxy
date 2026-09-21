@@ -715,3 +715,29 @@ def test_an_unreadable_policy_file_reads_as_no_source():
     with patch("ttp.selinux.importlib.resources.files") as files:
         files.return_value.joinpath.return_value = traversable
         assert selinux._policy_source() is None
+
+
+def test_writing_the_stamp_never_reaches_for_the_default_directory(tmp_path):
+    """The writer must create the parent of the path it is about to write.
+
+    It used to create the module-level `/var/lib/ttp` instead. Every test here
+    patches `POLICY_VERSION_STAMP` to a tmp path, so the mkdir was aimed
+    somewhere the test never looked: on a developer machine where
+    `/var/lib/ttp` already exists it succeeded and the write landed, and the
+    suite was green. On a CI runner without that directory the mkdir raised
+    `EACCES`, the best-effort `except OSError` swallowed it, and no stamp was
+    ever written - which is exactly the failure the tests were meant to catch.
+
+    `PERSISTENT_DIR` is patched here to a path that cannot be created, so any
+    code reaching for it again fails loudly instead of depending on the host.
+    """
+    from ttp import selinux
+
+    stamp = tmp_path / "state" / "selinux-policy-version"
+    with (
+        patch.object(selinux, "POLICY_VERSION_STAMP", stamp),
+        patch.object(selinux, "PERSISTENT_DIR", Path("/proc/ttp-must-not-be-touched")),
+    ):
+        selinux.record_policy_version("1.2")
+
+    assert stamp.read_text(encoding="utf-8").strip() == "1.2"
