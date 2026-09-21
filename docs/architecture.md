@@ -149,10 +149,11 @@ Generates rules applied atomically via `nft -f` into the dedicated `inet ttp` ta
 1. **Stateless Logic**: No system-wide rule backups are performed. All modifications are isolated to the `ttp` table.
 2. **Atomic Cleanup**: Restoration is performed via `nft destroy table inet ttp`, faster and safer than rule-by-rule deletion.
 3. **Multi-Chain Architecture**: A NAT hook (`output`/`prerouting`) handles redirection to Tor ports; a filter hook (`filter_out`) implements the Kill-Switch, rejecting everything that is not explicitly allowed.
-4. **Split Tunneling**: UIDs/GIDs are resolved via Python's `pwd`/`grp` libraries and injected as `meta skuid`/`meta skgid` rules — no shell interpolation.
-5. **Emergency Killswitch**: `apply_emergency_killswitch()` replaces the table with a minimal drop-all configuration (loopback exempt), used by the watchdog on persistent integrity failure.
-6. **Teardown Lockdown**: `apply_teardown_lockdown(tor_uid)` inserts a drop rule at the top of the `filter_out` chain to block all outbound traffic except loopback and the Tor UID. This prevents leaks during graceful circuit closing and Tor daemon termination.
-7. **Active Socket Slaughter**: `apply_active_socket_slaughter()` injects temporary TCP Reset and standard reject rules in `filter_out` to actively terminate pending local sockets (causing ECONNREFUSED/RST) before lowering the firewall.
+4. **Named Counters**: The DNS and TCP redirects, the DoT and DoH rejects and the catch-all reject each carry a named nftables counter, read back through `firewall.read_counters()`. They answer questions the ruleset's *shape* cannot: whether the redirect a probe depends on actually matched, and whether a rule that should be unreachable ever fired. `ttp status` surfaces the catch-all count, the DNS leak probe reads the redirect counter around its query, and the watchdog treats a non-zero DoH or DoT count as an integrity failure (see ADR 0012 for why those rules are unreachable in normal operation). A counter that cannot be read is reported as *absent*, never as `0`.
+5. **Split Tunneling**: UIDs/GIDs are resolved via Python's `pwd`/`grp` libraries and injected as `meta skuid`/`meta skgid` rules — no shell interpolation.
+6. **Emergency Killswitch**: `apply_emergency_killswitch()` replaces the table with a minimal drop-all configuration (loopback exempt), used by the watchdog on persistent integrity failure.
+7. **Teardown Lockdown**: `apply_teardown_lockdown(tor_uid)` inserts a drop rule at the top of the `filter_out` chain to block all outbound traffic except loopback and the Tor UID. This prevents leaks during graceful circuit closing and Tor daemon termination.
+8. **Active Socket Slaughter**: `apply_active_socket_slaughter()` injects temporary TCP Reset and standard reject rules in `filter_out` to actively terminate pending local sockets (causing ECONNREFUSED/RST) before lowering the firewall.
 
 > For the complete chain structure, rule execution order, and external interface specification see [`interfaces.md § 3.1`](interfaces.md#31-nftables-firewall).
 
