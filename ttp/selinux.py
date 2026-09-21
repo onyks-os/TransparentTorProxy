@@ -5,13 +5,98 @@
 
 import importlib.resources
 import logging
+import re
 import subprocess
 import tempfile
 from pathlib import Path
 
 from ttp.paths import resolve_optional
+from ttp.system_info import SELINUX_POLICY_MODULE
+from ttp.ux import PERSISTENT_DIR
 
 logger = logging.getLogger("ttp")
+
+#: Where TTP records the policy revision it last installed successfully.
+#:
+#: ``semodule`` cannot be asked this. Its ``-l`` output carries no version on
+#: current policycoreutils, and ``--list-modules=full`` adds a priority and a
+#: language but still no version. So the question "is the loaded policy the one
+#: this build ships?" is answerable only against a record TTP keeps itself.
+#:
+#: The file lives in the persistent directory because the answer must survive a
+#: reboot - the policy does. It is root-owned along with its directory; a
+#: missing, unreadable or malformed stamp reads as "no record", which forces a
+#: reinstall. That is the safe direction: the cost is one ``checkmodule`` cycle,
+#: where trusting a wrong stamp costs a host whose Tor cannot bind its DNSPort.
+POLICY_VERSION_STAMP = PERSISTENT_DIR / "selinux-policy-version"
+
+#: ``module ttp_tor_policy 1.2;`` - the first non-comment statement of a .te.
+_MODULE_DECLARATION = re.compile(rf"^\s*module\s+{re.escape(SELINUX_POLICY_MODULE)}\s+([0-9.]+)\s*;", re.MULTILINE)
+
+
+def _policy_source() -> str | None:
+    """Return the text of the shipped ``.te``, or ``None`` if it is missing."""
+    traversable = importlib.resources.files("ttp.resources.selinux").joinpath(f"{SELINUX_POLICY_MODULE}.te")
+    try:
+        return traversable.read_text(encoding="utf-8")
+    except (OSError, FileNotFoundError):
+        return None
+
+
+def shipped_policy_version() -> str | None:
+    """Return the version this build's policy source declares, e.g. ``"1.2"``.
+
+    ``None`` when the source is missing, unreadable, or declares no version -
+    three cases with one answer, because all three mean the same thing: this
+    build cannot say which revision it ships, so nothing may be called current.
+    """
+    match = _MODULE_DECLARATION.search(_policy_source() or "")
+    return match.group(1) if match else None
+
+
+def recorded_policy_version() -> str | None:
+    """Return the version TTP last installed, or ``None`` if there is no record."""
+    try:
+        recorded = POLICY_VERSION_STAMP.read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        return None
+    return recorded or None
+
+
+def record_policy_version(version: str) -> None:
+    """Record *version* as the policy revision now loaded."""
+    try:
+        PERSISTENT_DIR.mkdir(parents=True, exist_ok=True)
+        POLICY_VERSION_STAMP.write_text(f"{version}\n", encoding="utf-8")
+    except OSError as e:
+        # Best effort. An unwritten stamp costs a recompile on the next start,
+        # which is the same cost the bug in #50 imposed on every start.
+        logger.debug("Could not record the SELinux policy version: %s", e)
+
+
+def forget_policy_version() -> None:
+    """Drop the record, so the next run treats the policy as absent."""
+    try:
+        POLICY_VERSION_STAMP.unlink(missing_ok=True)
+    except OSError as e:
+        logger.debug("Could not clear the SELinux policy version stamp: %s", e)
+
+
+def is_policy_module_current() -> bool:
+    """Return ``True`` when the loaded policy is the revision this build ships.
+
+    Both halves are required. The kernel is asked whether *a* module by that
+    name is loaded, because an administrator may have run ``semodule -r`` and
+    left the stamp behind; the stamp is consulted for *which* revision, because
+    the kernel will not say. Either one alone gives a wrong answer in a case
+    that ends with Tor unable to bind its DNSPort.
+    """
+    from ttp.tor_detect import is_selinux_module_installed
+
+    if not is_selinux_module_installed():
+        return False
+    shipped = shipped_policy_version()
+    return shipped is not None and recorded_policy_version() == shipped
 
 
 def setup_selinux_if_needed() -> None:
@@ -19,13 +104,12 @@ def setup_selinux_if_needed() -> None:
     from ttp.tor_detect import (
         is_fedora_family,
         is_selinux_enforcing,
-        is_selinux_module_installed,
     )
 
     if not is_fedora_family() or not is_selinux_enforcing():
         return
 
-    if is_selinux_module_installed():
+    if is_policy_module_current():
         return
 
     logger.info("SELinux detected. Compiling and installing TTP Tor policy module...")
@@ -67,6 +151,9 @@ def setup_selinux_if_needed() -> None:
                 logger.debug(f"Installing {pp_path.name}...")
                 subprocess.run([semodule, "-i", str(pp_path)], check=True)
 
+            version = shipped_policy_version()
+            if version:
+                record_policy_version(version)
             logger.info("SELinux policy module installed successfully.")
         except (subprocess.CalledProcessError, OSError) as e:
             logger.warning(f"SELinux policy installation failed: {e}. Tor might have permission issues.")
@@ -160,7 +247,12 @@ def remove_selinux_module() -> None:
 
     logger.info("Removing TTP Tor policy module...")
     try:
-        subprocess.run([semodule, "-r", "ttp_tor_policy"], check=True)
-        logger.info("SELinux policy module removed.")
+        subprocess.run([semodule, "-r", SELINUX_POLICY_MODULE], check=True)
     except (subprocess.CalledProcessError, OSError) as e:
         logger.warning(f"Failed to remove SELinux policy module: {e}")
+        return
+
+    # Only once the module is actually gone: a stamp outliving a failed removal
+    # would be a record of a policy that is still loaded.
+    forget_policy_version()
+    logger.info("SELinux policy module removed.")
