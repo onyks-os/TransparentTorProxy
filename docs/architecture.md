@@ -259,12 +259,13 @@ Handles security policies and dynamic labeling for system integration under SELi
 
 * **Custom Tor Policy Module**: Compiles (`checkmodule` / `semodule_package`) and installs (`semodule -i`) the custom `ttp_tor_policy` to allow standard Tor processes to operate with TTP's customized features.
 * **Dynamic Port Labeling**: Dynamically maps custom user-selected TransPort and DNSPort to `tor_port_t` on startup via `semanage port -a` (or modifies existing ones using `-m`), and unregisters them on teardown via `semanage port -d` to avoid system configuration pollution.
+* **Policy revision tracking**: `semodule` reports which modules are loaded but not at which version — the version column was dropped from `semodule -l` years ago, and `--list-modules=full` adds a priority and a language rather than a revision. So *presence* is asked of the kernel (`is_selinux_module_installed`) and *currency* is answered against a stamp TTP writes itself, `/var/lib/ttp/selinux-policy-version`, compared with the `module ttp_tor_policy X.Y;` line of the shipped `.te`. Both halves are required: the stamp alone would miss a module an administrator removed with `semodule -r`, and the kernel alone cannot distinguish an outdated policy from a current one. A missing or unreadable stamp reads as "not current", which costs one recompile — the opposite error would leave Tor unable to bind its DNSPort.
 
 ### 3.11 `ux.py`
 
 Manages persistent user engagement features that must survive system reboots (unlike volatile locks in `state.py`). It is the owner of:
 
-* Persistent sentinels in `/var/lib/ttp/` (e.g. `.starred_notified`).
+* Persistent sentinels in `/var/lib/ttp/` (e.g. `.starred_notified`). The directory is shared with `selinux.py`, which records the installed policy revision there (`selinux-policy-version`); it is root-owned, and nothing in it is secret.
 * Dynamic CLI star solicitation prompts.
 
 ### 3.12 `dns_resolved.py`

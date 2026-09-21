@@ -170,12 +170,21 @@ def test_is_selinux_enforcing_is_false_without_the_binary() -> None:
     run.assert_not_called()
 
 
-def test_is_selinux_module_installed_matches_the_exact_version() -> None:
-    """A different version of the module is not the one TTP ships."""
+def test_is_selinux_module_installed_answers_presence_not_version() -> None:
+    """Any revision of the module counts as present.
+
+    `semodule -l` prints no version on current policycoreutils, so a version
+    match here could only ever be false. Which revision is loaded is
+    `ttp.selinux.is_policy_module_current`, answered against TTP's own stamp.
+    See issue #50.
+    """
     with patch("ttp.system_info.resolve_optional", return_value="/usr/sbin/semodule"):
-        with patch("ttp.system_info.subprocess.run", return_value=MagicMock(stdout="ttp_tor_policy 1.2\n")):
+        with patch("ttp.system_info.subprocess.run", return_value=MagicMock(stdout="tor\nttp_tor_policy\n")):
             assert system_info.is_selinux_module_installed() is True
+        # The ancient two-column form, still accepted rather than parsed.
         with patch("ttp.system_info.subprocess.run", return_value=MagicMock(stdout="ttp_tor_policy 1.1\n")):
+            assert system_info.is_selinux_module_installed() is True
+        with patch("ttp.system_info.subprocess.run", return_value=MagicMock(stdout="tor\nunconfined\n")):
             assert system_info.is_selinux_module_installed() is False
 
 

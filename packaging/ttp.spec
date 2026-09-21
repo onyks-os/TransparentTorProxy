@@ -96,7 +96,16 @@ getent passwd ttp-watchdog >/dev/null || useradd -r -g ttp-watchdog -d /run/ttp 
 # $1 == 1 means initial installation, not an upgrade
 if [ "$1" -eq 1 ]; then
     echo "[TTP] Installing SELinux policy module..."
-    semodule -i /opt/ttp/resources/selinux/ttp_tor_policy.pp || :
+    if semodule -i /opt/ttp/resources/selinux/ttp_tor_policy.pp; then
+        # TTP's runtime check compares this stamp against the version declared
+        # in the shipped .te; `semodule` itself reports no version (#50).
+        policy_version="$(sed -n 's/^[[:space:]]*module[[:space:]]\+ttp_tor_policy[[:space:]]\+\([0-9.]\+\)[[:space:]]*;.*/\1/p' \
+            /opt/ttp/resources/selinux/ttp_tor_policy.te)"
+        if [ -n "$policy_version" ]; then
+            mkdir -p /var/lib/ttp
+            printf '%s\n' "$policy_version" > /var/lib/ttp/selinux-policy-version
+        fi
+    fi
 fi
 
 %preun
@@ -105,6 +114,7 @@ fi
 if [ "$1" -eq 0 ]; then
     echo "[TTP] Removing SELinux policy module..."
     semodule -r ttp_tor_policy || :
+    rm -f /var/lib/ttp/selinux-policy-version
 fi
 
 %postun

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import platform
-import re
 import subprocess
 from pathlib import Path
 
@@ -60,16 +59,37 @@ def is_fedora_family() -> bool:
         return False
 
 
+#: The name of the policy module TTP compiles and installs, as declared by
+#: ``module <name> <version>;`` in ``ttp/resources/selinux/ttp_tor_policy.te``.
+SELINUX_POLICY_MODULE = "ttp_tor_policy"
+
+
 def is_selinux_module_installed() -> bool:
-    """Return ``True`` if the ``ttp_tor_policy`` module is already loaded."""
+    """Return ``True`` if the ``ttp_tor_policy`` module is loaded, at any version.
+
+    This answers presence only. ``semodule`` cannot answer *currency*: modern
+    policycoreutils dropped the version column from ``semodule -l``, which on
+    Fedora 44 prints the bare module name. Asking it for a version was the bug
+    in issue #50 - the match never succeeded, so the module was recompiled on
+    every ``ttp start`` and never removed on uninstall. Whether the loaded
+    policy is the revision TTP ships is
+    :func:`ttp.selinux.is_policy_module_current`, which compares the shipped
+    ``.te`` against a stamp TTP writes itself.
+
+    The comparison is per line and per whitespace-separated field, so it holds
+    for the bare name, for the ancient ``name  version`` form, and for
+    ``semodule --list-modules=full`` (``priority name language``) - and does not
+    mistake a module merely *containing* the name, such as a local
+    ``ttp_tor_policy_local``, for ours.
+    """
     semodule = resolve_optional("semodule")
     if not semodule:
         return False
     try:
         result = subprocess.run([semodule, "-l"], capture_output=True, text=True, timeout=10)
-        return bool(re.search(r"ttp_tor_policy\s+1\.2\b", result.stdout))
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
+    return any(SELINUX_POLICY_MODULE in line.split() for line in result.stdout.splitlines())
 
 
 def is_firewalld_active() -> bool:

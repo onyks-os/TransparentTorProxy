@@ -168,16 +168,41 @@ def test_setup_selinux_if_needed_installs_when_missing():
         assert args3[0][1] == "-i"
 
 
-def test_setup_selinux_if_needed_skips_when_present():
-    """Does nothing if module is already installed."""
+def test_setup_selinux_if_needed_skips_when_the_policy_is_current():
+    """Nothing to do when the loaded policy is the revision this build ships."""
     with (
         patch("ttp.tor_detect.is_fedora_family", return_value=True),
         patch("ttp.tor_detect.is_selinux_enforcing", return_value=True),
-        patch("ttp.tor_detect.is_selinux_module_installed", return_value=True),
+        patch("ttp.selinux.is_policy_module_current", return_value=True),
         patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
         setup_selinux_if_needed()
         mock_run.assert_not_called()
+
+
+def test_setup_selinux_if_needed_reinstalls_when_the_loaded_policy_is_stale():
+    """Presence alone is not enough: an older module must be upgraded.
+
+    This is the case issue #50 left unreachable. The gate asked `semodule -l`
+    for a version it no longer prints, so it answered "not installed" for every
+    host - right outcome, wrong reason, and it meant a recompile on every
+    single start rather than only on an upgrade.
+    """
+    with (
+        patch("ttp.tor_detect.is_fedora_family", return_value=True),
+        patch("ttp.tor_detect.is_selinux_enforcing", return_value=True),
+        patch("ttp.tor_detect.is_selinux_module_installed", return_value=True),
+        patch("ttp.selinux.recorded_policy_version", return_value="1.1"),
+        patch.object(Path, "exists", return_value=True),
+        _stub_lookup("/usr/bin/cmd"),
+        patch("ttp.selinux.tempfile.TemporaryDirectory") as mock_tempdir,
+        patch("ttp.selinux.record_policy_version"),
+        patch("ttp.selinux.subprocess.run") as mock_run,
+    ):
+        mock_tempdir.return_value.__enter__.return_value = "/tmp/fake"
+        setup_selinux_if_needed()
+
+    assert mock_run.call_count == 3
 
 
 def test_remove_selinux_module_calls_semodule_r():
@@ -469,3 +494,250 @@ def test_remove_selinux_module_warns_but_does_not_raise_on_failure(caplog):
         remove_selinux_module()  # must not raise
 
     assert "Failed to remove SELinux policy module" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Which policy is installed, and is it the one we ship
+# ---------------------------------------------------------------------------
+#
+# See issue #50. The module's identity used to be checked with
+# `re.search(r"ttp_tor_policy\s+1\.2\b", semodule_l_output)`, but modern
+# policycoreutils dropped the version column from `semodule -l` years ago: on
+# Fedora 44 the command prints the bare name. The regex therefore never
+# matched, and three consequences followed from the same line:
+#
+#   * `setup_selinux_if_needed` recompiled and reinstalled the module on every
+#     single `ttp start`;
+#   * `remove_selinux_module` returned early every time, so `ttp uninstall`
+#     never removed the policy it had installed;
+#   * `ttp diagnose` reported `selinux_module: false` on hosts carrying it.
+#
+# Presence and currency are two different questions, and `semodule` can only
+# answer the first. TTP records the version it installed in its own persistent
+# state and compares that against the version declared in the shipped policy
+# source.
+
+#: Captured from `semodule -l` on Fedora 44 (policycoreutils-3.11-2.fc44),
+#: abridged. No version column - that is the whole point of this fixture.
+REAL_SEMODULE_L = "sudo\nsystemd\nthumb\ntor\nttp_tor_policy\nudev\nunconfined\n"
+
+
+def test_module_presence_is_detected_in_output_that_carries_no_version():
+    """The bare name is what `semodule -l` prints on a current system."""
+    with _stub_lookup("/usr/sbin/semodule"):
+        with patch("ttp.system_info.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(stdout=REAL_SEMODULE_L, returncode=0)
+            assert is_selinux_module_installed() is True
+
+
+def test_module_presence_is_detected_in_list_modules_full_output():
+    """`semodule --list-modules=full` prints `priority name language`."""
+    with _stub_lookup("/usr/sbin/semodule"):
+        with patch("ttp.system_info.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(stdout="400 tor pp\n400 ttp_tor_policy pp\n", returncode=0)
+            assert is_selinux_module_installed() is True
+
+
+def test_a_module_whose_name_merely_contains_ours_is_not_ours():
+    """Substring matching would make an unrelated module read as TTP's."""
+    with _stub_lookup("/usr/sbin/semodule"):
+        with patch("ttp.system_info.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(stdout="ttp_tor_policy_local\nunconfined\n", returncode=0)
+            assert is_selinux_module_installed() is False
+
+
+def test_the_shipped_version_is_read_from_the_policy_source():
+    """The `.te` file is the single place the policy revision is declared."""
+    from ttp.selinux import shipped_policy_version
+
+    assert shipped_policy_version() == "1.2"
+
+
+def test_a_host_carrying_the_version_we_ship_is_current():
+    from ttp import selinux
+
+    with (
+        patch("ttp.tor_detect.is_selinux_module_installed", return_value=True),
+        patch("ttp.selinux.recorded_policy_version", return_value="1.2"),
+        patch("ttp.selinux.shipped_policy_version", return_value="1.2"),
+    ):
+        assert selinux.is_policy_module_current() is True
+
+
+def test_a_host_carrying_an_older_version_is_not_current():
+    """The case the dead regex was meant to catch and never did."""
+    from ttp import selinux
+
+    with (
+        patch("ttp.tor_detect.is_selinux_module_installed", return_value=True),
+        patch("ttp.selinux.recorded_policy_version", return_value="1.1"),
+        patch("ttp.selinux.shipped_policy_version", return_value="1.2"),
+    ):
+        assert selinux.is_policy_module_current() is False
+
+
+def test_a_module_removed_behind_our_back_is_not_current():
+    """The stamp records what TTP installed, not what the kernel still holds.
+
+    An administrator running `semodule -r ttp_tor_policy` leaves the stamp
+    behind. Trusting it alone would skip the reinstall and leave Tor unable to
+    bind its DNSPort.
+    """
+    from ttp import selinux
+
+    with (
+        patch("ttp.tor_detect.is_selinux_module_installed", return_value=False),
+        patch("ttp.selinux.recorded_policy_version", return_value="1.2"),
+        patch("ttp.selinux.shipped_policy_version", return_value="1.2"),
+    ):
+        assert selinux.is_policy_module_current() is False
+
+
+def test_an_unstamped_host_is_not_current():
+    """No record means TTP cannot claim the loaded module is the one it ships."""
+    from ttp import selinux
+
+    with (
+        patch("ttp.tor_detect.is_selinux_module_installed", return_value=True),
+        patch("ttp.selinux.recorded_policy_version", return_value=None),
+        patch("ttp.selinux.shipped_policy_version", return_value="1.2"),
+    ):
+        assert selinux.is_policy_module_current() is False
+
+
+def test_the_recorded_version_round_trips_through_the_stamp(tmp_path):
+    from ttp import selinux
+
+    stamp = tmp_path / "selinux-policy-version"
+    with patch.object(selinux, "POLICY_VERSION_STAMP", stamp):
+        assert selinux.recorded_policy_version() is None
+        selinux.record_policy_version("1.2")
+        assert selinux.recorded_policy_version() == "1.2"
+        selinux.forget_policy_version()
+        assert selinux.recorded_policy_version() is None
+
+
+def test_an_unreadable_stamp_reads_as_no_record(tmp_path):
+    """Failing towards a reinstall is the safe direction: worst case is a
+    recompile, where the other direction is a host whose Tor cannot bind."""
+    from ttp import selinux
+
+    stamp = tmp_path / "selinux-policy-version"
+    stamp.write_text("1.2\n", encoding="utf-8")
+    with (
+        patch.object(selinux, "POLICY_VERSION_STAMP", stamp),
+        patch.object(Path, "read_text", side_effect=OSError("EACCES")),
+    ):
+        assert selinux.recorded_policy_version() is None
+
+
+def test_installing_the_module_records_the_version_it_installed(tmp_path):
+    from ttp import selinux
+
+    stamp = tmp_path / "selinux-policy-version"
+    with (
+        patch("ttp.tor_detect.is_fedora_family", return_value=True),
+        patch("ttp.tor_detect.is_selinux_enforcing", return_value=True),
+        patch("ttp.selinux.is_policy_module_current", return_value=False),
+        patch.object(Path, "exists", return_value=True),
+        _stub_lookup("/usr/bin/cmd"),
+        patch("ttp.selinux.tempfile.TemporaryDirectory") as mock_tempdir,
+        patch("ttp.selinux.subprocess.run"),
+        patch.object(selinux, "POLICY_VERSION_STAMP", stamp),
+    ):
+        mock_tempdir.return_value.__enter__.return_value = str(tmp_path / "build")
+        selinux.setup_selinux_if_needed()
+
+    assert stamp.read_text(encoding="utf-8").strip() == "1.2"
+
+
+def test_a_failed_install_records_nothing(tmp_path):
+    """A stamp written after a failed `semodule -i` would suppress the retry."""
+    from ttp import selinux
+
+    stamp = tmp_path / "selinux-policy-version"
+    with (
+        patch("ttp.tor_detect.is_fedora_family", return_value=True),
+        patch("ttp.tor_detect.is_selinux_enforcing", return_value=True),
+        patch("ttp.selinux.is_policy_module_current", return_value=False),
+        patch.object(Path, "exists", return_value=True),
+        _stub_lookup("/usr/bin/cmd"),
+        patch("ttp.selinux.tempfile.TemporaryDirectory") as mock_tempdir,
+        patch("ttp.selinux.subprocess.run", side_effect=subprocess.CalledProcessError(1, "semodule")),
+        patch.object(selinux, "POLICY_VERSION_STAMP", stamp),
+    ):
+        mock_tempdir.return_value.__enter__.return_value = str(tmp_path / "build")
+        selinux.setup_selinux_if_needed()
+
+    assert not stamp.exists()
+
+
+def test_removing_the_module_clears_the_stamp(tmp_path):
+    """A stamp surviving the removal would claim a policy that is gone."""
+    from ttp import selinux
+
+    stamp = tmp_path / "selinux-policy-version"
+    stamp.write_text("1.2\n", encoding="utf-8")
+    with (
+        patch("ttp.tor_detect.is_selinux_module_installed", return_value=True),
+        _stub_lookup("/usr/sbin/semodule"),
+        patch("ttp.selinux.subprocess.run"),
+        patch.object(selinux, "POLICY_VERSION_STAMP", stamp),
+    ):
+        selinux.remove_selinux_module()
+
+    assert not stamp.exists()
+
+
+def test_a_build_whose_policy_source_is_unreadable_is_never_current():
+    """Without the `.te` there is nothing to compare a stamp against.
+
+    A package that ships the code but not the policy data - a `pip install`
+    without package data, a truncated build - must not let a leftover stamp
+    assert that the loaded policy is the right one.
+    """
+    from ttp import selinux
+
+    with patch("ttp.selinux._policy_source", return_value=None):
+        assert selinux.shipped_policy_version() is None
+        with (
+            patch("ttp.tor_detect.is_selinux_module_installed", return_value=True),
+            patch("ttp.selinux.recorded_policy_version", return_value="1.2"),
+        ):
+            assert selinux.is_policy_module_current() is False
+
+
+def test_an_unreadable_policy_file_reads_as_no_source():
+    from ttp import selinux
+
+    traversable = MagicMock()
+    traversable.read_text.side_effect = OSError("EACCES")
+    with patch("ttp.selinux.importlib.resources.files") as files:
+        files.return_value.joinpath.return_value = traversable
+        assert selinux._policy_source() is None
+
+
+def test_writing_the_stamp_never_reaches_for_the_default_directory(tmp_path):
+    """The writer must create the parent of the path it is about to write.
+
+    It used to create the module-level `/var/lib/ttp` instead. Every test here
+    patches `POLICY_VERSION_STAMP` to a tmp path, so the mkdir was aimed
+    somewhere the test never looked: on a developer machine where
+    `/var/lib/ttp` already exists it succeeded and the write landed, and the
+    suite was green. On a CI runner without that directory the mkdir raised
+    `EACCES`, the best-effort `except OSError` swallowed it, and no stamp was
+    ever written - which is exactly the failure the tests were meant to catch.
+
+    `PERSISTENT_DIR` is patched here to a path that cannot be created, so any
+    code reaching for it again fails loudly instead of depending on the host.
+    """
+    from ttp import selinux
+
+    stamp = tmp_path / "state" / "selinux-policy-version"
+    with (
+        patch.object(selinux, "POLICY_VERSION_STAMP", stamp),
+        patch.object(selinux, "PERSISTENT_DIR", Path("/proc/ttp-must-not-be-touched")),
+    ):
+        selinux.record_policy_version("1.2")
+
+    assert stamp.read_text(encoding="utf-8").strip() == "1.2"

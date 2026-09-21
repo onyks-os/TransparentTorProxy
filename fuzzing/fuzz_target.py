@@ -114,14 +114,21 @@ def test_fuzz_proc_mounts_parsing(data: str) -> None:
         pass
 
 
-# 6. SELinux module detection regex (tor_detect.py)
+# 6. SELinux policy version parsing (selinux.py)
 
 
 @given(data=st.text(min_size=0, max_size=500))
 @settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])
-def test_fuzz_selinux_module_regex(data: str) -> None:
-    """Fuzz the SELinux module detection regex."""
-    try:
-        _ = bool(re.search(r"ttp_tor_policy\s+1\.2\b", data))
-    except (re.error, ValueError):
-        pass
+def test_fuzz_selinux_policy_version_parsing(data: str) -> None:
+    """Fuzz the parser that reads the policy revision out of a `.te` source.
+
+    This used to fuzz `re.search(r"ttp_tor_policy\s+1\.2\b", data)` against
+    `semodule -l` output - a regex that no longer exists, because the command
+    prints no version (#50). The surviving parse is over the `.te` file:
+    whatever it holds, the result must be a version string or nothing, never
+    an exception on the `ttp start` path.
+    """
+    from ttp.selinux import _MODULE_DECLARATION
+
+    match = _MODULE_DECLARATION.search(data)
+    assert match is None or match.group(1)

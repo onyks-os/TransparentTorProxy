@@ -249,12 +249,18 @@ def test_stop_tor_service(mock_run, tmp_path: Path):
 
 
 def test_is_selinux_module_installed_true():
-    """is_selinux_module_installed returns True if module listed in semodule -l."""
+    """is_selinux_module_installed returns True if module listed in semodule -l.
+
+    The stdout here is the shape `semodule -l` actually produces: one bare
+    module name per line. It used to be `"ttp_tor_policy  1.2"`, which no
+    policycoreutils in support has printed for years - so this test was green
+    against output no host could produce. See issue #50.
+    """
     with (
         _stub_lookup("/usr/sbin/semodule"),
         patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
-        mock_run.return_value = MagicMock(returncode=0, stdout="ttp_tor_policy  1.2\nother_mod 2.1")
+        mock_run.return_value = MagicMock(returncode=0, stdout="other_mod\nttp_tor_policy\ntor\n")
         assert is_selinux_module_installed() is True
 
 
@@ -264,7 +270,7 @@ def test_is_selinux_module_installed_false():
         _stub_lookup("/usr/sbin/semodule"),
         patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
-        mock_run.return_value = MagicMock(returncode=0, stdout="other_mod 2.1")
+        mock_run.return_value = MagicMock(returncode=0, stdout="other_mod\ntor\n")
         assert is_selinux_module_installed() is False
 
 
@@ -296,8 +302,16 @@ def test_setup_selinux_if_needed_installs(
 @patch("ttp.tor_detect.is_selinux_enforcing", return_value=True)
 @patch("ttp.tor_detect.is_fedora_family", return_value=True)
 def test_setup_selinux_if_needed_skips_if_installed(mock_fedora, mock_enforcing, mock_installed):
-    """setup_selinux_if_needed does nothing if module is already installed."""
-    with patch("ttp.selinux.subprocess.run") as mock_run:
+    """setup_selinux_if_needed does nothing if the current policy is loaded.
+
+    `mock_installed` only says a module by that name is loaded; the stamp says
+    which revision it is. Both are needed for the skip.
+    """
+    with (
+        patch("ttp.selinux.recorded_policy_version", return_value="9.9"),
+        patch("ttp.selinux.shipped_policy_version", return_value="9.9"),
+        patch("ttp.selinux.subprocess.run") as mock_run,
+    ):
         setup_selinux_if_needed()
         mock_run.assert_not_called()
 
