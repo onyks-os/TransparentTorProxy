@@ -254,7 +254,7 @@ def test_is_selinux_module_installed_true():
         _stub_lookup("/usr/sbin/semodule"),
         patch("ttp.tor_detect.subprocess.run") as mock_run,
     ):
-        mock_run.return_value = MagicMock(returncode=0, stdout="ttp_tor_policy  1.1\nother_mod 2.1")
+        mock_run.return_value = MagicMock(returncode=0, stdout="ttp_tor_policy  1.2\nother_mod 2.1")
         assert is_selinux_module_installed() is True
 
 

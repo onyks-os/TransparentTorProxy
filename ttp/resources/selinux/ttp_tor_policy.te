@@ -1,7 +1,8 @@
-module ttp_tor_policy 1.1;
+module ttp_tor_policy 1.2;
 
 require {
 	type tor_t;
+	type tor_port_t;
 	type unreserved_port_t;
 	class tcp_socket name_bind;
 	class udp_socket name_bind;
@@ -10,3 +11,11 @@ require {
 #============= tor_t ==============
 allow tor_t unreserved_port_t:tcp_socket name_bind;
 allow tor_t unreserved_port_t:udp_socket name_bind;
+
+# label_ports_selinux relabels TTP's TransPort and DNSPort to tor_port_t, which
+# takes them *out* of unreserved_port_t and so out of the two grants above. The
+# base Fedora policy lets tor_t bind a tor_port_t TCP socket but not a UDP one,
+# so without these rules the DNSPort bind is denied, Tor exits while parsing its
+# config, and the control socket that "ttp start" waits on never appears.
+allow tor_t tor_port_t:tcp_socket name_bind;
+allow tor_t tor_port_t:udp_socket name_bind;

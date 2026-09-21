@@ -122,6 +122,6 @@ def test_fuzz_proc_mounts_parsing(data: str) -> None:
 def test_fuzz_selinux_module_regex(data: str) -> None:
     """Fuzz the SELinux module detection regex."""
     try:
-        _ = bool(re.search(r"ttp_tor_policy\s+1\.1\b", data))
+        _ = bool(re.search(r"ttp_tor_policy\s+1\.2\b", data))
     except (re.error, ValueError):
         pass

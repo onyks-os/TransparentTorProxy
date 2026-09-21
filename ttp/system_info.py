@@ -67,7 +67,7 @@ def is_selinux_module_installed() -> bool:
         return False
     try:
         result = subprocess.run([semodule, "-l"], capture_output=True, text=True, timeout=10)
-        return bool(re.search(r"ttp_tor_policy\s+1\.1\b", result.stdout))
+        return bool(re.search(r"ttp_tor_policy\s+1\.2\b", result.stdout))
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
 
