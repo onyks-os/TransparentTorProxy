@@ -82,25 +82,37 @@ if command -v getenforce >/dev/null 2>&1; then
     if [ "$(getenforce)" = "Enforcing" ]; then
         echo "[TTP] SELinux Enforcing mode detected."
         
-        # We only install the module if it's not already there.
-        if ! semodule -l | grep -qE "ttp_tor_policy[[:space:]]+1\.2"; then
-            echo "[TTP] Compiling and optimizing kernel policies..."
-            if ! command -v checkmodule >/dev/null 2>&1; then
-                echo "[TTP] SELinux build tools missing. Attempting to install 'checkpolicy'..."
-                dnf install -y checkpolicy policycoreutils >/dev/null 2>&1 || echo "[TTP] Failed to install checkpolicy. Tor might fail to start."
+        # The installer always (re)loads the module: `semodule -i` upgrades in
+        # place and is idempotent, and this runs once per install. There used
+        # to be a gate here - `semodule -l | grep -qE "ttp_tor_policy[[:space:]]+1\.2"`
+        # - but current policycoreutils prints no version column, so it never
+        # matched and the "already present" branch was unreachable. See #50.
+        echo "[TTP] Compiling and optimizing kernel policies..."
+        if ! command -v checkmodule >/dev/null 2>&1; then
+            echo "[TTP] SELinux build tools missing. Attempting to install 'checkpolicy'..."
+            dnf install -y checkpolicy policycoreutils >/dev/null 2>&1 || echo "[TTP] Failed to install checkpolicy. Tor might fail to start."
+        fi
+
+        if command -v checkmodule >/dev/null 2>&1; then
+            if (
+                cd /opt/ttp/ttp/resources/selinux || exit 1
+                checkmodule -M -m -o ttp_tor_policy.mod ttp_tor_policy.te
+                semodule_package -o ttp_tor_policy.pp -m ttp_tor_policy.mod
+                semodule -i ttp_tor_policy.pp
+            ); then
+                # Record what we loaded, so the first `ttp start` does not
+                # compile it a second time. This is the only way to know: the
+                # kernel will not tell us which revision is loaded.
+                policy_version="$(sed -n 's/^[[:space:]]*module[[:space:]]\+ttp_tor_policy[[:space:]]\+\([0-9.]\+\)[[:space:]]*;.*/\1/p' \
+                    /opt/ttp/ttp/resources/selinux/ttp_tor_policy.te)"
+                if [ -n "$policy_version" ]; then
+                    mkdir -p /var/lib/ttp
+                    printf '%s\n' "$policy_version" > /var/lib/ttp/selinux-policy-version
+                fi
+                echo "[TTP] SELinux module 'ttp_tor_policy' compiled and installed successfully."
+            else
+                echo "[TTP] SELinux module installation failed. Tor might fail to bind its ports."
             fi
-            
-            if command -v checkmodule >/dev/null 2>&1; then
-                (
-                    cd /opt/ttp/ttp/resources/selinux || exit 1
-                    checkmodule -M -m -o ttp_tor_policy.mod ttp_tor_policy.te
-                    semodule_package -o ttp_tor_policy.pp -m ttp_tor_policy.mod
-                    semodule -i ttp_tor_policy.pp
-                    echo "[TTP] SELinux module 'ttp_tor_policy' compiled and installed successfully."
-                )
-            fi
-        else
-            echo "[TTP] SELinux module already present. Skipping."
         fi
     fi
 fi
