@@ -51,6 +51,7 @@ import pytest
 # The classifier needs neither nse nor root, so it lives outside this module
 # and is unit-tested on its own.
 from tests.nse_classifier import canary_seen, is_cleartext_leak
+from tests.nse_stimuli import reporting_send
 
 # Import TTP firewall dynamic rule builder
 from ttp.firewall import apply_rules
@@ -170,7 +171,7 @@ def _exec_in_ns(ns_name: str, *args: str, check: bool = False) -> subprocess.Com
     return _original_subprocess_run(cmd, capture_output=True, text=True, check=check)
 
 
-def _python_in_ns(ns_name: str, script: str, uid: int | None = None) -> None:
+def _python_in_ns(ns_name: str, script: str, uid: int | None = None) -> str:
     """
     Run a short Python program inside the namespace, optionally as another user.
 
@@ -180,15 +181,22 @@ def _python_in_ns(ns_name: str, script: str, uid: int | None = None) -> None:
 
     A stimulus whose send is *refused* is a different thing entirely: with
     TTP's rules loaded, nftables answers a rejected packet with EPERM on the
-    local socket, which is the firewall working. Each script therefore
-    suppresses OSError around the send, so a non-zero exit means the probe
-    could not run at all - no interpreter, a broken script - and never means
-    the traffic was blocked.
+    local socket, which is the firewall working. Each script therefore wraps
+    its send in ``reporting_send``, so a non-zero exit means the probe could
+    not run at all - no interpreter, a broken script - and never means the
+    traffic was blocked.
+
+    Returns what the probe printed: whether the packet left the socket, and if
+    not, the kernel's reason. The positive control quotes it, because with the
+    ruleset flushed a refused send is the instrument failing rather than the
+    firewall working, and the two are otherwise indistinguishable from the
+    outside.
     """
     prelude = f"import os; os.setuid({uid});\n" if uid is not None else ""
     result = _exec_in_ns(ns_name, "python3", "-c", prelude + script)
     if result.returncode != 0:
         raise RuntimeError(f"stimulus failed to run inside {ns_name}: {result.stderr.strip() or result.stdout.strip()}")
+    return result.stdout.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -196,24 +204,23 @@ def _python_in_ns(ns_name: str, script: str, uid: int | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def udp_to(host: str, port: int, uid: int | None = None) -> Callable[[str], None]:
+def udp_to(host: str, port: int, uid: int | None = None) -> Callable[[str], str]:
     """A UDP datagram to *host*:*port*."""
 
-    def stimulus(ns_name: str) -> None:
+    def stimulus(ns_name: str) -> str:
         family = "AF_INET6" if ":" in host else "AF_INET"
-        _python_in_ns(
+        return _python_in_ns(
             ns_name,
-            "import socket, contextlib\n"
+            "import socket\n"
             f"s = socket.socket(socket.{family}, socket.SOCK_DGRAM)\n"
-            "with contextlib.suppress(OSError):\n"
-            f"    s.sendto(b'ttp-leak-probe', ({host!r}, {port}))\n",
+            + reporting_send(f"s.sendto(b'ttp-leak-probe', ({host!r}, {port}))"),
             uid=uid,
         )
 
     return stimulus
 
 
-def udp_roundtrip_to(host: str, port: int, uid: int | None = None) -> Callable[[str], None]:
+def udp_roundtrip_to(host: str, port: int, uid: int | None = None) -> Callable[[str], str]:
     """A UDP datagram that also *waits* for the answer.
 
     ``udp_to`` proves egress only, which is weaker than the claim the bypass
@@ -222,15 +229,18 @@ def udp_roundtrip_to(host: str, port: int, uid: int | None = None) -> Callable[[
     is still a broken proxy.
     """
 
-    def stimulus(ns_name: str) -> None:
+    def stimulus(ns_name: str) -> str:
         family = "AF_INET6" if ":" in host else "AF_INET"
-        _python_in_ns(
+        # The reply is waited for separately: a recv that times out is a broken
+        # return path, which is not the same finding as a send the kernel
+        # refused, and folding them together would report one as the other.
+        return _python_in_ns(
             ns_name,
             "import socket, contextlib\n"
             f"s = socket.socket(socket.{family}, socket.SOCK_DGRAM)\n"
             "s.settimeout(2.0)\n"
-            "with contextlib.suppress(OSError):\n"
-            f"    s.sendto(b'ttp-roundtrip-probe', ({host!r}, {port}))\n"
+            + reporting_send(f"s.sendto(b'ttp-roundtrip-probe', ({host!r}, {port}))")
+            + "with contextlib.suppress(OSError):\n"
             "    s.recvfrom(64)\n",
             uid=uid,
         )
@@ -266,25 +276,23 @@ def host_udp_echo(bind_ip: str, port: int) -> Iterator[None]:
         sock.close()
 
 
-def tcp_to(host: str, port: int, uid: int | None = None) -> Callable[[str], None]:
+def tcp_to(host: str, port: int, uid: int | None = None) -> Callable[[str], str]:
     """A TCP connection attempt to *host*:*port* (the SYN is what matters)."""
 
-    def stimulus(ns_name: str) -> None:
+    def stimulus(ns_name: str) -> str:
         family = "AF_INET6" if ":" in host else "AF_INET"
-        _python_in_ns(
+        return _python_in_ns(
             ns_name,
-            "import socket, contextlib\n"
+            "import socket\n"
             f"s = socket.socket(socket.{family}, socket.SOCK_STREAM)\n"
-            "s.settimeout(0.5)\n"
-            "with contextlib.suppress(OSError):\n"
-            f"    s.connect(({host!r}, {port}))\n",
+            "s.settimeout(0.5)\n" + reporting_send(f"s.connect(({host!r}, {port}))"),
             uid=uid,
         )
 
     return stimulus
 
 
-def icmp_to(host: str) -> Callable[[str], None]:
+def icmp_to(host: str) -> Callable[[str], str]:
     """
     An ICMP echo request, i.e. traffic Tor cannot carry at all.
 
@@ -297,22 +305,20 @@ def icmp_to(host: str) -> Callable[[str], None]:
     on nothing but python3 inside the namespace.
     """
 
-    def stimulus(ns_name: str) -> None:
+    def stimulus(ns_name: str) -> str:
         if ":" in host:
             # The kernel computes the checksum for raw ICMPv6 sockets.
-            _python_in_ns(
+            return _python_in_ns(
                 ns_name,
-                "import socket, contextlib\n"
+                "import socket\n"
                 "s = socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_ICMPV6)\n"
                 "echo = b'\\x80\\x00\\x00\\x00\\x00\\x01\\x00\\x01' + b'ttp-leak-probe'\n"
-                "with contextlib.suppress(OSError):\n"
-                f"    s.sendto(echo, ({host!r}, 0))\n",
+                + reporting_send(f"s.sendto(echo, ({host!r}, 0))"),
             )
-            return
         # For IPv4 it does not, so the probe computes its own.
-        _python_in_ns(
+        return _python_in_ns(
             ns_name,
-            "import socket, struct, contextlib\n"
+            "import socket, struct\n"
             "def csum(data):\n"
             "    if len(data) % 2:\n"
             "        data += b'\\x00'\n"
@@ -324,8 +330,7 @@ def icmp_to(host: str) -> Callable[[str], None]:
             "echo = struct.pack('!BBHHH', 8, 0, 0, 1, 1) + payload\n"
             "echo = struct.pack('!BBHHH', 8, 0, csum(echo), 1, 1) + payload\n"
             "s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)\n"
-            "with contextlib.suppress(OSError):\n"
-            f"    s.sendto(echo, ({host!r}, 0))\n",
+            + reporting_send(f"s.sendto(echo, ({host!r}, 0))"),
         )
 
     return stimulus
@@ -587,6 +592,24 @@ def _engine():
     return RuleEngine(use_nsenter=True)
 
 
+def _recording(stimulus):  # type: ignore[no-untyped-def]
+    """Wrap *stimulus* so what it reported survives the call into ``observe``.
+
+    ``observe`` returns packets, not the probe's own account of itself, and
+    changing that would touch every caller. The list returned here is filled
+    in by the time ``observe`` returns, which is all the positive control
+    needs to say *why* it saw nothing.
+    """
+    reports: list[str] = []
+
+    def probe(ns_name: str) -> str:
+        report = stimulus(ns_name) or ""
+        reports.append(report)
+        return report
+
+    return probe, reports
+
+
 def assert_contained(ns, loop, ruleset: str, stimulus, description: str) -> None:  # type: ignore[no-untyped-def]
     """
     Assert that TTP contains *stimulus*, having first proved the test can see it.
@@ -598,12 +621,14 @@ def assert_contained(ns, loop, ruleset: str, stimulus, description: str) -> None
     engine = _engine()
 
     engine.flush(ns.name)
-    control = observe(ns, loop, stimulus)
+    probe, reports = _recording(stimulus)
+    control = observe(ns, loop, probe)
     control_leaks = [p for p in control if is_cleartext_leak(p)]
     assert control_leaks, (
         f"POSITIVE CONTROL FAILED for {description}: with the firewall flushed, the "
         f"sniffer on {ns.ext_iface} observed no cleartext packet "
-        f"({len(control)} packet(s) captured in total). The instrument is not "
+        f"({len(control)} packet(s) captured in total). The probe itself reported: "
+        f"{'; '.join(reports) or '<nothing>'}. The instrument is not "
         f"measuring, so the zero-leak assertion below would pass for the wrong "
         f"reason. Fix the harness before trusting any result in this file."
     )
