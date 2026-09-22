@@ -4,10 +4,24 @@
 
 """Chaos Monkey Watchdog Stress Testing Script.
 
-Simulates randomized system failure injections (Tor daemon crash, DNS unmount,
-firewall rules flush, and network link flapping) and asserts that the TTP
-watchdog auto-heals the system or applies the emergency killswitch, preventing
-any cleartext network leaks.
+Injects system failures (Tor daemon crash, DNS unmount, firewall flush,
+firewall destroy, network link flap) and asserts that the TTP watchdog
+auto-heals the system or applies the emergency killswitch, preventing any
+cleartext network leaks.
+
+Why the sweep is not random
+---------------------------
+
+It used to be. ``random.choice`` at every interval meant a 60s run at 12s
+intervals exercised roughly four of the five faults, picked by chance, and no
+two runs covered the same ground. A regression in the unlucky fault shipped,
+and "the chaos monkey passed" said more about luck than about the watchdog.
+
+The run now sweeps every fault in ``INJECTIONS`` once, in order, and
+``--injection`` reproduces a single one. ``--duration`` is a cap rather than a
+schedule: a sweep that runs out of budget has left faults untried, and
+``verdict`` refuses to call that a pass - the same rule the audit oracle
+follows, one level up.
 
 Why the audit has three answers
 -------------------------------
@@ -36,11 +50,11 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import os
-import random
 import subprocess
 import sys
 import time
 import urllib.request
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 
@@ -228,16 +242,105 @@ def inject_link_flap(interface: str):
     subprocess.run(["ip", "link", "set", interface, "up"], check=True)
 
 
+#: Every fault a run can inject, in the order the sweep runs them. The dispatch
+#: reads from here, so a fault added to this table is a fault the sweep runs -
+#: the previous `random.choice` list and its `if/elif` chain could drift apart,
+#: and a fault present in one and missing from the other was silently never
+#: injected. Each entry takes the active interface; most ignore it.
+INJECTIONS: dict[str, Callable[[str], None]] = {
+    "kill_tor": lambda interface: inject_kill_tor(),
+    "flush_firewall": lambda interface: inject_flush_firewall(),
+    "destroy_firewall": lambda interface: inject_destroy_firewall(),
+    "unmount_dns": lambda interface: inject_unmount_dns(),
+    "link_flap": inject_link_flap,
+}
+
+
+def plan_injections(selected: str | None = None) -> list[str]:
+    """The exact sequence of faults this run will inject.
+
+    The loop used to pick with ``random.choice`` at every interval, so a 60s
+    run at 12s intervals exercised roughly four of the five faults, chosen by
+    chance. A regression in the unlucky one shipped, and no two runs covered
+    the same ground - which makes "the chaos monkey passed" a statement about
+    luck rather than about the watchdog.
+
+    Args:
+        selected: One fault name, to reproduce a single failure. ``None``
+            sweeps all of them, once each.
+
+    Raises:
+        ValueError: If *selected* names no known fault. A typo that planned an
+            empty run would otherwise report a clean sweep having injected
+            nothing at all.
+    """
+    if selected is None:
+        return list(INJECTIONS)
+    if selected not in INJECTIONS:
+        raise ValueError(f"unknown injection {selected!r}; known: {', '.join(INJECTIONS)}")
+    return [selected]
+
+
+def verdict(planned: int, executed: int, leaks: int, inconclusive: int) -> tuple[int, str]:
+    """Decide what a finished run proved, and with what exit code.
+
+    Ordered by how little the run is allowed to claim. A leak is the finding
+    the script exists for; an audit that could not measure has produced no
+    evidence either way and must not read as a clean run; and a sweep that did
+    not finish has left faults untried, which is the same defect one level up -
+    reporting success for ground that was never covered.
+    """
+    if leaks > 0:
+        return 1, "[FAIL] Watchdog failed to prevent cleartext network leaks."
+    if inconclusive > 0:
+        return 1, (
+            f"[FAIL] {inconclusive} of {executed} audit(s) could not measure. "
+            "This run proves nothing about whether the watchdog held."
+        )
+    if executed == 0:
+        return 1, "[FAIL] No failure was ever injected, so the watchdog was never tested."
+    if executed < planned:
+        return 1, (
+            f"[FAIL] The sweep did not finish: {executed} of {planned} planned "
+            "injection(s) ran before the duration budget expired. The faults that "
+            "were never injected are untested, so this run cannot report success. "
+            "Raise --duration or use --injection to run one at a time."
+        )
+    return 0, f"[PASS] All {executed} planned injection(s) ran and the watchdog held with zero leaks."
+
+
 def main():
     parser = argparse.ArgumentParser(description="Chaos Monkey Watchdog stress test")
-    parser.add_argument("--duration", type=int, default=60, help="Total execution duration in seconds")
+    parser.add_argument(
+        "--duration",
+        type=int,
+        default=300,
+        help=(
+            "Upper bound on the run, in seconds. Not a schedule: the sweep ends when every "
+            "planned injection has run, and a budget that expires first is reported as an "
+            "incomplete sweep rather than a pass."
+        ),
+    )
     parser.add_argument(
         "--interval",
         type=int,
         default=12,
         help="Time between failure injections in seconds",
     )
+    parser.add_argument(
+        "--injection",
+        choices=sorted(INJECTIONS),
+        default=None,
+        help="Inject only this fault, to reproduce one failure. Default: sweep all of them once.",
+    )
     args = parser.parse_args()
+
+    try:
+        plan = plan_injections(args.injection)
+    except ValueError as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"[INFO] Planned sweep ({len(plan)}): {', '.join(plan)}")
 
     require_root()
 
@@ -282,48 +385,35 @@ def main():
     inconclusive_audits = 0
 
     try:
-        while time.time() - start_time < args.duration:
-            # Perform a randomized injection at set intervals
-            if time.time() - last_injection >= args.interval:
-                failure_type = random.choice(
-                    [
-                        "kill_tor",
-                        "flush_firewall",
-                        "destroy_firewall",
-                        "unmount_dns",
-                        "link_flap",
-                    ]
-                )
+        for failure_type in plan:
+            # The budget is a cap, not the schedule. A sweep that runs out of
+            # time has left faults untried, and `verdict` refuses to call that
+            # a pass rather than reporting success for ground never covered.
+            if time.time() - start_time >= args.duration:
+                print(f"[WARN] Duration budget expired before {failure_type}; the sweep is incomplete.")
+                break
 
-                if failure_type == "kill_tor":
-                    inject_kill_tor()
-                elif failure_type == "flush_firewall":
-                    inject_flush_firewall()
-                elif failure_type == "destroy_firewall":
-                    inject_destroy_firewall()
-                elif failure_type == "unmount_dns":
-                    inject_unmount_dns()
-                elif failure_type == "link_flap":
-                    inject_link_flap(interface)
+            while time.time() - last_injection < args.interval:
+                time.sleep(1)
 
-                failures_injected += 1
-                last_injection = time.time()
+            print(f"[INFO] Injecting {failure_type} ({failures_injected + 1}/{len(plan)})...")
+            INJECTIONS[failure_type](interface)
 
-                # Sleep briefly to let the watchdog detect and react (15s watch interval + buffer)
-                check_wait = 18
-                print(f"[INFO] Waiting {check_wait} seconds for watchdog response...")
-                time.sleep(check_wait)
+            failures_injected += 1
+            last_injection = time.time()
 
-                # Run network leak audits
-                result = run_connectivity_audit(real_ip)
-                if result is AuditResult.LEAK:
-                    leaks_found += 1
-                    break
-                if result is AuditResult.INCONCLUSIVE:
-                    inconclusive_audits += 1
+            # Sleep briefly to let the watchdog detect and react (15s watch interval + buffer)
+            check_wait = 18
+            print(f"[INFO] Waiting {check_wait} seconds for watchdog response...")
+            time.sleep(check_wait)
 
-            # Passive audit sleep
-            time.sleep(1)
+            # Run network leak audits
+            result = run_connectivity_audit(real_ip)
+            if result is AuditResult.LEAK:
+                leaks_found += 1
+                break
+            if result is AuditResult.INCONCLUSIVE:
+                inconclusive_audits += 1
 
     except KeyboardInterrupt:
         print("[INFO] Stress test interrupted by user.")
@@ -335,28 +425,20 @@ def main():
 
     print("\n" + "=" * 50)
     print("Chaos Monkey Stress Test Summary:")
+    print(f"  Injections Planned:   {len(plan)} ({', '.join(plan)})")
     print(f"  Failures Injected:    {failures_injected}")
     print(f"  Leaks Detected:       {leaks_found}")
     print(f"  Inconclusive Audits:  {inconclusive_audits}")
     print("=" * 50)
 
-    if leaks_found > 0:
-        print("[FAIL] Watchdog failed to prevent cleartext network leaks.")
-        sys.exit(1)
-    if inconclusive_audits > 0:
-        # Not a pass. An audit that could not measure has produced no evidence
-        # that the host was safe, and reporting one as a clean run is the defect
-        # this script exists to catch in TTP.
-        print(
-            f"[FAIL] {inconclusive_audits} of {failures_injected} audit(s) could not "
-            "measure. This run proves nothing about whether the watchdog held."
-        )
-        sys.exit(1)
-    if failures_injected == 0:
-        print("[FAIL] No failure was ever injected, so the watchdog was never tested.")
-        sys.exit(1)
-    print("[PASS] Watchdog successfully protected the environment with zero leaks.")
-    sys.exit(0)
+    code, message = verdict(
+        planned=len(plan),
+        executed=failures_injected,
+        leaks=leaks_found,
+        inconclusive=inconclusive_audits,
+    )
+    print(message)
+    sys.exit(code)
 
 
 if __name__ == "__main__":
