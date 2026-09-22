@@ -29,9 +29,9 @@ integration-arch: ## Run the integration suite on Arch Linux
 
 integration-all: integration-debian integration-fedora integration-arch ## All three distributions in sequence
 
-chaos-monkey: ## Watchdog chaos-monkey sweep: every fault once (~3min, requires root)
+chaos-monkey: ## Watchdog chaos-monkey sweep: every fault once (~4min, requires root)
 	@echo "==> [$(PROJECT_SHORT)] Watchdog chaos monkey..."
-	sudo -E $(VENV)/bin/python3 tests/chaos_monkey.py --duration 300
+	sudo -E $(VENV)/bin/python3 tests/chaos_monkey.py --duration 420
 
 ##@ Leak verification (run from an unproxied host, REAL_PUBLIC_IP set)
 

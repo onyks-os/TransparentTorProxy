@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`docs/security-assessment.md` 4.3 no longer overstates where its evidence
+  runs.** The "Measured" table was introduced with the header *"in
+  `tests/test_nse_rules.py`, on the wire, in CI"*, which was true of two of its
+  four rows: the rollback branches are unit tests and never touch the wire, and
+  the chaos sweep is a manual gate that runs in no workflow at all. Each row now
+  carries its own "Where it runs" column saying so. A table that overstates its
+  own coverage is the same defect as a test that cannot fail, one level up.
+
 - **The chaos monkey sweeps every fault instead of picking one at random.** It
   used `random.choice` at each interval, so a 60s run at 12s intervals
   exercised roughly four of the five injections, chosen by chance — a
@@ -48,6 +56,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [ADR 0011](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/decisions/0011-start-exit-codes.md).
 
 ### Added
+
+- **The chaos sweep now kills Tor behind systemd's back.** Every existing
+  injection ends Tor the orderly way — `systemctl stop ttp-tor` — which leaves
+  the unit `inactive` and systemd aware of it. The failure that happens to
+  people is an OOM kill or a crash, and that lands the unit in `failed` with
+  `Restart=no` keeping Tor down: a different signal for the watchdog to notice,
+  and the last entry in #30's untested list that needed no new infrastructure.
+  The PID is read from `systemctl show -p MainPID` and refused unless it is a
+  plain positive integer — systemd writes `MainPID=0` for a unit with no
+  process, and that zero reaching `kill` would signal the whole process group
+  instead of Tor. A unit with no process raises rather than quietly injecting
+  nothing, because a fault that did nothing would still be counted as a fault
+  that was injected. The sweep's default budget goes from 300s to 420s to fit
+  six faults. Closes the last no-infrastructure item of
+  [#30](https://github.com/onyks-os/TransparentTorProxy/issues/30).
 
 - **The teardown window is measured on the wire.** `do_stop` applies a lockdown
   rule at the top of `filter_out` before it touches Tor or the ruleset, and

@@ -218,6 +218,56 @@ def inject_kill_tor():
     subprocess.run(["systemctl", "stop", "ttp-tor"], check=True)
 
 
+def parse_main_pid(systemctl_output: str) -> int | None:
+    """The unit's MainPID, or None when there is no process to signal.
+
+    systemd writes ``MainPID=0`` for a unit that is not running, and that zero
+    reaching ``kill`` would signal every process in the caller's group instead
+    of Tor. Anything that is not a plain positive integer is therefore read as
+    "no PID" rather than passed along.
+    """
+    for line in systemctl_output.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() != "MainPID":
+            continue
+        try:
+            pid = int(value.strip())
+        except ValueError:
+            return None
+        return pid if pid > 0 else None
+    return None
+
+
+def inject_sigkill_tor():
+    """Kill Tor with SIGKILL, without telling systemd.
+
+    ``inject_kill_tor`` stops the unit, which is orderly: systemd is the one
+    ending it, the unit goes ``inactive``, and Tor is given a chance to exit.
+    A SIGKILL is the failure that actually happens to people - an OOM kill, a
+    crash - and it leaves a different state behind. The unit lands in
+    ``failed`` rather than ``inactive``, and ``ttp-tor`` is ``Restart=no``, so
+    nothing brings Tor back. That is a different signal for the watchdog to
+    notice, and #30 lists it as untested.
+
+    Raises:
+        RuntimeError: If the unit reports no running process. A fault that
+            silently did nothing would still be counted as a fault that was
+            injected, which is the same defect as an audit that cannot measure
+            reporting success.
+    """
+    print("[CHAOS] Injecting Failure: SIGKILL to the Tor process, behind systemd's back...")
+    shown = subprocess.run(
+        ["systemctl", "show", "ttp-tor", "-p", "MainPID"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    pid = parse_main_pid(shown.stdout)
+    if pid is None:
+        raise RuntimeError(f"cannot SIGKILL Tor: no running Tor process to signal ({shown.stdout.strip()!r})")
+    subprocess.run(["kill", "-KILL", str(pid)], check=True)
+
+
 def inject_flush_firewall():
     print("[CHAOS] Injecting Failure: Flushing nftables 'inet ttp' ruleset...")
     subprocess.run(["nft", "flush", "table", "inet", "ttp"], check=True)
@@ -249,6 +299,7 @@ def inject_link_flap(interface: str):
 #: injected. Each entry takes the active interface; most ignore it.
 INJECTIONS: dict[str, Callable[[str], None]] = {
     "kill_tor": lambda interface: inject_kill_tor(),
+    "sigkill_tor": lambda interface: inject_sigkill_tor(),
     "flush_firewall": lambda interface: inject_flush_firewall(),
     "destroy_firewall": lambda interface: inject_destroy_firewall(),
     "unmount_dns": lambda interface: inject_unmount_dns(),
@@ -314,7 +365,7 @@ def main():
     parser.add_argument(
         "--duration",
         type=int,
-        default=300,
+        default=420,
         help=(
             "Upper bound on the run, in seconds. Not a schedule: the sweep ends when every "
             "planned injection has run, and a budget that expires first is reported as an "
