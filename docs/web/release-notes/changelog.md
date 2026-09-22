@@ -52,6 +52,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The integration suite runs on Fedora and Arch, not Debian alone.**
+  `make integration-fedora` and `make integration-arch` have existed since
+  0.4.8, with pinned Dockerfiles beside the Debian one, and no workflow had
+  ever invoked them — so the integration evidence behind every release came
+  from one distribution. TTP branches on which one it is: the first run proved
+  it, with Debian resolving the Tor account to `debian-tor` and Fedora to
+  `toranon`, two different code paths of which only the first had ever been
+  executed. `fail-fast` is off so one distribution breaking cannot hide the
+  other two, and a `label` key keeps the check names byte-identical because
+  branch protection matches them as strings. This does **not** put SELinux
+  under test: `setup_selinux_if_needed()` returns early unless
+  `is_selinux_enforcing()`, which needs an enforcing host rather than a
+  container, so that path is still executed nowhere in CI.
+
 - **The chaos sweep now kills Tor behind systemd's back.** Every existing
   injection ends Tor the orderly way — `systemctl stop ttp-tor` — which leaves
   the unit `inactive` and systemd aware of it. The failure that happens to
