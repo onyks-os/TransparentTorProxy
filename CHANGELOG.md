@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The chaos monkey sweeps every fault instead of picking one at random.** It
+  used `random.choice` at each interval, so a 60s run at 12s intervals
+  exercised roughly four of the five injections, chosen by chance — a
+  regression in the unlucky one shipped, and no two runs covered the same
+  ground. A run now injects every fault in `INJECTIONS` once, in order, and
+  `--injection <name>` reproduces a single one. `--duration` became a cap
+  rather than a schedule (default `300`, was `60`): a sweep that runs out of
+  budget has left faults untried, and that is now reported as an incomplete
+  sweep rather than a pass — the same rule the audit oracle already follows,
+  one level up. The fault list and the dispatch are the same table, so a fault
+  added to one cannot go missing from the other. Towards
+  [#30](https://github.com/onyks-os/TransparentTorProxy/issues/30).
+
 - **`docs/security-assessment.md` now states which lifecycle transitions are
   untested.** New section 4.3 lists what is asserted on the wire and, beside it,
   what is not: reboot with an active session, shutdown ordering against

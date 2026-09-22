@@ -24,7 +24,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.chaos_monkey import AuditResult, classify_audit, run_connectivity_audit
+from tests.chaos_monkey import (
+    INJECTIONS,
+    AuditResult,
+    classify_audit,
+    plan_injections,
+    run_connectivity_audit,
+    verdict,
+)
 
 _REAL_IP = "203.0.113.7"
 
@@ -112,3 +119,52 @@ def test_the_root_guard_is_callable_rather_than_executed_on_import() -> None:
 
     with patch("tests.chaos_monkey.os.geteuid", return_value=0):
         assert require_root() is None
+
+
+# ---------------------------------------------------------------------------
+# The sweep: which faults a run actually injects
+# ---------------------------------------------------------------------------
+
+
+def test_the_default_plan_covers_every_injection_exactly_once() -> None:
+    """`random.choice` over five faults for 60s exercised about four of them."""
+    assert sorted(plan_injections()) == sorted(INJECTIONS)
+    assert len(plan_injections()) == len(INJECTIONS)
+
+
+def test_a_single_injection_can_be_reproduced_on_its_own() -> None:
+    assert plan_injections("unmount_dns") == ["unmount_dns"]
+
+
+def test_an_unknown_injection_is_refused_rather_than_silently_skipped() -> None:
+    """A typo that plans nothing would report a clean run having tested nothing."""
+    with pytest.raises(ValueError, match="no_such_fault"):
+        plan_injections("no_such_fault")
+
+
+def test_a_sweep_cut_short_is_not_a_pass() -> None:
+    """The budget running out means the remaining faults were never tried."""
+    code, message = verdict(planned=5, executed=3, leaks=0, inconclusive=0)
+    assert code != 0
+    assert "3" in message and "5" in message
+
+
+def test_a_complete_clean_sweep_passes() -> None:
+    code, message = verdict(planned=5, executed=5, leaks=0, inconclusive=0)
+    assert code == 0
+    assert "5" in message
+
+
+def test_a_leak_outranks_a_complete_sweep() -> None:
+    code, _ = verdict(planned=5, executed=5, leaks=1, inconclusive=0)
+    assert code != 0
+
+
+def test_an_audit_that_could_not_measure_outranks_a_complete_sweep() -> None:
+    code, _ = verdict(planned=5, executed=5, leaks=0, inconclusive=1)
+    assert code != 0
+
+
+def test_a_run_that_injected_nothing_is_not_a_pass() -> None:
+    code, _ = verdict(planned=5, executed=0, leaks=0, inconclusive=0)
+    assert code != 0
