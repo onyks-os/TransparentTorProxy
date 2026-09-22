@@ -81,15 +81,38 @@ jobs:
         if: matrix.python-version == '3.12'
         run: make coverage
 
-  integration-debian:
-    name: Integration Tests (Debian)
+  # Three distributions, because TTP branches on which one it is running on and
+  # only one of those branches was ever executed. `is_fedora_family()` changes
+  # the Tor account it looks for (debian-tor / toranon / tor), the service name,
+  # and whether the SELinux path is considered at all; the packaging targets
+  # differ; and the nftables each distro ships is a different version compiling
+  # the same ruleset. A suite that runs on Debian alone measures one of them.
+  #
+  # `label` exists so the check names stay exactly as they were - branch
+  # protection matches them as strings, and "Integration Tests (Debian)" is an
+  # existing required check.
+  #
+  # fail-fast is off deliberately: one distribution breaking must not hide
+  # whether the other two passed, which is the whole reason for running three.
+  integration:
+    name: Integration Tests (${{ matrix.label }})
     needs: unit-tests
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian
+            label: Debian
+          - distro: fedora
+            label: Fedora
+          - distro: arch
+            label: Arch
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Run Debian integration tests
-        run: make integration-debian
+      - name: Run ${{ matrix.label }} integration tests
+        run: make integration-${{ matrix.distro }}
 
   zero-leak:
     # The suite behind the README's strongest claim. Until now it ran nowhere:
