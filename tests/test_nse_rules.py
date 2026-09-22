@@ -715,6 +715,31 @@ def test_ipv6_is_not_allowed_to_escape(ns_sandbox, ttp_ruleset) -> None:
     assert_contained(ns, loop, ttp_ruleset, tcp_to(WAN_V6, 80), "IPv6 TCP to the WAN")
 
 
+def test_routable_icmpv6_is_not_allowed_to_escape(ns_sandbox, ttp_ruleset) -> None:
+    """An ICMPv6 echo to a global address: the leak class #35 says is untested.
+
+    The sniffer's BPF default used to exclude *all* of ICMPv6, so a routable
+    echo never reached userspace to be classified and this test could not
+    exist. nse 2.1.0 narrowed the exclusion to Neighbour Discovery (types
+    133-137), and `tests/test_nse_classifier.py` asserts that the classifier
+    calls such an echo a leak once it arrives.
+
+    What has never been shown is that it arrives. The first attempt failed its
+    own positive control - 3 packets captured on one runner, 0 on the other,
+    none of them the echo - and was not shipped, because a test that cannot
+    observe its subject would assert containment for the wrong reason.
+
+    Since then `icmp_to` reports its send instead of swallowing the OSError, so
+    if this fails again the positive control names which it is: a raw sendto
+    the kernel refused, or a packet that left the socket and was lost between
+    there and the capture.
+    """
+    ns, loop = ns_sandbox
+    if not has_ipv6(ns):
+        pytest.skip("no IPv6 default route in this sandbox")
+    assert_contained(ns, loop, ttp_ruleset, icmp_to(WAN_V6), "ICMPv6 echo to the WAN")
+
+
 # ---------------------------------------------------------------------------
 # Attribution: which rule acted, not merely that nothing escaped
 # ---------------------------------------------------------------------------
