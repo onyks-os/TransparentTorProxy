@@ -195,6 +195,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The UDP egress leak probe reddened `main` for a DNS answer it did not get.**
+  It resolved a single STUN hostname, and under a live session that resolution
+  goes through Tor's `DNSPort` — so it depends on whichever exit Tor happened to
+  pick. One exit returned no `AAAA` for `stun.l.google.com`, the probe reported
+  `INCONCLUSIVE`, and the build failed for a reason with nothing to do with
+  whether UDP is contained. The probe now walks a list of public STUN servers
+  and uses the first that resolves, reporting `UNREACHABLE` only when none of
+  them does, and naming each one it tried. The target still has to be a real
+  STUN server — this probe detects a leak by *receiving a reply*, so pointing it
+  at an arbitrary routable address would turn it into a test that cannot fail.
+
 - **A leak probe that could not send looked identical to a firewall that
   blocked it.** Every stimulus in the NSE containment suite suppressed
   `OSError` around its send, and it has to: with TTP's ruleset loaded,

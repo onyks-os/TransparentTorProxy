@@ -233,6 +233,7 @@ import socket  # noqa: E402
 from unittest.mock import MagicMock, patch  # noqa: E402
 
 from tests.leak.test_dns_leak import _probe as dns_probe  # noqa: E402
+from tests.leak.test_udp_egress_leak import _STUN_HOSTS  # noqa: E402
 from tests.leak.test_udp_egress_leak import _probe as udp_probe  # noqa: E402
 
 
@@ -337,7 +338,7 @@ def test_the_udp_probe_reads_any_reply_as_a_leak() -> None:
         patch("socket.getaddrinfo", return_value=[(2, 2, 17, "", ("74.125.0.1", 19302))]),
         patch("socket.socket", return_value=sock),
     ):
-        observation = udp_probe(socket.AF_INET, "stun.example", 19302, "stun_test")
+        observation = udp_probe(socket.AF_INET, ("stun.example",), 19302, "stun_test")
 
     assert observation.outcome is Outcome.ESCAPED
     assert verdict_for(observation)[0] is Verdict.LEAK
@@ -350,10 +351,61 @@ def test_the_udp_probe_reads_a_dns_failure_as_a_probe_that_could_not_run() -> No
         patch("tests.leak.test_udp_egress_leak.session_is_active", return_value=True),
         patch("socket.getaddrinfo", side_effect=socket.gaierror("Name or service not known")),
     ):
-        observation = udp_probe(socket.AF_INET, "stun.example", 19302, "stun_test")
+        observation = udp_probe(socket.AF_INET, ("stun.example",), 19302, "stun_test")
 
     assert observation.outcome is Outcome.UNREACHABLE
     assert verdict_for(observation)[0] is Verdict.INCONCLUSIVE
+
+
+def test_the_shipped_stun_list_actually_has_a_fallback() -> None:
+    """The fallback logic is worth nothing if the list it walks has one entry.
+
+    `_STUN_HOSTS` is only read by the two probes under `tests/leak/`, which the
+    default suite ignores, so trimming it back to a single host would pass every
+    test that runs on a commit and quietly restore the flake. Same reason
+    `_ATTEMPTS` is pinned in tests/test_leak_retry.py.
+    """
+    assert len(_STUN_HOSTS) >= 2, f"no fallback host to move on to: {_STUN_HOSTS}"
+    assert len(set(_STUN_HOSTS)) == len(_STUN_HOSTS), f"duplicate hosts retry the same name: {_STUN_HOSTS}"
+
+
+def test_the_udp_probe_moves_on_when_one_stun_host_has_no_record() -> None:
+    """One exit node without an AAAA for one host is not a containment finding.
+
+    This is the flake that reddened main: `stun.l.google.com` resolved for A and
+    not for AAAA through whichever exit Tor had picked, so the probe reported
+    INCONCLUSIVE and the build failed for a reason with nothing to do with UDP.
+    """
+
+    def resolve(host, port, family, socktype):  # type: ignore[no-untyped-def]
+        # Anything but the second host fails, so a probe that passed the whole
+        # sequence to getaddrinfo instead of one name at a time fails too.
+        if host != "works.example":
+            raise socket.gaierror(-5, "No address associated with hostname")
+        return [(family, socktype, 17, "", ("203.0.113.9", port))]
+
+    with (
+        patch("tests.leak.test_udp_egress_leak.session_is_active", return_value=True),
+        patch("socket.getaddrinfo", side_effect=resolve),
+        patch("socket.socket", return_value=_sock_raising(TimeoutError())),
+    ):
+        observation = udp_probe(socket.AF_INET, ("no-aaaa.example", "works.example"), 19302, "stun_test")
+
+    assert observation.outcome is Outcome.BLOCKED
+    assert verdict_for(observation)[0] is Verdict.CONTAINED
+
+
+def test_the_udp_probe_names_every_host_it_could_not_resolve() -> None:
+    """A fallback that hides which hosts failed would make the next flake unreadable."""
+    with (
+        patch("tests.leak.test_udp_egress_leak.session_is_active", return_value=True),
+        patch("socket.getaddrinfo", side_effect=socket.gaierror(-5, "No address associated with hostname")),
+    ):
+        observation = udp_probe(socket.AF_INET, ("a.example", "b.example"), 19302, "stun_test")
+
+    assert observation.outcome is Outcome.UNREACHABLE
+    assert "a.example" in observation.detail
+    assert "b.example" in observation.detail
 
 
 def test_every_probe_records_whether_a_session_was_live() -> None:
