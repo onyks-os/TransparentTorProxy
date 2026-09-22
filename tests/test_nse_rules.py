@@ -54,7 +54,7 @@ from tests.nse_classifier import canary_seen, is_cleartext_leak
 from tests.nse_stimuli import reporting_send
 
 # Import TTP firewall dynamic rule builder
-from ttp.firewall import apply_rules
+from ttp.firewall import apply_rules, apply_teardown_lockdown, destroy_rules
 
 # The `nse` extra is optional, so a plain dev install legitimately has no NSE and
 # these tests skip. But a *silent* skip is how a suite stops running without
@@ -159,6 +159,10 @@ HOST_V4 = "10.0.1.1"
 HOST_V6 = "fd00:1::1"
 PEER_V4 = "10.0.1.2"
 PEER_V6 = "fd00:1::2"
+
+#: The UID the ruleset under test is built around. The teardown lockdown
+#: exempts it, so the fixture and the teardown tests must agree on it.
+TOR_UID = 110
 
 #: Any address outside the veth subnet stands in for "the WAN".
 WAN_V4 = "8.8.8.8"
@@ -349,7 +353,7 @@ def ttp_ruleset() -> str:
         patch("ttp.firewall.runner._run_nft_string") as mock_run_nft_string,
         patch("ttp.firewall.runner.pwd.getpwnam") as mock_getpwnam,
     ):
-        mock_getpwnam.return_value = MagicMock(pw_uid=110)
+        mock_getpwnam.return_value = MagicMock(pw_uid=TOR_UID)
         apply_rules(
             tor_user="debian-tor",
             transport_port=9041,
@@ -1042,6 +1046,143 @@ def test_bypassed_user_traffic_gets_an_answer_back(ns_sandbox, ttp_ruleset) -> N
         f"The bypass is one-way: traffic leaves and the return path is blocked, "
         f"which is a broken proxy rather than an exempted one. "
         f"{len(captured)} packet(s) captured, {len(outbound)} outbound."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The teardown window
+# ---------------------------------------------------------------------------
+
+
+#: A second LAN port, so the Tor UID's traffic and the bypassed user's can be
+#: told apart inside one capture.
+TOR_CANARY_PORT = 9998
+
+
+@contextlib.contextmanager
+def ttp_nft_inside(ns_name: str) -> Iterator[None]:
+    """Send TTP's own ``nft`` invocations into *ns_name* instead of this host.
+
+    The teardown path does not build a ruleset string the way ``apply_rules``
+    does - it issues imperative ``nft insert`` and ``nft destroy`` commands - so
+    it cannot be captured from the builder and handed to the engine. Redirecting
+    the subprocess call is what lets these tests exercise the real
+    ``apply_teardown_lockdown`` and ``destroy_rules`` rather than a copy of them,
+    which is the whole point: a copy would agree with my reading of the code
+    instead of with the code.
+
+    It is also a safety rail. Without it, these functions would edit the live
+    nftables ruleset of whatever machine is running the suite.
+    """
+    outer_run = subprocess.run
+
+    def run(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if isinstance(cmd, list) and cmd and str(cmd[0]).rsplit("/", 1)[-1] == "nft":
+            cmd = ["nsenter", f"--net=/var/run/netns/{ns_name}", *cmd]
+        return outer_run(cmd, *args, **kwargs)
+
+    with patch("ttp.firewall.runner.subprocess.run", run):
+        yield
+
+
+def _two_lan_probes(ns_name: str) -> None:
+    """Tor's traffic and a bypassed user's, fired into the same capture window.
+
+    Separate ports, because the assertion is that the lockdown acted on one and
+    not the other, and traffic that cannot be told apart cannot say that.
+    """
+    udp_to(HOST_V4, TOR_CANARY_PORT, uid=TOR_UID)(ns_name)
+    udp_to(HOST_V4, CANARY_PORT, uid=1000)(ns_name)
+
+
+def test_the_teardown_lockdown_closes_the_bypass_and_spares_tor(ns_sandbox, ttp_ruleset) -> None:
+    """The window ``ttp stop`` opens before it dismantles anything.
+
+    ``do_stop`` applies the lockdown rule *first*, ahead of the graceful Tor
+    shutdown and the rule teardown, so that nothing escapes while the session is
+    coming apart. Nothing has ever verified that it does, and ADR 0011 reasons
+    about this window without measuring it.
+
+    The rule sits above ``lan_rule`` and above the bypass rules, so the
+    observable difference it makes is precisely on the traffic TTP is otherwise
+    configured to *permit*: if the lockdown works, the bypass stops working for
+    its duration. Every containment stimulus in this file is already redirected
+    or rejected with or without it, so the bypass is the only probe that can
+    distinguish a lockdown that fired from one that did not.
+
+    Tor's own UID is exempt on purpose, and the exemption is load-bearing:
+    ``do_stop`` applies the lockdown before asking Tor to close its circuits, so
+    a lockdown without it would cut the control connection it is about to use.
+    Asserting the exemption in the same capture is also what proves the sniffer
+    was still measuring - otherwise "the bypass went silent" and "the capture
+    died" are the same observation.
+    """
+    ns, loop = ns_sandbox
+    _engine().load(ttp_ruleset, ns.name)
+
+    before = observe(ns, loop, _two_lan_probes, settle=0.5)
+    assert canary_seen(before, HOST_V4, CANARY_PORT), (
+        f"CONTROL FAILED: the bypassed UID could not reach {HOST_V4}:{CANARY_PORT} "
+        f"*before* any lockdown was applied ({len(before)} packet(s) captured). "
+        f"The assertion below would then pass because the bypass never worked, "
+        f"not because the lockdown closed it."
+    )
+    assert canary_seen(before, HOST_V4, TOR_CANARY_PORT), (
+        f"CONTROL FAILED: the Tor UID could not reach {HOST_V4}:{TOR_CANARY_PORT} "
+        f"before any lockdown was applied ({len(before)} packet(s) captured)."
+    )
+
+    with ttp_nft_inside(ns.name):
+        apply_teardown_lockdown(TOR_UID)
+
+    during = observe(ns, loop, _two_lan_probes, settle=0.5)
+
+    assert canary_seen(during, HOST_V4, TOR_CANARY_PORT), (
+        f"the teardown lockdown blocked the Tor UID it explicitly exempts: no "
+        f"packet to {HOST_V4}:{TOR_CANARY_PORT} was observed "
+        f"({len(during)} packet(s) captured). do_stop applies this rule before "
+        f"graceful_shutdown(), so with the exemption broken Tor is asked to close "
+        f"its circuits over a connection that has just been severed. This also "
+        f"means the assertion below cannot be trusted: a capture that sees nothing "
+        f"at all reads as a lockdown that worked."
+    )
+    assert not canary_seen(during, HOST_V4, CANARY_PORT), (
+        f"the teardown lockdown did not close the bypass: traffic from UID 1000 "
+        f"still reached {HOST_V4}:{CANARY_PORT} while the lockdown rule was "
+        f"installed. Everything TTP is configured to permit stays permitted "
+        f"during teardown, which is the window do_stop exists to close."
+    )
+
+
+def test_destroying_the_rules_leaves_no_table_and_no_lockdown_behind(ns_sandbox, ttp_ruleset) -> None:
+    """``ttp stop`` ends in cleartext on purpose, and that has to be checkable.
+
+    The failure mode here is the opposite of a leak and nobody watches for it: a
+    teardown that removes the redirect rules but leaves the lockdown drop behind
+    takes the user's network away with no session left to explain it, and
+    ``ttp status`` reports nothing wrong because the lock is already gone.
+
+    So this asserts the promise ``do_stop`` prints - *Session terminated. Traffic
+    in cleartext.* - against the wire, with the lockdown rule deliberately
+    installed first, because that is the rule a partial teardown would strand.
+    """
+    ns, loop = ns_sandbox
+    _engine().load(ttp_ruleset, ns.name)
+
+    with ttp_nft_inside(ns.name):
+        apply_teardown_lockdown(TOR_UID)
+        assert destroy_rules() is True, "destroy_rules() reported that the table survived teardown"
+
+    tables = _exec_in_ns(ns.name, "nft", "list", "tables")
+    assert "inet ttp" not in tables.stdout, f"the `inet ttp` table outlived destroy_rules(): {tables.stdout.strip()!r}"
+
+    captured = observe(ns, loop, udp_to(WAN_V4, 53))
+    assert [p for p in captured if is_cleartext_leak(p)], (
+        f"after a completed teardown the host still could not reach the WAN "
+        f"({len(captured)} packet(s) captured on {ns.ext_iface}). `ttp stop` "
+        f"announces cleartext and is expected to restore the network; a rule "
+        f"that survives it leaves the machine without connectivity and without "
+        f"a session to point at."
     )
 
 

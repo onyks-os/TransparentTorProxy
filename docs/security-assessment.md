@@ -224,6 +224,37 @@ The NSE environment asserts at the link layer that:
 2. All DNS traffic is intercepted and redirected to Tor's DNSPort, with zero cleartext DNS queries escaping to standard nameservers.
 3. No IPv6 traffic escapes to the WAN if IPv6 routing is disabled or unsupported.
 
+### 4.3 Lifecycle Transitions: What Is Measured and What Is Not
+
+Every containment assertion in TTP's suite is about a **steady state**: a ruleset is
+loaded into a namespace, a packet is fired, and its absence on the wire is asserted.
+The leaks that happen to real users are in the **transitions** — the seconds in which
+the ruleset, the DNS overlay, the Tor process and the lock file are not all in the
+same state. This section says which transitions are measured, so that the ones that
+are not cannot be mistaken for the ones that are.
+
+**Measured**, in `tests/test_nse_rules.py`, on the wire, in CI:
+
+| Transition | What is asserted |
+| :--- | :--- |
+| The teardown lockdown window | `apply_teardown_lockdown()` closes the LAN/bypass traffic that TTP otherwise permits, and still exempts the Tor UID — which `do_stop` needs, because it applies the lockdown *before* asking Tor to close its circuits. |
+| A completed teardown | `destroy_rules()` leaves no `inet ttp` table behind and the host reaches the WAN again. A teardown that strands the lockdown rule would remove the user's network with no session left to explain it. |
+| `ttp start` failing mid-sequence | The four rollback branches in `ttp/commands/start.py` each unwind a different amount of state; all four are covered by unit tests. |
+| A ruleset under tampering | `tests/chaos_monkey.py` injects five faults (Tor stopped, table flushed, table destroyed, `resolv.conf` unmounted, link flapped) against a live session. |
+
+**Not measured.** Each of these is an open, named gap rather than an assumption:
+
+| Transition | Why it matters | What it needs |
+| :--- | :--- | :--- |
+| **Reboot with an active session** | The lock (`/run/ttp`) and the `ttp-tor` unit (`/run/systemd/system`) are volatile; the nftables ruleset and the `resolv.conf` overlay are not guaranteed to be. A host that returns with rules and no Tor, or Tor and no rules, is in an undefined state. | A VM matrix — see `docs/web/how-to/vm-testing.md`. |
+| **Shutdown ordering** | Nothing asserts TTP tears down before the network does. If `NetworkManager` stops first, the teardown runs against an interface that is already gone. | Same. |
+| **Suspend/resume** | A resuming laptop gets new DHCP, possibly a new interface name, and dead circuits. This is the most common real-world path. | Same. |
+| **Tor dying outside systemd** | The chaos monkey stops the unit cleanly. `SIGKILL`, or an OOM kill, is a different signal for the watchdog to notice. | A chaos injection; no new infrastructure. |
+
+Until the VM matrix exists, **TTP's behaviour across a reboot or a suspend is
+undefined**, and this document states that rather than implying otherwise. Tracked in
+[#30](https://github.com/onyks-os/TransparentTorProxy/issues/30).
+
 ---
 
 ## 5. Supply Chain Security

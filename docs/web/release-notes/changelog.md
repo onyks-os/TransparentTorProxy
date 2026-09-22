@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`docs/security-assessment.md` now states which lifecycle transitions are
+  untested.** New section 4.3 lists what is asserted on the wire and, beside it,
+  what is not: reboot with an active session, shutdown ordering against
+  `NetworkManager`, suspend/resume, and Tor dying outside systemd. Until the VM
+  matrix exists, TTP's behaviour across a reboot is undefined, and the document
+  says so instead of leaving it to be inferred.
+
 - **BREAKING (scripting): `ttp start` and `ttp restart` no longer exit `0` when
   Tor cannot be verified.** They now exit `3`. The rules, the DNS overlay and the
   lock are applied before the bootstrap is ever observed, so a Tor that never
@@ -23,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [ADR 0011](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/decisions/0011-start-exit-codes.md).
 
 ### Added
+
+- **The teardown window is measured on the wire.** `do_stop` applies a lockdown
+  rule at the top of `filter_out` before it touches Tor or the ruleset, and
+  nothing had ever verified that it does anything — every containment stimulus
+  in the suite is redirected or rejected with or without it, so only the traffic
+  TTP *permits* can tell a lockdown that fired from one that did not. Two NSE
+  tests now assert, in one capture each, that the lockdown closes the bypass and
+  still exempts the Tor UID that `graceful_shutdown()` needs, and that a
+  completed `destroy_rules()` leaves no table behind and gives the host its
+  network back. The second one catches the failure nobody watches for: a
+  teardown that strands the lockdown rule takes the user's connectivity away
+  with no session left to explain it. Towards
+  [#30](https://github.com/onyks-os/TransparentTorProxy/issues/30).
 
 - **Named nftables counters on the security-critical rules**, and three things
   that read them. The DNS and TCP redirects, the DoT and DoH rejects and the
