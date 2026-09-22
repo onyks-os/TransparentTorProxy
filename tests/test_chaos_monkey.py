@@ -28,6 +28,8 @@ from tests.chaos_monkey import (
     INJECTIONS,
     AuditResult,
     classify_audit,
+    inject_sigkill_tor,
+    parse_main_pid,
     plan_injections,
     run_connectivity_audit,
     verdict,
@@ -168,3 +170,59 @@ def test_an_audit_that_could_not_measure_outranks_a_complete_sweep() -> None:
 def test_a_run_that_injected_nothing_is_not_a_pass() -> None:
     code, _ = verdict(planned=5, executed=0, leaks=0, inconclusive=0)
     assert code != 0
+
+
+# ---------------------------------------------------------------------------
+# Tor dying outside systemd
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        pytest.param("MainPID=4213\n", 4213, id="a-running-unit-has-a-pid"),
+        pytest.param("MainPID=0\n", None, id="systemd-writes-zero-for-no-process"),
+        pytest.param("", None, id="no-output-is-not-a-pid"),
+        pytest.param("MainPID=\n", None, id="an-empty-value-is-not-a-pid"),
+        pytest.param("MainPID=not-a-number\n", None, id="unparseable-is-not-a-pid"),
+        pytest.param("MainPID=-1\n", None, id="a-negative-pid-is-not-a-pid"),
+    ],
+)
+def test_the_tor_pid_is_read_rather_than_assumed(output, expected) -> None:
+    """`kill -9 0` signals the whole process group, so a bad parse is dangerous.
+
+    systemd writes `MainPID=0` for a unit with no process, and that value
+    reaching `kill` would signal every process in the group rather than Tor.
+    """
+    assert parse_main_pid(output) == expected
+
+
+def test_killing_tor_without_a_pid_is_an_error_rather_than_a_no_op() -> None:
+    """A fault that silently did nothing would be scored as a fault that was injected."""
+    completed = MagicMock(stdout="MainPID=0\n", returncode=0)
+    with patch("tests.chaos_monkey.subprocess.run", return_value=completed) as run:
+        with pytest.raises(RuntimeError, match="no running Tor process"):
+            inject_sigkill_tor()
+    assert all("kill" not in str(call.args[0][0]) for call in run.call_args_list), (
+        "nothing may be killed when the PID could not be read"
+    )
+
+
+def test_tor_is_killed_by_signal_and_not_through_systemd() -> None:
+    """The point of this fault is that systemd is not told: the unit goes to
+
+    `failed` rather than `inactive`, and with `Restart=no` Tor stays dead. A
+    `systemctl kill` would be a different, orderly thing.
+    """
+    completed = MagicMock(stdout="MainPID=4213\n", returncode=0)
+    with patch("tests.chaos_monkey.subprocess.run", return_value=completed) as run:
+        inject_sigkill_tor()
+
+    killed = [call.args[0] for call in run.call_args_list if call.args[0][0] == "kill"]
+    assert killed == [["kill", "-KILL", "4213"]], f"expected one SIGKILL to 4213, got {run.call_args_list}"
+
+
+def test_the_sweep_includes_tor_dying_outside_systemd() -> None:
+    """The gap docs/security-assessment.md 4.3 lists as needing no new infrastructure."""
+    assert "sigkill_tor" in INJECTIONS
+    assert "sigkill_tor" in plan_injections()
