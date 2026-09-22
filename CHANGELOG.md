@@ -162,6 +162,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A leak probe that could not send looked identical to a firewall that
+  blocked it.** Every stimulus in the NSE containment suite suppressed
+  `OSError` around its send, and it has to: with TTP's ruleset loaded,
+  nftables answers a rejected packet with `EPERM` on the local socket, and a
+  probe that exited non-zero on that would fail every containment test. But
+  the positive control runs the *same* script with the ruleset flushed, where
+  a refused send is the instrument failing to produce the traffic whose
+  absence is about to be asserted. Swallowed, the only symptom was
+  `POSITIVE CONTROL FAILED ... the sniffer observed no cleartext packet`,
+  which reads as a broken namespace. The send is now **reported** rather than
+  suppressed — the probe still exits `0` on `OSError` and prints the kernel's
+  reason, which the positive control quotes — so the harness says which of the
+  two it is. Anything that is not an `OSError` still propagates, so a broken
+  probe stays loud. This is the diagnostic step
+  [#35](https://github.com/onyks-os/TransparentTorProxy/issues/35) asked for
+  first; it does not by itself add the missing routable-ICMPv6 containment
+  test, which remains open.
+
 - **A Tor that died while starting was reported as a successful start.**
   `ttp-tor.service` was `Type=simple`, so `systemctl restart` returned `0` as
   soon as the process was forked. If Tor then exited — a fatal config error, a
