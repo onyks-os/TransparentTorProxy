@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`network-sandbox-engine` floor raised to `>=2.1.2`** (was `>=2.1.0`), and
+  `MIN_NSE_VERSION` in `tests/test_nse_rules.py` with it. Through 2.1.1 the
+  sniffer's default capture filter was `not arp and not icmp6`, which discarded
+  routable ICMPv6 in the kernel along with Neighbour Discovery, so
+  `test_routable_icmpv6_is_not_allowed_to_escape` failed its own positive
+  control: it could not see the echo it was meant to judge. CI went green only
+  because pip happened to resolve 2.1.2; the floor now says so, and an older
+  engine is refused instead of producing a red that looks like a TTP defect.
+
 - **`docs/security-assessment.md` 4.3 no longer overstates where its evidence
   runs.** The "Measured" table was introduced with the header *"in
   `tests/test_nse_rules.py`, on the wire, in CI"*, which was true of two of its

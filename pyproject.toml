@@ -36,12 +36,15 @@ dev = [
     "pytest-cov>=5.0.0",
 ]
 nse = [
-    # 2.1.0 is the floor, not a preference. Before it, the NSE runner reported
+    # 2.1.2 is the floor, not a preference. Before 2.1.0, the NSE runner reported
     # PASSED when its oracle observed nothing, and the trace monitor could stop
     # reading mid-run without saying so - which would make TTP's zero-leak suite
-    # green against an instrument that was not measuring. The upper bound is a
-    # real bound: 2.0.0 already rewrote run_test_pipeline's signature once.
-    "network-sandbox-engine>=2.1.0,<3",
+    # green against an instrument that was not measuring. Before 2.1.2, the
+    # sniffer's default BPF filter discarded all ICMPv6 in the kernel, routable
+    # echoes included, so the routable-ICMPv6 containment test could not see
+    # its own subject. The upper bound is a real bound: 2.0.0 already rewrote
+    # run_test_pipeline's signature once.
+    "network-sandbox-engine>=2.1.2,<3",
     "pyroute2",
 ]
 
