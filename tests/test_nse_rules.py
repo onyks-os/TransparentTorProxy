@@ -908,6 +908,66 @@ def test_containment_holds_alongside_a_competing_ruleset(ns_sandbox, ttp_ruleset
     )
 
 
+# The one competitor that is not accept-only. `accept` is chain-scoped, but NAT
+# is not: the first nat chain to bind a connection ends NAT evaluation for it,
+# so a foreign chain that DNATs ahead of TTP's `nat output` (priority -150; the
+# kernel accepts nat chains down to -199) means TTP's DNS redirect never runs.
+# Rewriting to the gateway makes it a LAN resolver, which is the case that
+# matters: filter_out's LAN bypass would accept it, and `is_cleartext_leak`
+# excludes 10.0.1.* by design, so the competing-ruleset test above could not
+# see this leak even if it loaded this fixture.
+FOREIGN_DNS_DNAT_AHEAD_OF_TTP = f"""
+table ip foreign_dns_dnat {{
+    chain output {{
+        type nat hook output priority -175; policy accept;
+        meta l4proto {{ tcp, udp }} th dport 53 counter dnat to {HOST_V4}:53
+    }}
+}}
+"""
+
+
+def _dns_to_lan_resolver(packets) -> list[str]:  # type: ignore[no-untyped-def]
+    """Port-53 packets addressed to the gateway, i.e. DNS that reached a LAN resolver."""
+    from scapy.layers.inet import IP, TCP, UDP
+
+    return [
+        p.summary()
+        for p in packets
+        if p.haslayer(IP) and p[IP].dst == HOST_V4 and any(p.haslayer(L) and p[L].dport == 53 for L in (UDP, TCP))
+    ]
+
+
+def test_a_foreign_dnat_ahead_of_ttp_cannot_carry_dns_to_a_lan_resolver(ns_sandbox, ttp_ruleset) -> None:
+    """#29's remaining risk: a nat chain that rewrites DNS before TTP's redirect sees it."""
+    ns, loop = ns_sandbox
+    engine = _engine()
+
+    # Positive control: the foreign DNAT alone must put the query on the wire to
+    # the gateway, or "nothing reached the LAN resolver" below proves nothing.
+    engine.flush(ns.name)
+    engine.load(FOREIGN_DNS_DNAT_AHEAD_OF_TTP, ns.name)
+    probe, reports = _recording(udp_to(WAN_V4, 53))
+    control = _dns_to_lan_resolver(observe(ns, loop, probe))
+    assert control, (
+        f"POSITIVE CONTROL FAILED: with only the foreign DNAT loaded, no DNS "
+        f"reached {HOST_V4}:53. The probe reported: {'; '.join(reports) or '<nothing>'}."
+    )
+
+    engine.load(ttp_ruleset, ns.name)
+    observed = observe_with_canary(ns, loop, udp_to(WAN_V4, 53))
+    assert canary_seen(observed, HOST_V4, CANARY_PORT), (
+        f"HARNESS FAILED: the canary was not observed in the same capture as "
+        f"the assertion ({len(observed)} packet(s) captured)."
+    )
+
+    escaped = _dns_to_lan_resolver(observed) + [p.summary() for p in observed if is_cleartext_leak(p)]
+    assert not escaped, (
+        f"DNS left in cleartext with a foreign DNAT ahead of TTP's nat output: "
+        f"{escaped}. TTP's redirect was pre-empted and filter_out let the "
+        f"rewritten query through."
+    )
+
+
 # ---------------------------------------------------------------------------
 # filter_forward: the forwarding plane
 #
