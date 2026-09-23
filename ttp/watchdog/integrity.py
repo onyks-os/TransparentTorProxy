@@ -167,9 +167,15 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
     # `nat output` has already rewritten a non-bypassed process's destination to
     # 127.0.0.1 before filter_out runs, so `ip daddr { ... }` cannot match; and a
     # bypassed process is accepted above these rules. The only way either fires
-    # is that the redirect the whole design rests on did not happen.
+    # is that the redirect the whole design rests on did not happen. The
+    # un-redirected DNS reject is the same case for plain port 53, e.g. a foreign
+    # nat chain that DNATed the query before TTP's redirect could (#29).
     counters = firewall.read_counters()
-    for name, what in (("doh_rejected", "DoH"), ("dot_rejected", "DoT")):
+    for name, what in (
+        ("doh_rejected", "DoH"),
+        ("dot_rejected", "DoT"),
+        ("dns_unredirected_rejected", "Un-redirected DNS"),
+    ):
         fired = counters.get(name, 0)
         if fired:
             return (

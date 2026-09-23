@@ -149,6 +149,22 @@ def _build_ruleset(
 
     ipv6_leak_prevention = "" if ipv6_avail else "meta nfproto ipv6 drop"
 
+    # DNS that reaches filter_out without having been redirected (#29). Keyed on
+    # the *original* destination port, so a rewrite to another port is caught too.
+    # Original direction only: a reply on a redirected connection - the kernel's
+    # RST when nothing listens on the DNSPort - still carries proto-dst 53 in its
+    # original tuple, but is addressed to the client, not to loopback.
+    unredirected_dns_ipv4 = (
+        "meta l4proto { tcp, udp } ct direction original ct original proto-dst 53 ip daddr != 127.0.0.0/8 "
+        'counter name "dns_unredirected_rejected" reject'
+    )
+    unredirected_dns_ipv6 = (
+        "meta l4proto { tcp, udp } ct direction original ct original proto-dst 53 ip6 daddr != ::1 "
+        'counter name "dns_unredirected_rejected" reject'
+        if ipv6_avail
+        else ""
+    )
+
     # DoH IP blocks (TCP & QUIC/UDP 443)
     doh_ips_v4 = "{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112, 208.67.222.222, 208.67.220.220 }"
     doh_reject_ipv4 = f'ip daddr {doh_ips_v4} tcp dport 443 counter name "doh_rejected" reject'
@@ -171,6 +187,7 @@ def _build_ruleset(
         counter dot_rejected {{ }}
         counter doh_rejected {{ }}
         counter cleartext_rejected {{ }}
+        counter dns_unredirected_rejected {{ }}
 
         # nat prerouting: Handles redirection for incoming traffic from other network namespaces/interfaces
         # (e.g., virtual interfaces for VMs or Docker containers).
@@ -247,6 +264,17 @@ def _build_ruleset(
 
             # 2. Allow root processes if explicitly requested (e.g. system updates/Tor bootstrapping).
             {root_rule}
+
+            # 2a. Un-redirected DNS: a query whose original destination was port 53
+            # but which is not headed for Tor's DNSPort on loopback. Unreachable
+            # while nat output is the first nat chain to see the connection, since
+            # its DNS redirect precedes its LAN bypass. It is not guaranteed to be:
+            # the kernel accepts nat chains down to priority -199, the first one to
+            # bind a connection ends NAT evaluation for it, and a foreign chain that
+            # DNATs DNS to a LAN resolver would otherwise be accepted by the LAN
+            # bypass below and leave in cleartext. Must precede that bypass.
+            {unredirected_dns_ipv4}
+            {unredirected_dns_ipv6}
 
             # 3. LAN Bypass: Allow local subnet filter bypass.
             {lan_rule}

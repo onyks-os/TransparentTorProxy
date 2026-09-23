@@ -1162,6 +1162,7 @@ def test_generated_unit_omits_the_drop_when_the_account_is_absent() -> None:
     [
         pytest.param("doh_rejected", "DoH", id="doh"),
         pytest.param("dot_rejected", "DoT", id="dot"),
+        pytest.param("dns_unredirected_rejected", "DNS", id="unredirected-dns"),
     ],
 )
 def test_a_fired_leak_reject_is_an_integrity_failure(counter: str, expected: str) -> None:

@@ -187,6 +187,50 @@ def test_ruleset_logic_content_ipv6(mock_ipv6, mock_run_nft, mock_run_string, mo
     )
 
 
+UNREDIRECTED_DNS_V4 = (
+    "meta l4proto { tcp, udp } ct direction original ct original proto-dst 53 ip daddr != 127.0.0.0/8 "
+    'counter name "dns_unredirected_rejected" reject'
+)
+UNREDIRECTED_DNS_V6 = (
+    "meta l4proto { tcp, udp } ct direction original ct original proto-dst 53 ip6 daddr != ::1 "
+    'counter name "dns_unredirected_rejected" reject'
+)
+
+
+@pytest.mark.parametrize("ipv6", [False, True], ids=["ipv4-only", "dual-stack"])
+def test_filter_out_rejects_dns_that_nat_output_did_not_redirect(ipv6: bool) -> None:
+    """#29: a foreign nat chain ahead of TTP's can take DNS before TTP's redirect does.
+
+    The kernel accepts nat base chains at priority -199 to -151, all of which run
+    before TTP's `nat output` at -150; the first nat chain to bind a connection
+    ends NAT evaluation for it, so TTP's redirect never runs. A foreign DNAT to a
+    WAN resolver then dies at the catch-all reject, but one to a LAN resolver is
+    accepted by the LAN bypass and leaves in cleartext. The guard must therefore
+    sit ahead of the LAN bypass, and it keys on the *original* destination port
+    so a rewrite to another port does not slip past it.
+    """
+    with (
+        patch("ttp.firewall.runner.pwd.getpwnam", return_value=MagicMock(pw_uid=110)),
+        patch("ttp.firewall.runner._run_nft"),
+        patch("ttp.firewall.runner._run_nft_string") as mock_run_string,
+        patch("ttp.tor_detect.is_ipv6_supported", return_value=ipv6),
+    ):
+        apply_rules(tor_user="debian-tor")
+    ruleset = mock_run_string.call_args[0][0]
+    filter_block = ruleset.split("chain filter_out")[1].split("chain filter_forward")[0]
+
+    assert "counter dns_unredirected_rejected" in ruleset
+    lan_v4 = "ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } accept"
+    assert filter_block.index(UNREDIRECTED_DNS_V4) < filter_block.index(lan_v4)
+
+    if ipv6:
+        lan_v6 = "ip6 daddr { fc00::/7, fe80::/10 } accept"
+        assert filter_block.index(UNREDIRECTED_DNS_V6) < filter_block.index(lan_v6)
+    else:
+        # Without IPv6, filter_out drops every IPv6 packet at 1a already.
+        assert UNREDIRECTED_DNS_V6 not in filter_block
+
+
 @patch("ttp.firewall.runner.pwd.getpwnam")
 @patch("ttp.firewall.runner._run_nft_string")
 @patch("ttp.firewall.runner._run_nft")
