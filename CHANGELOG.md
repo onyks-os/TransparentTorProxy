@@ -241,6 +241,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A foreign `nat` chain ahead of TTP's could carry DNS to a LAN resolver in
+  cleartext** ([#29](https://github.com/onyks-os/TransparentTorProxy/issues/29)).
+  The kernel accepts `nat` base chains down to priority -199, below TTP's
+  `nat output` at -150, and the first `nat` chain to bind a connection ends NAT
+  evaluation for it. A chain there that DNATed port 53 therefore pre-empted TTP's
+  DNS redirect entirely. Rewritten to a WAN resolver the query died at the
+  catch-all reject; rewritten to a LAN resolver it was accepted by `filter_out`'s
+  LAN bypass and left the host, over UDP and TCP, with no TTP counter moving.
+  Reproduced without root in a user network namespace against the generated
+  ruleset. `filter_out` now rejects, ahead of the LAN bypass, any original-direction
+  packet whose conntrack original destination port was 53 and which is not headed
+  for loopback; it carries the `dns_unredirected_rejected` counter, which the
+  watchdog treats as an integrity failure alongside `doh_rejected` and
+  `dot_rejected`. Traffic TTP already handled is unchanged: its own redirect
+  rewrites the destination to loopback first. `docs/security-assessment.md` 3.1
+  claimed this case was detected by the DoH/DoT counters, which never see port
+  53; it now describes the reject. The accept-only competitors #29 was first
+  tested with remain as they were: `accept` is chain-scoped and does not bypass
+  TTP.
+
 - **The UDP egress leak probe reddened `main` for a DNS answer it did not get.**
   It resolved a single STUN hostname, and under a live session that resolution
   goes through Tor's `DNSPort` — so it depends on whichever exit Tor happened to
