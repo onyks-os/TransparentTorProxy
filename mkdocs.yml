@@ -10,6 +10,8 @@ repo_name: onyks-os/TransparentTorProxy
 theme:
   name: material
   language: en
+  logo: assets/mark.svg
+  favicon: assets/mark.svg
   font:
     text: Inter
     code: JetBrains Mono

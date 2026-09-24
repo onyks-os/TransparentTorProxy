@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Transparent Tor Proxy">
+  <title>Transparent Tor Proxy</title>
+  <!-- Every arrow converges: nothing has a path that misses the centre. -->
+  <g stroke="#3DDC97" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M32 1 V9"/><path d="M28.5 5.5 L32 9 L35.5 5.5"/>
+    <path d="M32 63 V55"/><path d="M28.5 58.5 L32 55 L35.5 58.5"/>
+    <path d="M1 32 H9"/><path d="M5.5 28.5 L9 32 L5.5 35.5"/>
+    <path d="M63 32 H55"/><path d="M58.5 28.5 L55 32 L58.5 35.5"/>
+  </g>
+
+  <!-- Layers, outermost solid: the ruleset is fail-closed. -->
+  <circle cx="32" cy="32" r="22" fill="none" stroke="#7D4698" stroke-width="3.5"/>
+  <circle cx="32" cy="32" r="15" fill="none" stroke="#7D4698" stroke-width="2.5" opacity="0.75"/>
+  <circle cx="32" cy="32" r="8"  fill="none" stroke="#7D4698" stroke-width="2.5" opacity="0.5"/>
+  <circle cx="32" cy="32" r="2.6" fill="#7D4698"/>
+</svg>

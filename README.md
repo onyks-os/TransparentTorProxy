@@ -3,9 +3,13 @@ Copyright (c) 2026 onyks-os
 SPDX-License-Identifier: MIT
 -->
 
-<h1 align="center">
+<p align="center">
+  <img src="https://raw.githubusercontent.com/onyks-os/TransparentTorProxy/main/assets/logo.svg" alt="TTP - Transparent Tor Proxy" width="720">
+</p>
+
+<!-- <h1 align="center">
   TTP - Transparent Tor Proxy
-</h1>
+</h1> -->
 
 <h4 align="center">A Linux CLI tool that transparently routes <b>all system traffic</b> through the Tor network using nftables.</h4>
 
@@ -42,7 +46,9 @@ No per-application setup needed - just `sudo ttp start` and **every connection**
 
 > [!CAUTION]
 > TTP is a tool designed to aid privacy by routing traffic through Tor. However, no tool can guarantee 100% anonymity. Your safety also depends on your behavior (e.g., using a regular browser vs. Tor Browser, signing into accounts, etc.). Always use TTP as part of a multi-layered security strategy.
->
+
+<!-- -->
+
 > [!WARNING]
 > **If you are a whistleblower or are engaging in high-risk activities, DO NOT use TTP.** Instead, use officially audited and reliable tools like [TailsOS](https://tails.net/) or the [Tor Browser](https://www.torproject.org/) directly. The authors and contributors of TTP assume no responsibility for your safety or the consequences of using this software.
 
