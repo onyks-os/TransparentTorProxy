@@ -7,6 +7,7 @@ All external network calls and Stem interactions are mocked.
 """
 
 import urllib.error
+import urllib.parse
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -171,13 +172,17 @@ def test_verify_tor_retries(mock_urlopen, mock_sleep):
 @patch("ttp.tor_control.time.sleep")
 @patch("ttp.tor_control.urllib.request.urlopen")
 def test_verify_tor_fallback_endpoint(mock_urlopen, mock_sleep):
-    """verify_tor falls back to secondary endpoint when primary is down and returns is_tor=False."""
+    """With the primary down for every attempt, the fallback's IP is reported, is_tor=False."""
     mock_resp = MagicMock()
     mock_resp.read.return_value = b'{"ip": "9.9.9.9"}'
-    mock_urlopen.side_effect = [
-        urllib.error.URLError("Primary down"),  # check.torproject.org
-        MagicMock(__enter__=MagicMock(return_value=mock_resp)),  # ipify
-    ]
+
+    def _urlopen(req, timeout):
+        host = urllib.parse.urlparse(req.full_url).hostname
+        if host == "check.torproject.org":
+            raise urllib.error.URLError("Primary down")
+        return MagicMock(__enter__=MagicMock(return_value=mock_resp))
+
+    mock_urlopen.side_effect = _urlopen
 
     is_tor, ip = tor_control.verify_tor()
     assert is_tor is False
@@ -306,6 +311,45 @@ def test_a_censored_network_is_unchanged() -> None:
 
     def _fetch(endpoint: str):
         return responses[tor_control.VERIFY_ENDPOINTS.index(endpoint)]
+
+    with (
+        patch.object(tor_control, "_fetch_endpoint", side_effect=_fetch),
+        patch("time.sleep"),
+    ):
+        assert tor_control.verify_tor() == (False, "198.51.100.9")
+
+
+def test_one_slow_answer_from_the_authority_does_not_decide_the_verdict() -> None:
+    """A fallback that answers first must not end the attempts.
+
+    check.torproject.org is routinely slow or rate-limited for Tor clients, and
+    the first request over a freshly built circuit is the slowest of all. If it
+    misses once, the reflector's answer was returned at once as "not Tor" and
+    the four remaining attempts never asked the authority again - so `ttp start`
+    reported "Traffic is NOT reaching Tor" through a running Tor exit.
+    """
+    authority = iter([None, {"IsTor": True, "IP": "185.220.101.7"}])
+
+    def _fetch(endpoint: str):
+        if endpoint == tor_control.VERIFY_ENDPOINTS[0]:
+            return next(authority)
+        return {"ip": "185.220.101.7"}
+
+    with (
+        patch.object(tor_control, "_fetch_endpoint", side_effect=_fetch),
+        patch("time.sleep"),
+    ):
+        assert tor_control.verify_tor() == (True, "185.220.101.7")
+
+
+def test_a_later_valid_fallback_answer_replaces_an_earlier_malformed_one() -> None:
+    """With the authority down throughout, report the address we did get, not "malformed"."""
+    fallback = iter([{"ip": "not-an-ip"}] + [{"ip": "198.51.100.9"}] * 4)
+
+    def _fetch(endpoint: str):
+        if endpoint == tor_control.VERIFY_ENDPOINTS[0]:
+            return None
+        return next(fallback)
 
     with (
         patch.object(tor_control, "_fetch_endpoint", side_effect=_fetch),
