@@ -1012,6 +1012,49 @@ def test_the_catch_all_reject_is_counted():
     assert 'counter name "cleartext_rejected" reject' in block
 
 
+# ---------------------------------------------------------------------------
+# #36: a connection open before `ttp start` must be told, not left hanging.
+#
+# The catch-all rejects such a connection's packets, but the error the kernel
+# generates for a locally originated packet - ICMP, or a TCP reset - is itself
+# a packet addressed to the host's own address. On a public address it matched
+# neither the loopback nor the LAN rule and the catch-all rejected it too, so
+# the socket never heard and sat in retransmission until its own timeout.
+# ---------------------------------------------------------------------------
+
+LOCAL_DESTINATION_ACCEPT = "fib daddr type local accept"
+TCP_RESET_CATCH_ALL = 'meta l4proto tcp counter name "cleartext_rejected" reject with tcp reset'
+
+
+def test_traffic_to_the_hosts_own_addresses_is_accepted_before_the_catch_all():
+    block = _filter_out_block(_build_ruleset(**_base_kwargs()))
+    assert block.index(LOCAL_DESTINATION_ACCEPT) < block.index(TCP_RESET_CATCH_ALL)
+
+
+def test_the_catch_all_answers_tcp_with_a_reset_and_everything_else_as_before():
+    """A reset ends an established socket; the ICMP error alone leaves a receiver waiting."""
+    block = _filter_out_block(_build_ruleset(**_base_kwargs()))
+    reset = block.index(TCP_RESET_CATCH_ALL)
+    rest = block[reset + len(TCP_RESET_CATCH_ALL) :]
+    assert '\n            counter name "cleartext_rejected" reject\n' in rest
+
+
+@pytest.mark.parametrize("ipv6", [False, True], ids=["ipv4-only", "dual-stack"])
+def test_the_local_destination_accept_comes_after_every_reject_that_must_see_it(ipv6: bool):
+    """Must not shadow the IPv6 kill-switch or the un-redirected DNS guard.
+
+    Both key on packets that could otherwise match `fib daddr type local`: IPv6 to
+    one of the host's own v6 addresses, and DNS DNATed to one of its own
+    addresses by a foreign chain (#29). Placing the accept above either would
+    turn a reject into an accept for exactly those packets.
+    """
+    block = _filter_out_block(_build_ruleset(**_base_kwargs(ipv6_avail=ipv6)))
+    local = block.index(LOCAL_DESTINATION_ACCEPT)
+    assert block.index("ct original proto-dst 53") < local
+    if not ipv6:
+        assert block.index("meta nfproto ipv6 drop") < local
+
+
 @patch("ttp.firewall.runner.subprocess.run")
 def test_read_counters_parses_nft_json(mock_run):
     mock_run.return_value = MagicMock(

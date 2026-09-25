@@ -1334,3 +1334,149 @@ def test_a_flushed_ruleset_leaks_everything(ns_sandbox) -> None:
         f"Captured {len(captured)} packet(s) on {ns.ext_iface}. Every other "
         f"assertion in this module is vacuous until this passes."
     )
+
+
+# ---------------------------------------------------------------------------
+# Connections that were open before `ttp start` (#36)
+#
+# Nothing escapes on such a connection - the catch-all rejects its packets -
+# but the question here is whether the application is *told*. It was not: the
+# error the kernel generates for a rejected local packet is addressed to the
+# host's own address, and on a public address the catch-all rejected that as
+# well, so a socket sat in retransmission until the application's own timeout.
+#
+# The NSE sandbox cannot show this. Its client sits on 10.0.1.2, inside the LAN
+# ranges, where the LAN bypass lets the error through and hides the defect. So
+# these tests build their own pair of namespaces with the client on a public
+# address, and warm conntrack before connecting: on a host with no conntrack,
+# loading TTP would pick the flow up mid-stream as NEW and its NAT would rewrite
+# it, which is a different result that no real host with a firewall produces.
+# ---------------------------------------------------------------------------
+
+_PRE_CLIENT, _PRE_SERVER = "ttp36_client", "ttp36_server"
+_PRE_WAN = "8.8.8.8"  # on the server's loopback: a WAN destination for the client
+_PRE_LAN_PEER = "10.0.2.1"  # the server's LAN address: must survive, it is the admin's SSH
+
+#: One thread per connection: the control's connection must not queue the next.
+_PRE_SERVER_SCRIPT = """
+import socket, threading, time
+def stream(c):
+    time.sleep(1)
+    for _ in range(40):
+        try:
+            c.send(b"data"); time.sleep(0.25)
+        except OSError:
+            return
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("0.0.0.0", 80)); s.listen(4)
+while True:
+    threading.Thread(target=stream, args=(s.accept()[0],), daemon=True).start()
+"""
+
+#: Connects, loads the ruleset (or not), then either keeps sending or only
+#: receives, and prints how the connection ended within the window.
+_PRE_CLIENT_SCRIPT = """
+import socket, subprocess, sys, time
+rules, dst, mode = sys.argv[1], sys.argv[2], sys.argv[3]
+c = socket.create_connection((dst, 80), timeout=3)
+if rules != "-":
+    subprocess.run(["nft", "-f", rules], check=True)
+c.settimeout(6); start = time.monotonic(); outcome = "open"
+try:
+    while time.monotonic() - start < 6:
+        if mode == "send":
+            c.send(b"x"); time.sleep(0.1)
+        elif not c.recv(100):
+            outcome = "eof"; break
+except OSError as exc:
+    outcome = type(exc).__name__
+print(f"{outcome} {time.monotonic() - start:.2f}")
+"""
+
+_CONNTRACK_WARM = """
+table inet ttp36_ct_warm {
+    chain out {
+        type filter hook output priority -500; policy accept;
+        ct state new counter
+    }
+}
+"""
+
+
+@pytest.fixture
+def preexisting_pair() -> Iterator[None]:
+    """Client on a public address with a LAN address beside it; a server that streams."""
+    netns = ["ip", "netns"]
+    for name in (_PRE_CLIENT, _PRE_SERVER):
+        _original_subprocess_run([*netns, "add", name], check=True)
+    server = None
+    try:
+        _original_subprocess_run(
+            ["ip", "link", "add", "t36c", "netns", _PRE_CLIENT, "type", "veth", "peer", "t36s", "netns", _PRE_SERVER],
+            check=True,
+        )
+        for ns, iface, addrs in (
+            (_PRE_CLIENT, "t36c", ("203.0.113.5/24", "10.0.2.5/24")),
+            (_PRE_SERVER, "t36s", ("203.0.113.1/24", f"{_PRE_LAN_PEER}/24")),
+        ):
+            for addr in addrs:
+                _exec_in_ns(ns, "ip", "addr", "add", addr, "dev", iface, check=True)
+            _exec_in_ns(ns, "ip", "link", "set", iface, "up", check=True)
+            _exec_in_ns(ns, "ip", "link", "set", "lo", "up", check=True)
+        _exec_in_ns(_PRE_SERVER, "ip", "addr", "add", f"{_PRE_WAN}/32", "dev", "lo", check=True)
+        _exec_in_ns(_PRE_CLIENT, "ip", "route", "add", "default", "via", "203.0.113.1", check=True)
+        _original_subprocess_run(
+            ["nsenter", f"--net=/var/run/netns/{_PRE_CLIENT}", "nft", "-f", "-"],
+            input=_CONNTRACK_WARM,
+            text=True,
+            check=True,
+        )
+        server = _original_popen(
+            ["nsenter", f"--net=/var/run/netns/{_PRE_SERVER}", "python3", "-c", _PRE_SERVER_SCRIPT],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(0.5)
+        yield
+    finally:
+        if server is not None:
+            server.kill()
+            server.wait()
+        for name in (_PRE_CLIENT, _PRE_SERVER):
+            _original_subprocess_run([*netns, "del", name], check=False)
+
+
+def _preexisting(rules_path: str, dst: str, mode: str) -> tuple[str, float]:
+    result = _exec_in_ns(_PRE_CLIENT, "python3", "-c", _PRE_CLIENT_SCRIPT, rules_path, dst, mode)
+    if result.returncode != 0:
+        raise RuntimeError(f"the pre-existing-connection probe failed to run: {result.stderr.strip()}")
+    outcome, elapsed = result.stdout.split()
+    return outcome, float(elapsed)
+
+
+@pytest.mark.parametrize("mode", ["send", "recv"])
+def test_a_connection_open_before_ttp_start_is_reset_not_left_hanging(
+    preexisting_pair, ttp_ruleset, tmp_path, mode: str
+) -> None:
+    # Positive control: without TTP the connection lives for the whole window,
+    # so a reset below is TTP's doing and not the harness's.
+    control = _preexisting("-", _PRE_WAN, mode)
+    assert control[0] == "open", f"POSITIVE CONTROL FAILED: without TTP the connection ended: {control}"
+
+    rules = tmp_path / "ttp.nft"
+    rules.write_text(ttp_ruleset)
+    outcome, elapsed = _preexisting(str(rules), _PRE_WAN, mode)
+    assert outcome == "ConnectionResetError" and elapsed < 3, (
+        f"a {mode}-side connection opened before `ttp start` ended as {outcome!r} after "
+        f"{elapsed:.2f}s. Nothing leaks either way, but an application left waiting until "
+        f"its own timeout is the defect #36 describes."
+    )
+
+
+@pytest.mark.parametrize("mode", ["send", "recv"])
+def test_a_lan_connection_open_before_ttp_start_survives_it(preexisting_pair, ttp_ruleset, tmp_path, mode: str) -> None:
+    """The administrator's SSH session from the LAN must outlive `sudo ttp start`."""
+    rules = tmp_path / "ttp.nft"
+    rules.write_text(ttp_ruleset)
+    outcome, _ = _preexisting(str(rules), _PRE_LAN_PEER, mode)
+    assert outcome == "open", f"a LAN connection opened before `ttp start` was cut ({outcome!r})"
