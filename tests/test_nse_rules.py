@@ -39,11 +39,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 import socket
 import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -824,10 +826,17 @@ def test_icmp_is_attributed_to_a_reject(ns_sandbox, ttp_ruleset) -> None:
 # holds, a foreign `accept` cannot bypass TTP and the threat is narrower than
 # stated. If it does not hold, these fail and the bypass is real.
 #
-# The fixtures are deliberately accept-only. A foreign ruleset that dropped
-# would break the positive control and the canary, and the failure would read
-# as a broken harness rather than as the answer to the question.
+# The hand-written fixtures are deliberately accept-only. A foreign ruleset that
+# dropped would break the positive control and the canary, and the failure
+# would read as a broken harness rather than as the answer to the question.
+#
+# The `_like` entries are shapes, written from what the tool is known to
+# install; the others are captured from the tool itself and loaded verbatim
+# from tests/competing_rulesets/, whose headers say how. A shape tests the
+# mechanism the author had in mind; a capture also tests the ones they did not.
 # ---------------------------------------------------------------------------
+
+_CAPTURED_RULESETS = Path(__file__).parent / "competing_rulesets"
 
 COMPETING_RULESETS = {
     # The direct form of the claim: an output base chain evaluated *before*
@@ -858,7 +867,7 @@ COMPETING_RULESETS = {
         }
     }
     """,
-    # ufw/firewalld's shape: an inet filter table with its own output chain at
+    # ufw's shape: an inet filter table with its own output chain at
     # the standard filter priority, i.e. the same one TTP uses.
     "ufw_like": """
     table inet ufw_like {
@@ -868,6 +877,8 @@ COMPETING_RULESETS = {
         }
     }
     """,
+    "firewalld_2_4_4": (_CAPTURED_RULESETS / "firewalld-2.4.4.nft").read_text(),
+    "wg_quick_full_tunnel": (_CAPTURED_RULESETS / "wg-quick-1.0.20260223.nft").read_text(),
 }
 
 
@@ -893,6 +904,19 @@ def test_containment_holds_alongside_a_competing_ruleset(ns_sandbox, ttp_ruleset
     # Foreign rules first, TTP's second: the order an operator's host produces.
     engine.load(COMPETING_RULESETS[competitor], ns.name)
     engine.load(ttp_ruleset, ns.name)
+
+    # A competitor that is not there proves nothing: an empty fixture, or a
+    # table that went away with the process that loaded it, would leave TTP
+    # alone and the assertion below would pass for that reason.
+    declared = set(re.findall(r"^\s*table (\w+) ([\w-]+)", COMPETING_RULESETS[competitor], re.MULTILINE))
+    listed = set(
+        re.findall(r"^table (\w+) ([\w-]+)", _exec_in_ns(ns.name, "nft", "list", "tables").stdout, re.MULTILINE)
+    )
+    assert declared, f"the '{competitor}' fixture declares no table"
+    assert declared <= listed, (
+        f"HARNESS FAILED for {competitor}: tables {sorted(declared - listed)} were "
+        f"loaded but are not in the ruleset alongside TTP's (present: {sorted(listed)})."
+    )
 
     observed = observe_with_canary(ns, loop, udp_to(WAN_V4, 53))
     assert canary_seen(observed, HOST_V4, CANARY_PORT), (

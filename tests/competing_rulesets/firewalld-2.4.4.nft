@@ -1,0 +1,277 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+#
+# Captured, not written: `nft list ruleset` after firewalld 2.4.4 (Fedora 44
+# package firewalld-2.4.4-1.fc44) reached state "running" with the package's
+# firewalld-standard.conf as firewalld.conf - DefaultZone=public,
+# FirewallBackend=nftables, NftablesTableOwner=yes, IPv6_rpfilter=strict - and
+# no interface assigned to a zone. Its log had no ERROR or WARNING line.
+#
+# Captured without root, in a user + network + mount namespace with a private
+# D-Bus system bus; the ruleset is firewalld's own, the namespace only changes
+# who may run it. The table carries `flags owner,persist`: persist keeps it once
+# the loading nft exits, and `nft flush ruleset` still removes it, so loading
+# this fixture neither vanishes nor leaks into the next test.
+#
+# Chains that share a hook with TTP: nat output at dstnat + 10 (-90, after TTP's
+# -150) and filter output at filter + 10, both policy accept.
+table inet firewalld { # progname python3
+	flags owner,persist
+
+	chain mangle_PREROUTING {
+		type filter hook prerouting priority mangle + 10; policy accept;
+		jump mangle_PREROUTING_POLICIES
+	}
+
+	chain mangle_PREROUTING_POLICIES {
+		jump mangle_PRE_public
+		return
+	}
+
+	chain nat_PREROUTING {
+		type nat hook prerouting priority dstnat + 10; policy accept;
+		jump nat_PREROUTING_POLICIES
+	}
+
+	chain nat_PREROUTING_POLICIES {
+		jump nat_PRE_public
+		return
+	}
+
+	chain nat_POSTROUTING {
+		type nat hook postrouting priority srcnat + 10; policy accept;
+		jump nat_POSTROUTING_POLICIES
+	}
+
+	chain nat_POSTROUTING_POLICIES {
+		jump nat_POST_public
+		return
+	}
+
+	chain nat_OUTPUT {
+		type nat hook output priority dstnat + 10; policy accept;
+		jump nat_OUTPUT_POLICIES
+	}
+
+	chain nat_OUTPUT_POLICIES {
+		jump nat_OUT_public
+		return
+	}
+
+	chain filter_PREROUTING {
+		type filter hook prerouting priority filter + 10; policy accept;
+		icmpv6 type { nd-router-advert, nd-neighbor-solicit } accept
+		meta nfproto ipv6 fib saddr . mark . iif check missing drop
+	}
+
+	chain filter_INPUT {
+		type filter hook input priority filter + 10; policy accept;
+		ct state { established, related } accept
+		ct status dnat accept
+		iifname "lo" accept
+		ct state invalid drop
+		jump filter_INPUT_POLICIES
+		reject with icmpx admin-prohibited
+	}
+
+	chain filter_FORWARD {
+		type filter hook forward priority filter + 10; policy accept;
+		ct state { established, related } accept
+		ct status dnat accept
+		iifname "lo" accept
+		ct state invalid drop
+		ip6 daddr { ::/96, ::ffff:0.0.0.0/96, 2002::/24, 2002:a00::/24, 2002:7f00::/24, 2002:a9fe::/32, 2002:ac10::/28, 2002:c0a8::/32, 2002:e000::/19 } reject with icmpv6 addr-unreachable
+		jump filter_FORWARD_POLICIES
+		reject with icmpx admin-prohibited
+	}
+
+	chain filter_OUTPUT {
+		type filter hook output priority filter + 10; policy accept;
+		ct state { established, related } accept
+		ct status dnat accept
+		oifname "lo" accept
+		ip6 daddr { ::/96, ::ffff:0.0.0.0/96, 2002::/24, 2002:a00::/24, 2002:7f00::/24, 2002:a9fe::/32, 2002:ac10::/28, 2002:c0a8::/32, 2002:e000::/19 } reject with icmpv6 addr-unreachable
+		jump filter_OUTPUT_POLICIES
+	}
+
+	chain filter_INPUT_POLICIES {
+		jump filter_IN_public
+		reject with icmpx admin-prohibited
+	}
+
+	chain filter_FORWARD_POLICIES {
+		jump filter_FWD_public
+		reject with icmpx admin-prohibited
+	}
+
+	chain filter_OUTPUT_POLICIES {
+		jump filter_OUT_public
+		return
+	}
+
+	chain filter_IN_public {
+		jump filter_IN_public_pre
+		jump filter_IN_public_log
+		jump filter_IN_public_deny
+		jump filter_IN_public_allow
+		jump filter_IN_public_post
+		meta l4proto { icmp, ipv6-icmp } accept
+	}
+
+	chain filter_IN_public_pre {
+	}
+
+	chain filter_IN_public_log {
+	}
+
+	chain filter_IN_public_deny {
+	}
+
+	chain filter_IN_public_allow {
+		tcp dport 22 accept
+		ip daddr 224.0.0.251 udp dport 5353 accept
+		ip6 daddr ff02::fb udp dport 5353 accept
+		ip6 daddr fe80::/64 udp dport 546 accept
+	}
+
+	chain filter_IN_public_post {
+	}
+
+	chain filter_OUT_public {
+		jump filter_OUT_public_pre
+		jump filter_OUT_public_log
+		jump filter_OUT_public_deny
+		jump filter_OUT_public_allow
+		jump filter_OUT_public_post
+	}
+
+	chain filter_OUT_public_pre {
+	}
+
+	chain filter_OUT_public_log {
+	}
+
+	chain filter_OUT_public_deny {
+	}
+
+	chain filter_OUT_public_allow {
+	}
+
+	chain filter_OUT_public_post {
+	}
+
+	chain nat_OUT_public {
+		jump nat_OUT_public_pre
+		jump nat_OUT_public_log
+		jump nat_OUT_public_deny
+		jump nat_OUT_public_allow
+		jump nat_OUT_public_post
+	}
+
+	chain nat_OUT_public_pre {
+	}
+
+	chain nat_OUT_public_log {
+	}
+
+	chain nat_OUT_public_deny {
+	}
+
+	chain nat_OUT_public_allow {
+	}
+
+	chain nat_OUT_public_post {
+	}
+
+	chain nat_POST_public {
+		jump nat_POST_public_pre
+		jump nat_POST_public_log
+		jump nat_POST_public_deny
+		jump nat_POST_public_allow
+		jump nat_POST_public_post
+	}
+
+	chain nat_POST_public_pre {
+	}
+
+	chain nat_POST_public_log {
+	}
+
+	chain nat_POST_public_deny {
+	}
+
+	chain nat_POST_public_allow {
+	}
+
+	chain nat_POST_public_post {
+	}
+
+	chain filter_FWD_public {
+		jump filter_FWD_public_pre
+		jump filter_FWD_public_log
+		jump filter_FWD_public_deny
+		jump filter_FWD_public_allow
+		jump filter_FWD_public_post
+	}
+
+	chain filter_FWD_public_pre {
+	}
+
+	chain filter_FWD_public_log {
+	}
+
+	chain filter_FWD_public_deny {
+	}
+
+	chain filter_FWD_public_allow {
+	}
+
+	chain filter_FWD_public_post {
+	}
+
+	chain nat_PRE_public {
+		jump nat_PRE_public_pre
+		jump nat_PRE_public_log
+		jump nat_PRE_public_deny
+		jump nat_PRE_public_allow
+		jump nat_PRE_public_post
+	}
+
+	chain nat_PRE_public_pre {
+	}
+
+	chain nat_PRE_public_log {
+	}
+
+	chain nat_PRE_public_deny {
+	}
+
+	chain nat_PRE_public_allow {
+	}
+
+	chain nat_PRE_public_post {
+	}
+
+	chain mangle_PRE_public {
+		jump mangle_PRE_public_pre
+		jump mangle_PRE_public_log
+		jump mangle_PRE_public_deny
+		jump mangle_PRE_public_allow
+		jump mangle_PRE_public_post
+	}
+
+	chain mangle_PRE_public_pre {
+	}
+
+	chain mangle_PRE_public_log {
+	}
+
+	chain mangle_PRE_public_deny {
+	}
+
+	chain mangle_PRE_public_allow {
+	}
+
+	chain mangle_PRE_public_post {
+	}
+}

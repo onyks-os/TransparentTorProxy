@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The competing-ruleset test now loads firewalld's and WireGuard's real
+  rulesets, captured from the tools** ([#29](https://github.com/onyks-os/TransparentTorProxy/issues/29)).
+  Until now every competitor was a shape written from what the tool is known to
+  install. `tests/competing_rulesets/` holds `nft list ruleset` after firewalld
+  2.4.4 reached "running" with Fedora 44's packaged configuration, and after
+  `wg-quick up` on a full-tunnel config; each header records how it was captured.
+  Docker and ufw remain shapes (`docker_like`, `ufw_like`). The test also now
+  asserts that every table a competitor declares is present alongside TTP's
+  before containment is judged: firewalld's table carries `flags owner`, and an
+  owner table without `persist` loads with exit status 0 and is gone when the
+  loading `nft` exits, which would have left TTP alone and the test green.
+
 - **`network-sandbox-engine` floor raised to `>=2.1.2`** (was `>=2.1.0`), and
   `MIN_NSE_VERSION` in `tests/test_nse_rules.py` with it. Through 2.1.1 the
   sniffer's default capture filter was `not arp and not icmp6`, which discarded
