@@ -208,6 +208,12 @@ def verify_tor() -> tuple[bool, str]:
         ``(is_tor, exit_ip)`` - whether we confirmed Tor routing,
         and the exit IP address.
     """
+    # What a fallback reported, kept rather than returned: a fallback cannot
+    # decide the verdict, so answering first must not end the attempts either.
+    # Returning it at once meant one slow answer from check.torproject.org -
+    # routine for Tor clients, and likeliest on a freshly built circuit - was
+    # final, and the remaining attempts never asked the authority again.
+    fallback_ip: str | None = None
     for _attempt in range(1, 6):  # 5 attempts
         for endpoint in VERIFY_ENDPOINTS:
             data = _fetch_endpoint(endpoint)
@@ -229,9 +235,13 @@ def verify_tor() -> tuple[bool, str]:
             # Fallback endpoints: we got a response, so traffic is routed
             # through *something*. We can't confirm it's Tor, but we have an IP.
             ip = _canonical_ip(data.get("ip") or data.get("ip_addr"))
-            return False, ip if ip is not None else MALFORMED_ANSWER
+            fallback_ip = ip if ip is not None else fallback_ip or MALFORMED_ANSWER
+            break  # one reflector per attempt is enough; ask the authority again next time
         time.sleep(3)
 
+    if fallback_ip is not None:
+        logger.warning("check.torproject.org did not answer in 5 attempts; exit IP from a fallback only.")
+        return False, fallback_ip
     return False, NO_ANSWER
 
 

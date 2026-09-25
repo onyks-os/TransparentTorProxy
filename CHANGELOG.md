@@ -267,6 +267,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`ttp start` no longer reports "Traffic is NOT reaching Tor" through a
+  running Tor exit** ([#71](https://github.com/onyks-os/TransparentTorProxy/issues/71)).
+  `verify_tor()` made five attempts, but the first fallback reflector to answer
+  ended them with `False`: if check.torproject.org missed once (routine for Tor
+  clients, and likeliest on a freshly built circuit), it was never asked again,
+  and the start exited 3 with a working session. Seen with two running exits,
+  and behind the intermittent "Tor verification failed" in the integration
+  jobs. A fallback's address is now kept and the authority asked again on each
+  attempt; `False` with that address is returned only after all five miss. Only
+  check.torproject.org can still assert `IsTor`.
+
 - **A connection open before `ttp start` is reset instead of left hanging**
   ([#36](https://github.com/onyks-os/TransparentTorProxy/issues/36)). Nothing
   escaped on such a connection, but the application was never told: the error
