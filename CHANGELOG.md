@@ -267,6 +267,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A connection open before `ttp start` is reset instead of left hanging**
+  ([#36](https://github.com/onyks-os/TransparentTorProxy/issues/36)). Nothing
+  escaped on such a connection, but the application was never told: the error
+  the kernel generates for a rejected local packet is addressed to the host's
+  own address, and on a public address `filter_out`'s catch-all rejected that
+  error too, so a sender and a receive-only client both hung until their own
+  timeout. `filter_out` now accepts traffic to the host's own addresses
+  (`fib daddr type local`, placed after the IPv6 kill-switch and the
+  un-redirected DNS guard so neither is shadowed), and the catch-all answers TCP
+  with a reset, which an established receive-only socket acts on where it
+  ignores ICMP. Measured on the wire in two namespaces: both connections are now
+  reset within about a second, a LAN connection (the administrator's SSH) still
+  survives, and on the unchanged ruleset both hang. No rule is inserted and
+  removed around `ttp start`, so there is nothing to clean up and no exemption
+  list to keep in step: it is the rule that already applies the exemptions.
+  `cleartext_rejected` no longer counts TTP's own error replies, so `ttp status`
+  reports fewer blocked packets for the same traffic.
+  `docs/security-assessment.md` said the reset was sent immediately, which was
+  not true before this change.
+
 - **A foreign `nat` chain ahead of TTP's could carry DNS to a LAN resolver in
   cleartext** ([#29](https://github.com/onyks-os/TransparentTorProxy/issues/29)).
   The kernel accepts `nat` base chains down to priority -199, below TTP's

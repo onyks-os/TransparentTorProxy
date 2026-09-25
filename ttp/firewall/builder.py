@@ -284,6 +284,15 @@ def _build_ruleset(
             {loopback_ipv4}
             {loopback_ipv6}
 
+            # 4a. Traffic to the host's own addresses never leaves it, the same class as
+            # loopback. The case that needs it (#36) is the kernel's own error for a
+            # rejected packet: its ICMP or TCP reset is addressed to the local source
+            # address, and on a public address the catch-all below rejected that too,
+            # so a connection open before `ttp start` never learned it was cut and hung
+            # until its own timeout. Below 1a and 2a on purpose: IPv6 to a local v6
+            # address and DNS DNATed to a local address must still be rejected there.
+            fib daddr type local accept
+
             # 5. DoT (DNS-over-TLS) Leak Prevention: Block direct connections to port 853.
             tcp dport 853 counter name "dot_rejected" reject
 
@@ -306,6 +315,12 @@ def _build_ruleset(
             # meant it never saw a packet from a bypassed principal. It is now at 1a.)
 
             # 8. Catch-all Reject: Drop/Reject all cleartext traffic not matching exemptions (e.g. UDP, ICMP, raw sockets, or pre-existing TCP connections).
+            # TCP gets a reset rather than ICMP: an established socket treats ICMP port
+            # unreachable as a soft error and keeps retransmitting, so an application that
+            # only receives on a connection opened before `ttp start` hung until its own
+            # timeout (#36). The reset ends it at its next packet. Same counter, so
+            # `ttp status` still reports one number for blocked cleartext.
+            meta l4proto tcp counter name "cleartext_rejected" reject with tcp reset
             counter name "cleartext_rejected" reject
         }}
 
