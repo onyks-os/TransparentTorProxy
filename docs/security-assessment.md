@@ -340,5 +340,6 @@ The following threats are **explicitly out of scope** for TTP's security model:
 - **Host OS compromise** (kernel rootkits, malicious hardware, physical access attacks)
 - **Non-host network namespaces** (Docker, LXC, VMs running on the same host)
 - **User behavioral deanonymization** (logging into personal accounts, metadata in documents)
+- **Protection across a reboot, or from boot.** A session lives in `/run` and ends with the machine; TTP has no start-at-boot mode. After a reboot the host is in cleartext until `ttp start` is run again - measured in section 4.3, not assumed.
 
 For high-risk use cases, refer to [Tails OS](https://tails.net/) or [Whonix](https://www.whonix.org/).

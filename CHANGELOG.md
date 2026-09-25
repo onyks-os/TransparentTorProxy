@@ -105,6 +105,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.github/workflows/lifecycle.yml` runs it on hosted runners through KVM, since
   inside a VM `ttp start` takes over the guest and not the runner. A mutant that
   lets the probe's user bypass TTP fails all three containment checks.
+  The README's limitations and the security assessment's out-of-scope list
+  now say it outright: TTP gives no protection across a reboot and has no
+  start-at-boot mode.
 
 - **The integration suite runs on Fedora and Arch, not Debian alone.**
   `make integration-fedora` and `make integration-arch` have existed since

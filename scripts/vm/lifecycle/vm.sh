@@ -73,6 +73,7 @@ EOF
 # grew to 9 GB. Capture only around a scenario, with vm_capture_start/stop.
 vm_boot() {
     VM_NETDEV=n0
+    VM_BOOTS=$((${VM_BOOTS:-0} + 1)) # one console log per boot of this run
     rm -f "${VM_WORK:?}/qemu.pid" "${VM_WORK:?}/monitor.sock"
     qemu-system-x86_64 \
         -machine pc,accel=kvm -cpu host -m "$VM_MEM" -smp "$VM_CPUS" \
@@ -81,7 +82,7 @@ vm_boot() {
         -drive file="$VM_WORK/seed.iso",if=virtio,format=raw,readonly=on \
         -netdev user,id=n0,hostfwd=tcp:127.0.0.1:"$VM_SSH_PORT"-:22 \
         -device virtio-net-pci,netdev=n0,id=nic0 \
-        -display none -serial file:"$VM_WORK/console-${1:-boot}.log" \
+        -display none -serial file:"$VM_WORK/console-$VM_BOOTS.log" \
         -monitor unix:"$VM_WORK/monitor.sock",server,nowait \
         -daemonize -pidfile "$VM_WORK/qemu.pid"
     vm_log "booted"
@@ -157,7 +158,9 @@ vm_wait_exit() {
 vm_kill() {
     local pid
     pid="$(cat "$VM_WORK/qemu.pid" 2>/dev/null || true)"
-    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+    if [ -n "$pid" ]; then
+        kill "$pid" 2>/dev/null || true
+    fi
     vm_wait_exit 30 || true
 }
 

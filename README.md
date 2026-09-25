@@ -62,7 +62,7 @@ keeps nothing on disk.
 | | |
 | :--- | :--- |
 | **Fail-closed by construction** | An isolated `inet ttp` nftables table with a catch-all reject and `policy drop` on forwarding. On a crash, a watchdog trigger or an unclean exit, traffic is either routed through Tor or blocked - never released. |
-| **Nothing persists** | Session state, torrc, lock file and logs live only in `tmpfs` (`/run/ttp/`, `/run/tor/ttp/`). A reboot leaves no residue and no stale lock. |
+| **Nothing persists** | Session state, torrc, lock file and logs live only in `tmpfs` (`/run/ttp/`, `/run/tor/ttp/`). A reboot leaves no residue and no stale lock - and no session either: see [Known Behavior & Limitations](#known-behavior--limitations). |
 | **No per-application setup** | TCP and DNS are intercepted at the network layer. No SOCKS5 settings, no proxy environment variables, no application support required. |
 | **DNS without rewriting your system** | A `mount --bind` overlay on `/etc/resolv.conf` rather than an edit, plus a volatile drop-in that neutralises `systemd-resolved`, backed by a kernel-level drop on any non-loopback resolver traffic. |
 | **The leak claim is measured** | Every containment rule is tested in an isolated network namespace against the real generated ruleset, and each test first proves it can *see* a leak before asserting there is none. See [Verification](#verification). |
@@ -254,6 +254,7 @@ TTP is designed to always restore your network, even in edge cases:
 > * **DNS-over-HTTPS (DoH)**: Normal browsers (Firefox, Chrome, Brave, Edge) may use DoH, bypassing system DNS. TTP mitigates DoH via a 3-layer defense: (1) all outbound TCP traffic (including DoH) is redirected to Tor TransPort; (2) common DoH canary domains are mapped to `0.0.0.0` in `torrc`; (3) public DoH IP resolvers are blocked on TCP/UDP port 443 (blocking HTTP/3 QUIC DoH). For maximum security, disable **DoH / "Secure DNS"** in your browser settings.
 > * **IPv6**: Fully supported when available. TTP dynamically detects IPv6 loopback and routes IPv6 traffic through Tor. If the host lacks IPv6 loopback support OR if the `--no-ipv6` option is passed, TTP drops all outgoing IPv6 traffic to prevent leaks.
 > * **Exit IP variation**: Different connections may show different exit IPs due to Tor stream isolation.
+> * **No protection across a reboot**: a session does not survive a reboot, and TTP has no start-at-boot mode. After a reboot TTP is not running and **all traffic is in cleartext**, from early in boot, until you run `ttp start` again. `ttp status` says so (`No active session. Traffic is in cleartext.`), but nothing warns you on its own. This is measured, not assumed: see [section 4.3 of the security assessment](docs/security-assessment.md#43-lifecycle-transitions-what-is-measured-and-what-is-not).
 
 For a full breakdown of residual risks, architectural trust boundaries, and the STRIDE threat model, see:
 
