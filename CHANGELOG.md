@@ -92,6 +92,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Shutdown, reboot and suspend/resume are measured, in a VM**
+  ([#30](https://github.com/onyks-os/TransparentTorProxy/issues/30)).
+  `scripts/vm/lifecycle/run.sh` boots a disposable Debian 13 guest under QEMU,
+  starts a TTP session and records every packet the guest sends with QEMU's
+  `filter-dump`, outside the guest. A probe running as an ordinary user keeps
+  trying to reach a TEST-NET address in cleartext, and a capture with TTP
+  stopped must contain it. Results: poweroff with an active session leaks
+  nothing; suspend, wake and a move to a new subnet keep the session and leak
+  nothing; a reboot **ends** the session cleanly and the host is in cleartext
+  from the first minute. That last one is recorded behaviour, not a pass.
+  `.github/workflows/lifecycle.yml` runs it on hosted runners through KVM, since
+  inside a VM `ttp start` takes over the guest and not the runner. A mutant that
+  lets the probe's user bypass TTP fails all three containment checks.
+  The README's limitations and the security assessment's out-of-scope list
+  now say it outright: TTP gives no protection across a reboot and has no
+  start-at-boot mode.
+
 - **The integration suite runs on Fedora and Arch, not Debian alone.**
   `make integration-fedora` and `make integration-arch` have existed since
   0.4.8, with pinned Dockerfiles beside the Debian one, and no workflow had

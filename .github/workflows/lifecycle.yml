@@ -1,0 +1,69 @@
+# Lifecycle transitions (#30): shutdown, reboot and suspend/resume with an
+# active session, measured in a QEMU VM on the hosted runner.
+#
+# These could not run in CI before because `ttp start` routes its whole host
+# through Tor, and on a runner that includes the runner's own connection to
+# GitHub. Inside a VM the host TTP takes over is the guest; the runner keeps
+# its network. QEMU's user networking needs no root, and its filter-dump
+# records the guest's traffic outside the guest, below TTP's own firewall.
+#
+# Not on every PR: a run takes around a quarter of an hour. It runs when the
+# code that decides these transitions changes, weekly, and on demand.
+name: Lifecycle (VM)
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "scripts/vm/lifecycle/**"
+      - ".github/workflows/lifecycle.yml"
+      - "ttp/firewall/**"
+      - "ttp/commands/**"
+      - "ttp/dns.py"
+      - "ttp/dns_resolved.py"
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle:
+    name: Lifecycle transitions (VM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # Hosted Linux runners expose /dev/kvm but only to root by default.
+      - name: Enable KVM for the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils genisoimage
+
+      - name: Run the lifecycle scenarios
+        env:
+          VM_WORK: ${{ runner.temp }}/vm
+        run: scripts/vm/lifecycle/run.sh
+
+      - name: Upload captures, state and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: lifecycle-vm
+          path: |
+            ${{ runner.temp }}/vm/*.pcap
+            ${{ runner.temp }}/vm/*.txt
+            ${{ runner.temp }}/vm/*.log
+          if-no-files-found: warn

@@ -243,19 +243,32 @@ every commit and two do not, and a reader should not have to guess which.
 | `ttp start` failing mid-sequence | The four rollback branches in `ttp/commands/start.py` each unwind a different amount of state. | Unit tests, in CI on every commit. Not on the wire |
 | A live session under tampering | `tests/chaos_monkey.py` sweeps six faults against a running session — Tor stopped, Tor `SIGKILL`ed behind systemd's back, table flushed, table destroyed, `resolv.conf` unmounted, link flapped — auditing containment after each. | `make chaos-monkey`, **manual, not in CI**. Needs a runner that can survive losing its own network |
 
-**Not measured.** Each of these is an open, named gap rather than an assumption:
+**Measured in a VM.** `scripts/vm/lifecycle/run.sh` boots a disposable Debian 13
+guest under QEMU and records every packet it sends with QEMU's `filter-dump`, outside
+the guest and below TTP's own firewall. A probe inside the guest, running as an
+ordinary non-bypassed user, keeps trying to reach `198.51.100.7` (TEST-NET-2, never a
+Tor relay) over UDP/53 and TCP/80. A packet to that address in a capture is a leak,
+and a capture with TTP stopped must contain the probe or the run is void. It runs in
+`.github/workflows/lifecycle.yml` when the firewall, lifecycle or DNS code changes,
+weekly, and on demand.
 
-| Transition | Why it matters | What it needs |
+| Transition | What is asserted | Result |
 | :--- | :--- | :--- |
-| **Reboot with an active session** | The lock (`/run/ttp`) and the `ttp-tor` unit (`/run/systemd/system`) are volatile; the nftables ruleset and the `resolv.conf` overlay are not guaranteed to be. A host that returns with rules and no Tor, or Tor and no rules, is in an undefined state. | A VM matrix — see `docs/web/how-to/vm-testing.md`. |
-| **Shutdown ordering** | Nothing asserts TTP tears down before the network does. If `NetworkManager` stops first, the teardown runs against an interface that is already gone. | Same. |
-| **Suspend/resume** | A resuming laptop gets new DHCP, possibly a new interface name, and dead circuits. This is the most common real-world path. | Same. |
+| **Shutdown with an active session** | No probe packet from `systemctl poweroff` until the VM is off. | Holds: the network goes down while TTP's rules are still loaded. |
+| **Suspend/resume onto a new network** | After S3 suspend, wake, and a move to a different subnet (new NIC, new lease), no probe packet, and the session is still `ACTIVE`. | Holds: rules, DNS overlay and Tor survive; Tor rebuilds circuits. |
+| **Reboot with an active session** | The host comes back in one defined state, not half a session. | The session **ends**: no table, no overlay, no `/run/ttp`, `ttp status` says `INACTIVE`, and the host is **in cleartext** from the first minute (DNS and NTP in the capture). |
 
-Until the VM matrix exists, **TTP's behaviour across a reboot or a suspend is
-undefined**, and this document states that rather than implying otherwise. The same
-missing infrastructure is what keeps the chaos sweep out of CI: `ttp start` routes the
-whole host through Tor, so a hosted runner would lose its own connection mid-sweep.
-Tracked in [#30](https://github.com/onyks-os/TransparentTorProxy/issues/30).
+The reboot row is a statement of behaviour, not a pass: a TTP session is volatile by
+design and nothing restores it at boot. An operator who reboots is unprotected until
+they run `ttp start` again. The suite checks that this is what happens, so the day it
+changes, it changes on purpose.
+
+A mutant that exempts the probe's user from `nat output` and `filter_out` fails all
+three containment checks, so the suite can go red.
+
+**Still not measured.** The chaos sweep is not yet run inside the VM, so it remains a
+manual gate. Shutdown and reboot are measured on Debian with systemd-networkd only, not
+under NetworkManager. Tracked in [#30](https://github.com/onyks-os/TransparentTorProxy/issues/30).
 
 ---
 
@@ -327,5 +340,6 @@ The following threats are **explicitly out of scope** for TTP's security model:
 - **Host OS compromise** (kernel rootkits, malicious hardware, physical access attacks)
 - **Non-host network namespaces** (Docker, LXC, VMs running on the same host)
 - **User behavioral deanonymization** (logging into personal accounts, metadata in documents)
+- **Protection across a reboot, or from boot.** A session lives in `/run` and ends with the machine; TTP has no start-at-boot mode. After a reboot the host is in cleartext until `ttp start` is run again - measured in section 4.3, not assumed.
 
 For high-risk use cases, refer to [Tails OS](https://tails.net/) or [Whonix](https://www.whonix.org/).
