@@ -41,7 +41,13 @@ jobs:
               echo "::error::Commit $sha is missing 'Signed-off-by: $author'"
               failed=1
             fi
-          done < <(git rev-list "$BASE_SHA".."$HEAD_SHA")
+          # --no-merges: GitHub's "Update branch" button merges main into the PR
+          # as a commit authored by the contributor but never signed off, so the
+          # check failed PRs whose every authored commit was signed. The probot
+          # DCO check skips merge commits too. What this gives up is a sign-off
+          # on conflict resolutions made inside a merge commit; a PR that needs
+          # one can be rebased instead.
+          done < <(git rev-list --no-merges "$BASE_SHA".."$HEAD_SHA")
           if [ "$failed" -ne 0 ]; then
             echo ""
             echo "Fix with: git rebase --signoff $BASE_SHA && git push --force-with-lease"
