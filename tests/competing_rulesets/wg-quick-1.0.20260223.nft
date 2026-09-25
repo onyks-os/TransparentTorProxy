@@ -1,0 +1,46 @@
+# Copyright (c) 2026 onyks-os
+# SPDX-License-Identifier: MIT
+#
+# Captured, not written: `nft list ruleset` after `wg-quick up` (wireguard-tools
+# 1.0.20260223, Fedora 44) on a config with AllowedIPs = 0.0.0.0/0, ::/0 - the
+# full-tunnel case, which is the one that makes wg-quick install nftables rules
+# at all. Interface addresses 10.66.0.2/32 and fd66::2/128; nothing else in the
+# config reaches the ruleset.
+#
+# Captured without root, in a user + network namespace. None of these chains is
+# on TTP's hooks (output, nat): they are prerouting raw/mangle and postrouting
+# mangle, marking WireGuard's own UDP for policy routing. What WireGuard changes
+# that matters more - the routing table - is not a ruleset and is not tested by
+# loading this file.
+table ip6 wg-quick-wg0 {
+	chain preraw {
+		type filter hook prerouting priority raw; policy accept;
+		iifname != "wg0" ip6 daddr fd66::2 fib saddr type != local drop
+	}
+
+	chain premangle {
+		type filter hook prerouting priority mangle; policy accept;
+		meta l4proto udp meta mark set ct mark
+	}
+
+	chain postmangle {
+		type filter hook postrouting priority mangle; policy accept;
+		meta l4proto udp meta mark 0x0000ca6c ct mark set meta mark
+	}
+}
+table ip wg-quick-wg0 {
+	chain preraw {
+		type filter hook prerouting priority raw; policy accept;
+		iifname != "wg0" ip daddr 10.66.0.2 fib saddr type != local drop
+	}
+
+	chain premangle {
+		type filter hook prerouting priority mangle; policy accept;
+		meta l4proto udp meta mark set ct mark
+	}
+
+	chain postmangle {
+		type filter hook postrouting priority mangle; policy accept;
+		meta l4proto udp meta mark 0x0000ca6c ct mark set meta mark
+	}
+}

@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The competing-ruleset test now loads firewalld's and WireGuard's real
+  rulesets, captured from the tools** ([#29](https://github.com/onyks-os/TransparentTorProxy/issues/29)).
+  Until now every competitor was a shape written from what the tool is known to
+  install. `tests/competing_rulesets/` holds `nft list ruleset` after firewalld
+  2.4.4 reached "running" with Fedora 44's packaged configuration, and after
+  `wg-quick up` on a full-tunnel config; each header records how it was captured.
+  Docker and ufw remain shapes (`docker_like`, `ufw_like`). The test also now
+  asserts that every table a competitor declares is present alongside TTP's
+  before containment is judged: firewalld's table carries `flags owner`, and an
+  owner table without `persist` loads with exit status 0 and is gone when the
+  loading `nft` exits, which would have left TTP alone and the test green.
+  A capture is in its own nftables' syntax: firewalld's needs nftables >= 1.1.6,
+  declared in its header, and the case skips below that naming both versions.
+  Of the four CI jobs that run it, only Arch's nftables is new enough.
+
 - **The watchdog alarms on leak-reject packets counted since its previous
   check, not on the running total.** The `doh_rejected`, `dot_rejected` and
   `dns_unredirected_rejected` counters are cumulative, so once one packet had
