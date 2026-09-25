@@ -882,6 +882,21 @@ COMPETING_RULESETS = {
 }
 
 
+def _required_nft(ruleset: str) -> tuple[int, ...] | None:
+    """The nftables version a captured fixture declares it needs, if any."""
+    match = re.search(r"^# Requires: nftables >= (\d+)\.(\d+)\.(\d+)$", ruleset, re.MULTILINE)
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def _nft_version(ns_name: str) -> tuple[int, ...]:
+    """The nftables version that will parse the fixture. Unreadable is an error, not a skip."""
+    out = _exec_in_ns(ns_name, "nft", "--version").stdout
+    match = re.search(r"v(\d+)\.(\d+)\.(\d+)", out)
+    if match is None:
+        raise RuntimeError(f"cannot read the nftables version from {out!r}")
+    return tuple(int(part) for part in match.groups())
+
+
 @pytest.mark.parametrize("competitor", sorted(COMPETING_RULESETS))
 def test_containment_holds_alongside_a_competing_ruleset(ns_sandbox, ttp_ruleset, competitor: str) -> None:
     """TTP must still contain cleartext with someone else's rules loaded too.
@@ -892,6 +907,16 @@ def test_containment_holds_alongside_a_competing_ruleset(ns_sandbox, ttp_ruleset
     """
     ns, loop = ns_sandbox
     engine = _engine()
+
+    # A capture is written in the syntax of the nftables that produced it, and
+    # an older nft cannot parse it. That is a limit of this runner, not a
+    # verdict on TTP, so it is a skip that names both versions.
+    required = _required_nft(COMPETING_RULESETS[competitor])
+    if required is not None and _nft_version(ns.name) < required:
+        pytest.skip(
+            f"the '{competitor}' capture needs nftables >= {'.'.join(map(str, required))}; "
+            f"this runner has {'.'.join(map(str, _nft_version(ns.name)))}"
+        )
 
     engine.flush(ns.name)
     control = observe(ns, loop, udp_to(WAN_V4, 53))

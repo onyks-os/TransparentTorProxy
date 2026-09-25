@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before containment is judged: firewalld's table carries `flags owner`, and an
   owner table without `persist` loads with exit status 0 and is gone when the
   loading `nft` exits, which would have left TTP alone and the test green.
+  A capture is in its own nftables' syntax: firewalld's needs nftables >= 1.1.6,
+  declared in its header, and the case skips below that naming both versions.
+  Of the four CI jobs that run it, only Arch's nftables is new enough.
 
 - **`network-sandbox-engine` floor raised to `>=2.1.2`** (was `>=2.1.0`), and
   `MIN_NSE_VERSION` in `tests/test_nse_rules.py` with it. Through 2.1.1 the

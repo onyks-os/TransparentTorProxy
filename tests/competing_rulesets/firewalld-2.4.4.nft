@@ -15,6 +15,12 @@
 #
 # Chains that share a hook with TTP: nat output at dstnat + 10 (-90, after TTP's
 # -150) and filter output at filter + 10, both policy accept.
+#
+# Captured with nftables 1.1.6, and it needs a recent one to load:
+# `flags owner,persist` is rejected by 1.0.9 and `fib saddr . mark . iif check
+# missing` by 1.1.3. 1.1.6 is the oldest version known to accept both, so it is
+# the stated requirement; the test skips below it and says so.
+# Requires: nftables >= 1.1.6
 table inet firewalld { # progname python3
 	flags owner,persist
 
