@@ -157,6 +157,15 @@ def deterministic_binary_lookup(request: pytest.FixtureRequest):
             p.stop()
 
 
+@pytest.fixture(autouse=True)
+def fresh_counter_baseline():
+    """The watchdog remembers counter readings between checks; no test inherits another's."""
+    from ttp.watchdog import integrity
+
+    integrity.reset_counter_baseline()
+    yield
+
+
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Remove the shim directory. Leaving one per run behind would fill /tmp."""
     global _shim_dir

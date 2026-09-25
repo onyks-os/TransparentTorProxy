@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declared in its header, and the case skips below that naming both versions.
   Of the four CI jobs that run it, only Arch's nftables is new enough.
 
+- **The watchdog alarms on leak-reject packets counted since its previous
+  check, not on the running total.** The `doh_rejected`, `dot_rejected` and
+  `dns_unredirected_rejected` counters are cumulative, so once one packet had
+  matched, every later check failed, including the re-check after healing: a
+  single pre-empted query ended in the killswitch even after its cause had
+  gone. A first reading is still compared against zero, so a watchdog started
+  mid-incident alarms; a reading below the previous one is treated as a table
+  reload and counted in full; an unreadable reading leaves the baseline alone.
+  A foreign chain that keeps pre-empting TTP's redirect still fails the re-check
+  and still reaches the killswitch.
+
 - **`network-sandbox-engine` floor raised to `>=2.1.2`** (was `>=2.1.0`), and
   `MIN_NSE_VERSION` in `tests/test_nse_rules.py` with it. Through 2.1.1 the
   sniffer's default capture filter was `not arp and not icmp6`, which discarded

@@ -14,6 +14,29 @@ from ttp.paths import resolve
 
 logger = logging.getLogger("ttp")
 
+#: Leak-reject counter readings from the previous check. The counters are
+#: cumulative, so alarming on their absolute value would fail every later check
+#: - the re-check after healing included - once a single packet had matched.
+_counter_baseline: dict[str, int] = {}
+
+
+def reset_counter_baseline() -> None:
+    """Forget previous counter readings, so the next one is compared against zero."""
+    _counter_baseline.clear()
+
+
+def _new_since_last_check(name: str, current: int) -> int:
+    """Packets counted by *name* since the previous check, remembering *current*.
+
+    With no previous reading the baseline is zero, so a watchdog started while
+    the counter is already non-zero still alarms. A reading below the previous
+    one means the table was reloaded and its counters restarted from zero, so
+    all of *current* is new.
+    """
+    previous = _counter_baseline.get(name, 0)
+    _counter_baseline[name] = current
+    return current - previous if current >= previous else current
+
 
 def is_interface_online(interface: str) -> bool:
     """Check if a network interface is physically online (has carrier and is up)."""
@@ -170,18 +193,25 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
     # is that the redirect the whole design rests on did not happen. The
     # un-redirected DNS reject is the same case for plain port 53, e.g. a foreign
     # nat chain that DNATed the query before TTP's redirect could (#29).
+    # Alarm on what is new since the previous check, not on the running total;
+    # see _counter_baseline. An empty reading is skipped without touching the
+    # baseline, so it is neither an alarm nor a reason to re-report old packets.
     counters = firewall.read_counters()
     for name, what in (
         ("doh_rejected", "DoH"),
         ("dot_rejected", "DoT"),
         ("dns_unredirected_rejected", "Un-redirected DNS"),
     ):
-        fired = counters.get(name, 0)
+        if name not in counters:
+            continue
+        fired = _new_since_last_check(name, counters[name])
         if fired:
+            # Returning here leaves the counters after this one unread, so
+            # anything new on them is still new at the next check.
             return (
                 "firewall",
-                f"{what} reject rule matched {fired} packet(s), which is only reachable "
-                f"when the NAT redirect has failed",
+                f"{what} reject rule matched {fired} packet(s) since the last check, which "
+                f"is only reachable when the NAT redirect has failed",
             )
 
     # 3. Tor Connection check: perform an *active* query to the control socket

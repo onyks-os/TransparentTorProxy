@@ -1183,6 +1183,61 @@ def test_a_fired_leak_reject_is_an_integrity_failure(counter: str, expected: str
     assert "3 packet(s)" in message
 
 
+def _check_with_counters(counters: dict[str, int]) -> tuple[str | None, str | None]:
+    """One integrity check whose only possible failure is the counter reading."""
+    from ttp.watchdog import integrity
+
+    with (
+        patch("ttp.watchdog.integrity.dns._is_mount_point", return_value=True),
+        patch.object(Path, "read_text", return_value="nameserver 127.0.0.1\n"),
+        patch("ttp.watchdog.integrity.state.read_lock", return_value=None),
+        patch("ttp.watchdog.integrity.subprocess.run") as run,
+        patch("ttp.watchdog.integrity.firewall.read_counters", return_value=counters),
+        patch("ttp.watchdog.integrity.tor_control.get_controller", return_value=None),
+    ):
+        run.return_value = MagicMock(returncode=0, stdout="chain filter_out {}\nactive", stderr="")
+        return integrity.check_system_integrity()
+
+
+# ---------------------------------------------------------------------------
+# The leak-reject counters are cumulative; the alarm is about what is new.
+#
+# A count that stays non-zero would fail every later check, including the
+# re-check after healing, so one pre-empted query would end in the killswitch
+# even after whatever caused it had stopped. The alarm therefore fires on
+# packets counted since the previous check. A first reading has no previous
+# check and is compared against zero, so a watchdog that starts mid-incident
+# still alarms.
+# ---------------------------------------------------------------------------
+
+
+def test_a_count_that_has_not_moved_since_the_last_check_is_not_an_alarm() -> None:
+    assert _check_with_counters({"dns_unredirected_rejected": 3})[0] == "firewall"
+    assert _check_with_counters({"dns_unredirected_rejected": 3})[0] != "firewall"
+
+
+def test_a_count_that_moved_again_is_an_alarm_about_the_new_packets() -> None:
+    _check_with_counters({"dns_unredirected_rejected": 3})
+    component, message = _check_with_counters({"dns_unredirected_rejected": 5})
+    assert component == "firewall"
+    assert "2 packet(s)" in message
+
+
+@pytest.mark.parametrize(("after_reset", "alarms"), [(2, True), (0, False)], ids=["counted-again", "still-zero"])
+def test_a_count_that_went_down_was_reset_and_counts_from_zero(after_reset: int, alarms: bool) -> None:
+    """A reloaded table starts its counters at zero; the new value is all new."""
+    _check_with_counters({"doh_rejected": 5})
+    component, _ = _check_with_counters({"doh_rejected": after_reset})
+    assert (component == "firewall") is alarms
+
+
+def test_an_unreadable_reading_does_not_move_the_baseline() -> None:
+    """Otherwise the next successful read would report old packets as new."""
+    _check_with_counters({"dot_rejected": 3})
+    _check_with_counters({})
+    assert _check_with_counters({"dot_rejected": 3})[0] != "firewall"
+
+
 def test_counters_that_cannot_be_read_are_not_an_integrity_failure() -> None:
     """An empty reading means "could not measure", which is not evidence of a leak.
 
