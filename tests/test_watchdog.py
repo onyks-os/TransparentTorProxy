@@ -360,7 +360,8 @@ def test_run_watchdog_loop_first_strike_healed(
     assert 3 in sleep_calls
 
 
-@patch("ttp.state.read_lock", return_value={"pid": 123})
+@patch("ttp.watchdog.inotify.hold_killswitch")
+@patch("ttp.state.read_lock", side_effect=[{"pid": 123}, {"pid": 123}, None])
 @patch("ttp.watchdog.inotify.check_system_integrity")
 @patch("ttp.watchdog.fsm.attempt_auto_healing", return_value=True)
 @patch("ttp.watchdog.inotify.is_interface_online", return_value=True)
@@ -368,9 +369,9 @@ def test_run_watchdog_loop_first_strike_healed(
 @patch("ttp.watchdog.fsm.trigger_emergency_killswitch")
 @patch("time.sleep")
 def test_run_watchdog_loop_second_strike_killswitch(
-    mock_sleep, mock_ks, mock_has_route, mock_online, mock_heal, mock_check, mock_read
+    mock_sleep, mock_ks, mock_has_route, mock_online, mock_heal, mock_check, mock_read, mock_hold
 ):
-    """run_watchdog_loop triggers emergency killswitch and exits if healing runs but system stays broken."""
+    """A heal that runs but does not hold triggers the killswitch, which is then held until the session ends (#77)."""
     # First check: failed on tor
     # Second check (after healing): still failed on tor
     mock_check.side_effect = [
@@ -382,9 +383,11 @@ def test_run_watchdog_loop_second_strike_killswitch(
 
     mock_heal.assert_called_once_with("tor")
     mock_ks.assert_called_once_with("tor", "service dead")
+    mock_hold.assert_called_once_with(None)
 
 
-@patch("ttp.state.read_lock", return_value={"pid": 123})
+@patch("ttp.watchdog.inotify.hold_killswitch")
+@patch("ttp.state.read_lock", side_effect=[{"pid": 123}, {"pid": 123}, None])
 @patch("ttp.watchdog.inotify.check_system_integrity")
 @patch("ttp.watchdog.fsm.attempt_auto_healing", return_value=False)
 @patch("ttp.watchdog.inotify.is_interface_online", return_value=True)
@@ -392,7 +395,7 @@ def test_run_watchdog_loop_second_strike_killswitch(
 @patch("ttp.watchdog.fsm.trigger_emergency_killswitch")
 @patch("time.sleep")
 def test_run_watchdog_loop_healing_command_fails_immediate_killswitch(
-    mock_sleep, mock_ks, mock_has_route, mock_online, mock_heal, mock_check, mock_read
+    mock_sleep, mock_ks, mock_has_route, mock_online, mock_heal, mock_check, mock_read, mock_hold
 ):
     """run_watchdog_loop triggers emergency killswitch immediately if the healing command itself fails."""
     # Only one integrity check: healing fails immediately, no re-check should occur
@@ -405,6 +408,7 @@ def test_run_watchdog_loop_healing_command_fails_immediate_killswitch(
     mock_ks.assert_called_once_with("firewall", "nftables apply error")
     # Only one integrity check should have happened (no re-check after failed healing)
     assert mock_check.call_count == 1
+    mock_hold.assert_called_once_with(None)
 
 
 # 8. Diagnostic helper tests and loop suspension

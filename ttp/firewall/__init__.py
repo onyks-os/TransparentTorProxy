@@ -39,6 +39,9 @@ from ttp.firewall.runner import (
 from ttp.firewall.runner import (
     read_counters as read_counters,
 )
+from ttp.firewall.runner import (
+    read_table_listing as read_table_listing,
+)
 from ttp.state import LOCK_DIR as LOCK_DIR
 
 __all__ = [
@@ -55,5 +58,6 @@ __all__ = [
     "destroy_rules",
     "pwd",
     "read_counters",
+    "read_table_listing",
     "subprocess",
 ]
