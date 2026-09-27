@@ -402,3 +402,26 @@ def test_a_heal_that_did_not_hold_fails_closed() -> None:
     assert fsm.heal_success.call_count == 0
     assert fsm.heal_fail.call_count == 1
     assert fsm.heal_fail.call_args.kwargs["failed_comp"] == "dns"
+
+
+def test_an_nftables_event_is_drained_and_checked_at_once() -> None:
+    """#81: once events arrive, an undrained socket stays readable and the loop
+    would spin running `nft` without pause; the event itself must trigger the
+    check rather than wait for the heartbeat."""
+    fsm = _fsm()
+    sock = MagicMock(name="netlink")
+    fsm.netlink_socket = sock
+    with _loop_env(fsm, locks=[LOCK, None], readable=[sock]) as mocks:
+        run_watchdog_loop()
+
+    fsm.flush_event_buffers.assert_any_call([sock])
+    assert mocks.integrity.call_count == 1
+
+
+def test_a_heartbeat_with_no_event_does_not_touch_the_netlink_socket() -> None:
+    fsm = _fsm()
+    fsm.netlink_socket = MagicMock(name="netlink")
+    with _loop_env(fsm, locks=[LOCK, None], readable=[]):
+        run_watchdog_loop()
+
+    assert all(call.args[0] != [fsm.netlink_socket] for call in fsm.flush_event_buffers.call_args_list)

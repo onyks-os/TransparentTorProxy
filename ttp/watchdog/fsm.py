@@ -208,8 +208,11 @@ class WatchdogFSM:
         # Setup Netlink Socket
         try:
             self.netlink_socket = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, NETLINK_NETFILTER)
-            self.netlink_socket.setsockopt(SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, NFNLGRP_NFTABLES)
+            # Bind first, then join. bind() sets the socket's group bitmap to the
+            # mask it is given, so binding with 0 after joining left the socket
+            # subscribed to nothing, and every change waited for the heartbeat (#81).
             self.netlink_socket.bind((0, 0))
+            self.netlink_socket.setsockopt(SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, NFNLGRP_NFTABLES)
             self.netlink_socket.setblocking(False)
         except Exception as e:
             logger.critical("Watchdog FSM failed to setup Netlink socket: %s", e)
