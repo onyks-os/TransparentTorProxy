@@ -285,3 +285,18 @@ def test_shutdown_survives_descriptors_that_refuse_to_close(mock_fsm_dependencie
     fsm.shutdown()  # must not raise
 
     assert fsm.netlink_socket is None
+
+
+def test_the_nftables_group_is_joined_after_bind_not_before(mock_fsm_dependencies):
+    """#81: bind() on a netlink socket sets the group bitmap to the mask it is
+    given, so binding with 0 after joining NFNLGRP_NFTABLES undid the join and
+    the watchdog never received an nftables event - every tampering was left
+    to the 15 s periodic check. Measured in the lifecycle VM with a socket set
+    up both ways."""
+    fsm = WatchdogFSM()
+    fsm.initialize(interface="eth0", interval_seconds=15)
+    calls = [c for c in mock_fsm_dependencies["sock"].mock_calls if c[0] in ("bind", "setsockopt")]
+    names = [c[0] for c in calls]
+    joins = [i for i, c in enumerate(calls) if c[0] == "setsockopt" and c.args[1:] == (1, 7)]
+    assert joins, f"NFNLGRP_NFTABLES was never joined: {calls}"
+    assert "bind" in names and names.index("bind") < joins[0], f"bind must come first: {names}"

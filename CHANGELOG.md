@@ -297,6 +297,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The watchdog now actually receives nftables events**
+  ([#81](https://github.com/onyks-os/TransparentTorProxy/issues/81)). It joined
+  `NFNLGRP_NFTABLES` and then called `bind((0, 0))`, and on a netlink socket
+  `bind()` sets the group bitmap to the mask it is given - so the join was
+  undone and the socket received nothing. Every firewall change waited for the
+  15 s periodic check: three table deletions in the lifecycle VM reached the
+  killswitch after 8.3, 4.2 and 0.2 s. It binds first and joins second now, and
+  drains the socket on every wake-up, since an undrained socket would stay
+  readable and spin the loop. Measured in the VM: a deleted table reached the
+  killswitch in 32-48 ms, a flushed one (with #80) in 31-33 ms, and the idle
+  watchdog used no CPU over 20 s.
+
 - **The watchdog keeps the emergency killswitch in place instead of exiting**
   ([#77](https://github.com/onyks-os/TransparentTorProxy/issues/77)). Once it
   engaged the killswitch, the watchdog left its loop and the service exited, so

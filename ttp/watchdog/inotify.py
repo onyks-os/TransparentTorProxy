@@ -174,6 +174,12 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
 
             current_time = time.time()
 
+            # An nftables event is only a wake-up: what changed is read by the
+            # integrity check below. Drain it now, or the socket stays readable
+            # and select() returns at once forever, running `nft` in a spin (#81).
+            if fsm.netlink_socket is not None and fsm.netlink_socket in readable:
+                fsm.flush_event_buffers([fsm.netlink_socket])
+
             # Debouncer cooldown check
             if current_time - fsm.last_heal_time < fsm.COOLDOWN_SECONDS:
                 # If we're in cooldown, discard events and continue
