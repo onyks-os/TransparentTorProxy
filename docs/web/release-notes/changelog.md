@@ -292,6 +292,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A flushed or altered `inet ttp` table is now caught by the watchdog**
+  ([#80](https://github.com/onyks-os/TransparentTorProxy/issues/80)). Its
+  integrity check looked only for the text `chain filter_out`; `nft flush table
+  inet ttp` keeps the chains and removes every rule, so a flushed table passed
+  while every packet left in cleartext - in the lifecycle VM, an ordinary user
+  reached the WAN from the host's own address for the 47 s observed, with the
+  watchdog active and silent. The chaos sweep missed it because its canary is a
+  bypassed user, whose bypass rule the check does look for. `ttp start` now
+  records a fingerprint of the table it applied (SHA-256 of `nft -s list table
+  inet ttp`; `-s` leaves out counter values, which change with traffic) and the
+  watchdog treats any other table as tampering. Measured in the VM: no false
+  positive over a minute of normal use; a flush engages the killswitch at the
+  next periodic check (8.5 s) and the user's traffic stops. A lock written by an
+  older TTP has no fingerprint and is not failed for it.
+
 - **The watchdog keeps the emergency killswitch in place instead of exiting**
   ([#77](https://github.com/onyks-os/TransparentTorProxy/issues/77)). Once it
   engaged the killswitch, the watchdog left its loop and the service exited, so

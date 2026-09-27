@@ -1294,3 +1294,17 @@ def test_byod_uid_detection_ignores_a_uid_with_no_passwd_entry() -> None:
         patch("pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110)),
     ):
         assert _resolve_external_tor_uid(9041, None) == "110"
+
+
+@patch("ttp.firewall.table_fingerprint", return_value="f" * 64)
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
+@patch("ttp.state.write_lock")
+def test_start_records_the_fingerprint_of_the_table_it_applied(
+    mock_write, mock_pwd, mock_run_nft, mock_nft_str, mock_fp, mock_base_start
+):
+    """#80: without it the watchdog could only check chain names, and a flushed table passed."""
+    result = runner.invoke(app, ["start"])
+    assert result.exit_code == 0
+    assert mock_write.call_args.kwargs["table_fingerprint"] == "f" * 64

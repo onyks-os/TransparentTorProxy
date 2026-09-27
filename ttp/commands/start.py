@@ -287,6 +287,9 @@ def start_command(
             external_daemon=external_daemon,
             no_ipv6=no_ipv6,
             tor_uid=tor_uid_val,
+            # Taken now, with the rules and the DNS overlay in place: the table
+            # the watchdog must find for the rest of the session (#80).
+            table_fingerprint=firewall.table_fingerprint(),
             **kwargs_lock,
         )
     except StateError as exc:

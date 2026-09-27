@@ -154,6 +154,7 @@ def write_lock(
     external_daemon: bool = False,
     no_ipv6: bool = False,
     tor_uid: int | None = None,
+    table_fingerprint: str | None = None,
 ) -> None:
     """Write the session lock file with the current state.
 
@@ -189,6 +190,9 @@ def write_lock(
         List of configured bridge lines.
     tor_uid:
         The resolved UID of the Tor daemon process.
+    table_fingerprint:
+        firewall.table_fingerprint() of the table this session applied; the
+        watchdog treats any other table as tampering (#80).
     """
     try:
         data = {
@@ -210,6 +214,7 @@ def write_lock(
             "external_daemon": external_daemon,
             "no_ipv6": no_ipv6,
             "tor_uid": tor_uid,
+            "table_fingerprint": table_fingerprint,
         }
         _write_lock_file(data)
     except OSError as e:
