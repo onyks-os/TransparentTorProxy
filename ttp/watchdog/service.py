@@ -103,10 +103,10 @@ def watchdog_liveness() -> tuple[bool, int | None]:
     """Re-probe the unit and repair the lock, for every status reader.
 
     ``watchdog_active`` was written once at start and never corrected, so it
-    kept reporting ACTIVE after the daemon exited -- including on the
-    killswitch and heal-failure paths, where run_watchdog_loop returns 0 and
-    Restart=on-failure does not restart it. The recorded PID went stale on
-    every restart of a healthy daemon too.
+    kept reporting ACTIVE after the daemon exited -- which it did on the
+    killswitch and heal-failure paths until #77 made it stay and hold the
+    killswitch, and still does when it crashes or is stopped from outside. The
+    recorded PID went stale on every restart of a healthy daemon too.
     """
     active_state, pid = _unit_state()
     if active_state == "unknown":

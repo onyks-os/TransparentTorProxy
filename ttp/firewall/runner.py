@@ -89,6 +89,21 @@ def read_counters() -> dict[str, int]:
     return counters
 
 
+def read_table_listing() -> str | None:
+    """`nft list table inet ttp` as text, or ``None`` when the table is absent or unreadable."""
+    try:
+        res = subprocess.run(
+            [resolve("nft"), "list", "table", "inet", "ttp"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return res.stdout if res.returncode == 0 else None
+
+
 def _run_nft_string(ruleset: str) -> None:
     """Inject a complex ruleset string directly into nft via stdin.
 

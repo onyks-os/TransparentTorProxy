@@ -284,6 +284,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The watchdog keeps the emergency killswitch in place instead of exiting**
+  ([#77](https://github.com/onyks-os/TransparentTorProxy/issues/77)). Once it
+  engaged the killswitch, the watchdog left its loop and the service exited, so
+  nothing watched the killswitch: deleting its table released every packet in
+  cleartext. The chaos sweep found this in the lifecycle VM, where a
+  non-bypassed user reached the WAN from the host's own address. The watchdog
+  now stays in the killswitch state, compares the table every 2 s with what it
+  installed, and re-applies it on any difference - removed, or altered, since an
+  `accept` added to the killswitch empties it while the table is still there -
+  until `ttp stop` ends the session. Measured in the VM: a deleted killswitch is
+  back in about 1 s, three times running; an inserted `accept` is gone in about
+  1 s; `ttp stop` still leaves nothing running.
+
 - **Stopping Tor no longer stops the watchdog that should restart it**
   ([#75](https://github.com/onyks-os/TransparentTorProxy/issues/75)). The
   watchdog's unit had `Requires=ttp-tor.service`, which in systemd propagates a

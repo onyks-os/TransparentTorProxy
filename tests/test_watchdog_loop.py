@@ -29,7 +29,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ttp.watchdog.inotify import IN_DELETE_SELF, run_watchdog_loop
+from ttp.exceptions import FirewallError
+from ttp.watchdog.inotify import IN_DELETE_SELF, hold_killswitch, run_watchdog_loop
 
 LOCK = {"interface": "eth0", "pid": 123}
 
@@ -288,22 +289,90 @@ def test_the_link_coming_back_reconnects_rather_than_exiting() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_killswitch_transition_ends_the_loop() -> None:
-    """Once isolated there is nothing left to watch, and continuing would keep
-    re-reporting a failure the FSM has already acted on (``inotify.py:165-166``)."""
+KS = "table inet ttp {\n\tchain filter_out {\n\t\ttype filter hook output priority filter; policy drop;\n\t}\n}"
+
+
+@pytest.mark.parametrize(
+    "transition",
+    [
+        pytest.param("integrity_fail", id="tamper-straight-to-killswitch"),
+        pytest.param("heal_fail", id="heal-that-did-not-hold"),
+    ],
+)
+def test_the_killswitch_is_held_until_the_session_ends(transition: str) -> None:
+    """#77: the loop used to end at the killswitch, and the service exited.
+
+    Nothing then watched the killswitch, and deleting its table released every
+    packet in cleartext - found by the chaos sweep in the lifecycle VM. The loop
+    now stays and re-asserts it until the session lock is gone (`ttp stop`).
+    """
     fsm = _fsm()
-    fsm.integrity_fail.side_effect = lambda **_: setattr(fsm, "state", "killswitch")
-    with _loop_env(fsm, locks=[LOCK, LOCK, None], integrity=("firewall", "table vanished")) as mocks:
+    if transition == "integrity_fail":
+        fsm.integrity_fail.side_effect = lambda **_: setattr(fsm, "state", "killswitch")
+        integrity = ("firewall", "table flushed")
+    else:
+        fsm.integrity_fail.side_effect = lambda **_: setattr(fsm, "state", "healing")
+        fsm.heal_fail.side_effect = lambda **_: setattr(fsm, "state", "killswitch")
+        integrity = [("dns", "overlay gone"), ("dns", "still gone")]
+    with (
+        _loop_env(fsm, locks=[LOCK, LOCK, LOCK, LOCK, None], integrity=integrity) as mocks,
+        patch("ttp.watchdog.inotify.hold_killswitch", return_value=KS) as hold,
+    ):
         run_watchdog_loop()
 
-    assert fsm.integrity_fail.call_count == 1
-    assert fsm.heal_fail.call_count == 0
+    assert hold.call_count == 3, "one hold per pass while the session lasts"
+    assert [c.args[0] for c in hold.call_args_list] == [None, KS, KS], "each hold compares with the last"
+    assert mocks.read_lock.call_count == 5
     assert fsm.shutdown.call_count == 1
-    # Asserting on integrity_fail alone does not pin this branch: the 15s
-    # debouncer suppresses the second check anyway, so the loop would spin
-    # quietly rather than re-report. The lock read count is what shows it
-    # stopped - exactly one pass through the loop.
-    assert mocks.read_lock.call_count == 1
+
+
+def test_a_killswitch_that_is_intact_is_left_alone() -> None:
+    with (
+        patch("ttp.watchdog.inotify.firewall.read_table_listing", return_value=KS),
+        patch("ttp.watchdog.inotify.firewall.apply_emergency_killswitch") as apply,
+    ):
+        assert hold_killswitch(KS) == KS
+    apply.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("current", "word"),
+    [
+        pytest.param(None, "removed", id="table-deleted"),
+        pytest.param(KS.replace("policy drop", "policy accept"), "altered", id="table-altered"),
+    ],
+)
+def test_a_killswitch_that_was_removed_or_altered_is_reapplied(current, word, caplog) -> None:
+    """Altered counts too: an `accept` added to the killswitch empties it while
+    the table is still there, so presence alone is not the check."""
+    with (
+        patch("ttp.watchdog.inotify.firewall.read_table_listing", side_effect=[current, KS]),
+        patch("ttp.watchdog.inotify.firewall.apply_emergency_killswitch") as apply,
+    ):
+        assert hold_killswitch(KS) == KS
+    apply.assert_called_once()
+    assert any(r.levelname == "CRITICAL" and word in r.getMessage() for r in caplog.records)
+
+
+def test_the_first_hold_takes_its_own_snapshot() -> None:
+    """Entering the killswitch, there is nothing to compare with yet: re-assert and record."""
+    with (
+        patch("ttp.watchdog.inotify.firewall.read_table_listing", return_value=KS),
+        patch("ttp.watchdog.inotify.firewall.apply_emergency_killswitch") as apply,
+    ):
+        assert hold_killswitch(None) == KS
+    apply.assert_called_once()
+
+
+def test_a_killswitch_that_cannot_be_reapplied_is_retried_not_fatal(caplog) -> None:
+    """Returning None makes the next pass try again; raising would end the loop
+    and leave nothing holding the host at all."""
+    with (
+        patch("ttp.watchdog.inotify.firewall.read_table_listing", return_value=None),
+        patch("ttp.watchdog.inotify.firewall.apply_emergency_killswitch", side_effect=FirewallError("nft gone")),
+    ):
+        assert hold_killswitch(KS) is None
+    assert any(r.levelname == "CRITICAL" and "nft gone" in r.getMessage() for r in caplog.records)
 
 
 def test_a_heal_that_holds_is_confirmed() -> None:

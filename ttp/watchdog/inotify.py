@@ -10,7 +10,8 @@ import socket
 import struct
 import time
 
-from ttp import dns, state
+from ttp import dns, firewall, state
+from ttp.exceptions import FirewallError
 from ttp.watchdog.fsm import WatchdogFSM
 from ttp.watchdog.integrity import (
     check_system_integrity,
@@ -57,6 +58,37 @@ def inotify_watch_lost(data: bytes | bytearray) -> bool:
     return lost
 
 
+#: How often a watchdog holding the emergency killswitch re-reads it. The window
+#: in which a removed killswitch leaves the host open is at most this long.
+KILLSWITCH_POLL_SECONDS = 2
+
+
+def hold_killswitch(expected: str | None) -> str | None:
+    """Re-assert the emergency killswitch unless the table is exactly as installed.
+
+    *expected* is the listing taken right after the last application (``None``
+    on entering the killswitch). Any difference is re-applied, not only a
+    missing table: an ``accept`` added to the killswitch empties it while the
+    table is still there. Returns the listing to compare with next time, or
+    ``None`` if the killswitch could not be applied, so the next pass retries
+    rather than the loop giving up on the one state that must not be let go.
+    """
+    current = firewall.read_table_listing()
+    if expected is not None and current == expected:
+        return expected
+    if expected is not None:
+        logger.critical(
+            "Watchdog: the emergency killswitch was %s; re-applying it.",
+            "removed" if current is None else "altered",
+        )
+    try:
+        firewall.apply_emergency_killswitch()
+    except FirewallError as e:
+        logger.critical("Watchdog: could not re-apply the emergency killswitch (%s); retrying.", e)
+        return None
+    return firewall.read_table_listing()
+
+
 def run_watchdog_loop(interval_seconds: int = 15) -> None:
     """Run the event-driven monitoring loop, routing all events and transitions through WatchdogFSM."""
     logger.info(
@@ -77,6 +109,7 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
     # Allow startup stabilization
     time.sleep(2)
 
+    killswitch_listing: str | None = None
     try:
         while True:
             # Check if the TTP session is still supposed to be active
@@ -84,6 +117,14 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
             if lock is None:
                 logger.info("Watchdog: No active TTP lock file found. Exiting gracefully.")
                 break
+
+            # Once the killswitch is engaged the watchdog's only job is to keep it
+            # there until `ttp stop` ends the session (#77). Ending the loop here
+            # left nothing watching it, and deleting its table released everything.
+            if fsm.state == "killswitch":
+                killswitch_listing = hold_killswitch(killswitch_listing)
+                time.sleep(KILLSWITCH_POLL_SECONDS)
+                continue
 
             # Extract active interface from lock
             interface = lock.get("interface") or dns.detect_active_interface()
@@ -163,7 +204,7 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
                     fsm.integrity_fail(failed_comp=failed_comp, err_msg=err_msg)
 
                     if fsm.state == "killswitch":
-                        break
+                        continue  # held at the top of the loop from now on
 
                     # If healing initiated, re-verify after stabilization delay
                     if fsm.state == "healing":
@@ -171,7 +212,7 @@ def run_watchdog_loop(interval_seconds: int = 15) -> None:
                         re_failed, re_err = check_system_integrity()
                         if re_failed is not None:
                             fsm.heal_fail(failed_comp=re_failed, err_msg=re_err)
-                            break
+                            continue  # killswitch: held at the top of the loop
                         else:
                             fsm.heal_success()
 
