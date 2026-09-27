@@ -1125,3 +1125,35 @@ def test_a_malformed_counter_entry_does_not_lose_the_readable_ones(mock_run):
     counters = read_counters()
 
     assert counters == {"doh_rejected": 7}
+
+
+# ---------------------------------------------------------------------------
+# #80: the table's fingerprint is what the watchdog compares, not chain names.
+# ---------------------------------------------------------------------------
+
+
+def test_the_table_fingerprint_is_the_stateless_listing_hashed() -> None:
+    """`-s` leaves counter values out: they change with every packet, the rules do not."""
+    import hashlib
+
+    from ttp.firewall import table_fingerprint
+
+    listing = "table inet ttp {\n\tchain filter_out {\n\t}\n}\n"
+    with patch("ttp.firewall.runner.subprocess.run", return_value=MagicMock(returncode=0, stdout=listing)) as run:
+        assert table_fingerprint() == hashlib.sha256(listing.encode()).hexdigest()
+    assert run.call_args.args[0][1:] == ["-s", "list", "table", "inet", "ttp"]
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        pytest.param(MagicMock(returncode=1, stdout=""), id="table-absent"),
+        pytest.param(OSError("nft missing"), id="nft-unrunnable"),
+    ],
+)
+def test_no_table_has_no_fingerprint(outcome) -> None:
+    from ttp.firewall import table_fingerprint
+
+    kwargs = {"side_effect": outcome} if isinstance(outcome, Exception) else {"return_value": outcome}
+    with patch("ttp.firewall.runner.subprocess.run", **kwargs):
+        assert table_fingerprint() is None

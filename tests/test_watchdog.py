@@ -1304,3 +1304,45 @@ def test_counters_that_cannot_be_read_are_not_an_integrity_failure() -> None:
         component, _ = integrity.check_system_integrity()
 
     assert component != "firewall"
+
+
+# ---------------------------------------------------------------------------
+# #80: a table that differs from the one the session applied is tampering.
+#
+# The check used to look for the text "chain filter_out". `nft flush table inet
+# ttp` keeps the chains and removes every rule, so a flushed table passed it
+# while everything left in cleartext - measured in the lifecycle VM for as long
+# as it was watched.
+# ---------------------------------------------------------------------------
+
+
+def _check_with_fingerprint(recorded: str | None, current: str | None) -> tuple[str | None, str | None]:
+    from ttp.watchdog import integrity
+
+    lock = {"table_fingerprint": recorded} if recorded is not None else {}
+    with (
+        patch("ttp.watchdog.integrity.dns._is_mount_point", return_value=True),
+        patch.object(Path, "read_text", return_value="nameserver 127.0.0.1\n"),
+        patch("ttp.watchdog.integrity.state.read_lock", return_value=lock),
+        patch("ttp.watchdog.integrity.subprocess.run") as run,
+        patch("ttp.watchdog.integrity.firewall.table_fingerprint", return_value=current),
+        patch("ttp.watchdog.integrity.firewall.read_counters", return_value={}),
+        patch("ttp.watchdog.integrity.tor_control.get_controller", return_value=None),
+    ):
+        run.return_value = MagicMock(returncode=0, stdout="chain filter_out {}\nactive", stderr="")
+        return integrity.check_system_integrity()
+
+
+def test_a_table_that_differs_from_the_applied_one_is_a_firewall_failure() -> None:
+    component, message = _check_with_fingerprint("a" * 64, "b" * 64)
+    assert component == "firewall"
+    assert "differs" in message
+
+
+def test_the_table_the_session_applied_passes() -> None:
+    assert _check_with_fingerprint("a" * 64, "a" * 64)[0] != "firewall"
+
+
+def test_a_session_from_before_fingerprints_is_not_failed_for_lacking_one() -> None:
+    """A lock written by an older TTP has no fingerprint: nothing to compare, not a mismatch."""
+    assert _check_with_fingerprint(None, "b" * 64)[0] != "firewall"

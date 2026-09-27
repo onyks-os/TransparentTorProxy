@@ -500,3 +500,9 @@ def test_is_pid_ttp_still_recognises_every_real_invocation(cmdline: bytes) -> No
     have attempt_recovery() tear down a working session's firewall and DNS."""
     with patch("builtins.open", mock_open(read_data=cmdline)):
         assert state._is_pid_ttp(4242) is True
+
+
+def test_write_lock_records_the_table_fingerprint(_use_tmp_lock):
+    """#80: the watchdog compares against what the session applied, even after a restart."""
+    state.write_lock(table_fingerprint="ab" * 32)
+    assert state.read_lock()["table_fingerprint"] == "ab" * 32

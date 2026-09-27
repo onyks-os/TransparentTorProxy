@@ -158,6 +158,13 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
             "nftables 'inet ttp' table is incomplete (missing filter_out)",
         )
 
+    # The table must be the one this session applied, rule for rule (#80).
+    # Chain names alone let a flushed table through - no rules, everything in
+    # cleartext - and any single rule deleted or `accept` inserted likewise.
+    recorded = lock.get("table_fingerprint") if lock else None
+    if recorded and firewall.table_fingerprint() != recorded:
+        return "firewall", "nftables 'inet ttp' table differs from the one this session applied"
+
     # Verify bypass rules if configured in state lock
     if lock:
         import grp
