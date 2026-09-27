@@ -53,18 +53,22 @@ def _write_watchdog_service_unit() -> None:
             ]
         )
 
-    # A watchdog that cannot start must end up visibly `failed`, not restart
-    # every few seconds for the whole session. With RestartSec=3 the stock
-    # 10s/5-start limiter is never reached, so the unit would loop silently.
-    service_lines.extend(["StartLimitIntervalSec=60", "StartLimitBurst=5"])
-
     service_str = "\n".join(service_lines)
 
     unit = f"""\
 [Unit]
 Description=TTP Session Watchdog & Killswitch
 After=network.target ttp-tor.service
-Requires=ttp-tor.service
+# Wants, not Requires: Requires propagates a stop, so `systemctl stop ttp-tor`
+# stopped the watchdog too and Tor stayed dead with nothing left to heal it.
+# `ttp stop` stops the watchdog itself, before Tor.
+Wants=ttp-tor.service
+# A watchdog that cannot start must end up visibly `failed`, not restart every
+# few seconds for the whole session: with RestartSec=3 the stock 10s/5-start
+# limiter is never reached. systemd reads these in [Unit] only - in [Service]
+# they were logged as unknown keys and ignored.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 {service_str}
