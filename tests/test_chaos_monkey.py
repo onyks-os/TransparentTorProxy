@@ -25,13 +25,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.chaos_monkey import (
+    CANARY_USER,
     INJECTIONS,
+    TEST_USER,
     AuditResult,
     classify_audit,
     inject_sigkill_tor,
+    is_killswitch_table,
+    judge_pass,
     parse_main_pid,
     plan_injections,
     run_connectivity_audit,
+    ttp_start_command,
     verdict,
 )
 
@@ -76,39 +81,75 @@ def test_an_audit_that_cannot_be_launched_is_not_a_clean_run() -> None:
     """A missing test user or a missing interpreter is a broken harness, which
     the old code caught and reported as True."""
     with patch("tests.chaos_monkey.subprocess.run", side_effect=OSError("No such file")):
-        assert run_connectivity_audit(_REAL_IP) is AuditResult.INCONCLUSIVE
+        assert run_connectivity_audit(_REAL_IP, TEST_USER, "192.0.2.10") is AuditResult.INCONCLUSIVE
 
 
 def test_a_leak_is_reported_through_the_public_entry_point() -> None:
     with patch("tests.chaos_monkey.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout=f"OK {_REAL_IP}\n", stderr="")
-        assert run_connectivity_audit(_REAL_IP) is AuditResult.LEAK
+        assert run_connectivity_audit(_REAL_IP, TEST_USER, "192.0.2.10") is AuditResult.LEAK
+
+
+def _run_child(connect_effect=None, reply: bytes = b"HTTP/1.1 200 OK\r\n\r\n198.51.100.4"):
+    """Execute the audit child in-process with its network calls stubbed; return (stdout, connect mock)."""
+    import io
+    import sys
+    from contextlib import redirect_stdout
+
+    from tests.chaos_monkey import _AUDIT_SCRIPT
+
+    tls = MagicMock()
+    tls.__enter__.return_value = tls
+    tls.recv.side_effect = [reply, b""]
+    context = MagicMock()
+    context.wrap_socket.return_value = tls
+    raw = MagicMock()
+    raw.__enter__.return_value = raw
+    connect = MagicMock(side_effect=connect_effect, return_value=raw)
+
+    out = io.StringIO()
+    with (
+        patch("socket.create_connection", connect),
+        patch("ssl.create_default_context", return_value=context),
+        patch.object(sys, "argv", ["-c", "192.0.2.10", "api.ipify.org"]),
+        redirect_stdout(out),
+    ):
+        exec(_AUDIT_SCRIPT, {})
+    return out.getvalue().strip(), connect, context
 
 
 @pytest.mark.parametrize(
-    ("urlopen_effect", "expected_prefix"),
+    ("connect_effect", "expected_prefix"),
     [
         pytest.param(OSError("Network is unreachable"), "NETFAIL", id="blocked-request"),
         pytest.param(None, "OK", id="successful-request"),
     ],
 )
-def test_the_child_reports_both_answers_on_stdout_and_exits_cleanly(urlopen_effect, expected_prefix, capsys) -> None:
+def test_the_child_reports_both_answers_on_stdout_and_exits_cleanly(connect_effect, expected_prefix) -> None:
     """The exit code must mean one thing only: whether the audit ran. If the
     child exited non-zero on a blocked request, the killswitch working and the
     harness breaking would be the same observation, and classify_audit could
     not separate them."""
-    from tests.chaos_monkey import _AUDIT_SCRIPT
-
-    response = MagicMock()
-    response.read.return_value = b"198.51.100.4"
-    kwargs = {"side_effect": urlopen_effect} if urlopen_effect else {"return_value": response}
-
-    with patch("urllib.request.urlopen", **kwargs):
-        exec(_AUDIT_SCRIPT, {})
-
-    out = capsys.readouterr().out.strip()
+    out, _, _ = _run_child(connect_effect)
     assert out.startswith(expected_prefix), out
     assert classify_audit(_REAL_IP, 0, out)[0] is not AuditResult.INCONCLUSIVE
+
+
+def test_the_child_connects_to_the_pre_resolved_address_and_verifies_the_name() -> None:
+    """No lookup in the child: with TTP up its DNS is Tor's, so a dead Tor failed
+    every audit on the name - the canary's too - and "contained" measured DNS.
+    The name still has to match the certificate, so a wrong address is not
+    silently asked instead."""
+    out, connect, context = _run_child()
+    assert connect.call_args.args[0] == ("192.0.2.10", 443)
+    assert context.wrap_socket.call_args.kwargs["server_hostname"] == "api.ipify.org"
+    assert out == "OK 198.51.100.4"
+
+
+def test_an_audit_without_a_pre_resolved_address_is_inconclusive_and_spawns_nothing() -> None:
+    with patch("tests.chaos_monkey.subprocess.run") as run:
+        assert run_connectivity_audit(_REAL_IP, TEST_USER, None) is AuditResult.INCONCLUSIVE
+    run.assert_not_called()
 
 
 def test_the_root_guard_is_callable_rather_than_executed_on_import() -> None:
@@ -226,3 +267,77 @@ def test_the_sweep_includes_tor_dying_outside_systemd() -> None:
     """The gap docs/security-assessment.md 4.3 lists as needing no new infrastructure."""
     assert "sigkill_tor" in INJECTIONS
     assert "sigkill_tor" in plan_injections()
+
+
+# ---------------------------------------------------------------------------
+# The canary (#30): a bypassed user whose audit must come back as a leak.
+#
+# Every chaos run so far has printed [PASS]. That is what a working killswitch
+# looks like, and also what an audit that cannot see a leak looks like. The
+# canary is traffic TTP is configured to let out, audited by the same code in
+# the same pass, so a pass is only CONTAINED if that code was shown able to
+# report a leak at the time. The emergency killswitch blocks bypassed traffic
+# too, by design, so there a blocked canary is the expected answer - and only
+# there, which is why the table's shape is checked rather than assumed.
+# ---------------------------------------------------------------------------
+
+C, L, INC = AuditResult.CONTAINED, AuditResult.LEAK, AuditResult.INCONCLUSIVE
+
+
+@pytest.mark.parametrize(
+    ("containment", "canary", "killswitch", "expected"),
+    [
+        pytest.param(L, L, False, L, id="a-leak-is-a-leak"),
+        pytest.param(L, C, True, L, id="a-leak-is-a-leak-whatever-the-canary-says"),
+        pytest.param(INC, L, False, INC, id="containment-could-not-measure"),
+        pytest.param(C, L, False, C, id="contained-and-the-audit-could-see-a-leak"),
+        pytest.param(C, C, True, C, id="killswitch-blocks-the-canary-by-design"),
+        pytest.param(C, C, False, INC, id="canary-blocked-without-a-killswitch-proves-nothing"),
+        pytest.param(C, INC, False, INC, id="canary-could-not-measure"),
+        pytest.param(C, INC, True, INC, id="canary-could-not-measure-even-under-killswitch"),
+    ],
+)
+def test_a_pass_is_only_contained_if_the_canary_showed_the_audit_can_see_a_leak(
+    containment, canary, killswitch, expected
+) -> None:
+    result, reason = judge_pass(containment, canary, killswitch)
+    assert result is expected, reason
+    assert reason
+
+
+def test_the_killswitch_table_is_recognised_by_its_shape() -> None:
+    killswitch = """table inet ttp {
+\tchain filter_out {
+\t\ttype filter hook output priority filter; policy drop;
+\t\toifname "lo" accept
+\t}
+\tchain filter_forward {
+\t\ttype filter hook forward priority filter; policy drop;
+\t}
+\tchain filter_input {
+\t\ttype filter hook input priority filter; policy drop;
+\t\tiifname "lo" accept
+\t}
+}"""
+    session = """table inet ttp {
+\tchain output {
+\t\ttype nat hook output priority -150; policy accept;
+\t}
+\tchain filter_out {
+\t\ttype filter hook output priority filter; policy accept;
+\t\tcounter name "cleartext_rejected" reject
+\t}
+}"""
+    assert is_killswitch_table(killswitch)
+    assert not is_killswitch_table(session)
+    assert not is_killswitch_table("")
+
+
+def test_only_the_canary_is_bypassed() -> None:
+    """The two audits are only meaningful as a pair: one let out, one held."""
+    argv = ttp_start_command()
+    assert argv[:2] == ["ttp", "start"]
+    assert "--watchdog" in argv
+    bypassed = [argv[i + 1] for i, a in enumerate(argv) if a == "--bypass-user"]
+    assert bypassed == [CANARY_USER]
+    assert TEST_USER not in argv

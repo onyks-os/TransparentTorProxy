@@ -72,7 +72,11 @@ and state snapshots into `$VM_WORK`. `scripts/vm/lifecycle/egress.py <file.pcap>
 summarises a capture by destination; it streams the file, so size is not a concern.
 Captures are header-only and only cover scenario phases, never provisioning.
 
-The same script runs in CI from `.github/workflows/lifecycle.yml`. See
+`scripts/vm/lifecycle/chaos.sh` runs the watchdog chaos sweep (`tests/chaos_monkey.py`)
+in the same kind of guest, detached, because two of its faults cut the SSH session on
+purpose; it collects the sweep's log and exit code when the guest answers again.
+
+Both scripts run in CI from `.github/workflows/lifecycle.yml`. See
 `docs/security-assessment.md` section 4.3 for what it asserts and what it found.
 
 ---

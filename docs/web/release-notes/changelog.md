@@ -87,6 +87,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The watchdog chaos sweep runs in CI, in a VM, with a canary**
+  ([#30](https://github.com/onyks-os/TransparentTorProxy/issues/30)).
+  `scripts/vm/lifecycle/chaos.sh` runs `tests/chaos_monkey.py` in a disposable
+  guest from `.github/workflows/lifecycle.yml`; it was a manual gate because
+  `ttp start` takes over its whole host. Every audit is now paired with a
+  canary - a user the session bypasses on purpose, audited the same way in the
+  same pass - and a pass counts as contained only if the canary was seen as
+  this host, or the emergency killswitch, which blocks it by design, is
+  provably loaded. Audits connect to an address resolved before the session:
+  resolving it in the audit went through Tor, so with Tor down every audit
+  failed on DNS and read as containment. Its first VM runs found #75 and #77,
+  and it stays red until both are fixed.
+
 - **Shutdown, reboot and suspend/resume are measured, in a VM**
   ([#30](https://github.com/onyks-os/TransparentTorProxy/issues/30)).
   `scripts/vm/lifecycle/run.sh` boots a disposable Debian 13 guest under QEMU,
