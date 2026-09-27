@@ -233,15 +233,16 @@ the ruleset, the DNS overlay, the Tor process and the lock file are not all in t
 same state. This section says which transitions are measured, so that the ones that
 are not cannot be mistaken for the ones that are.
 
-**Measured.** The third column matters as much as the second: two of these run on
-every commit and two do not, and a reader should not have to guess which.
+**Measured.** The third column matters as much as the second: two of these are checked on
+the wire on every commit, one as unit tests, and one in a VM on a narrower trigger, and a
+reader should not have to guess which.
 
 | Transition | What is asserted | Where it runs |
 | :--- | :--- | :--- |
 | The teardown lockdown window | `apply_teardown_lockdown()` closes the LAN/bypass traffic that TTP otherwise permits, and still exempts the Tor UID — which `do_stop` needs, because it applies the lockdown *before* asking Tor to close its circuits. | `tests/test_nse_rules.py`, on the wire, in CI on every commit |
 | A completed teardown | `destroy_rules()` leaves no `inet ttp` table behind and the host reaches the WAN again. A teardown that strands the lockdown rule would remove the user's network with no session left to explain it. | Same |
 | `ttp start` failing mid-sequence | The four rollback branches in `ttp/commands/start.py` each unwind a different amount of state. | Unit tests, in CI on every commit. Not on the wire |
-| A live session under tampering | `tests/chaos_monkey.py` sweeps six faults against a running session — Tor stopped, Tor `SIGKILL`ed behind systemd's back, table flushed, table destroyed, `resolv.conf` unmounted, link flapped — auditing containment after each. | `make chaos-monkey`, **manual, not in CI**. Needs a runner that can survive losing its own network |
+| A live session under tampering | `tests/chaos_monkey.py` sweeps six faults against a running session — Tor stopped, Tor `SIGKILL`ed behind systemd's back, table flushed, table destroyed, `resolv.conf` unmounted, link flapped — auditing containment after each. Every audit is paired with a **canary**: a bypassed user audited the same way in the same pass, which must be seen as this host, so a pass is only "contained" if the audit could have shown a leak at that moment (or the emergency killswitch, which blocks the canary by design, is provably loaded). Audits connect to an address resolved before the session, so a dead Tor cannot make them fail on DNS and read as containment. | In a VM, `.github/workflows/lifecycle.yml` (`scripts/vm/lifecycle/chaos.sh`), when the watchdog, firewall or lifecycle code changes, weekly, and on demand. `make chaos-monkey` still runs it on a disposable host by hand |
 
 **Measured in a VM.** `scripts/vm/lifecycle/run.sh` boots a disposable Debian 13
 guest under QEMU and records every packet it sends with QEMU's `filter-dump`, outside
@@ -266,9 +267,15 @@ changes, it changes on purpose.
 A mutant that exempts the probe's user from `nat output` and `filter_out` fails all
 three containment checks, so the suite can go red.
 
-**Still not measured.** The chaos sweep is not yet run inside the VM, so it remains a
-manual gate. Shutdown and reboot are measured on Debian with systemd-networkd only, not
-under NetworkManager. Tracked in [#30](https://github.com/onyks-os/TransparentTorProxy/issues/30).
+**What the sweep found on its first VM runs.** Stopping `ttp-tor` also stopped the
+watchdog, so Tor was never restarted ([#75](https://github.com/onyks-os/TransparentTorProxy/issues/75)).
+Once the emergency killswitch is engaged the watchdog exits, and deleting the table that
+holds the killswitch releases all traffic in cleartext with nothing watching
+([#77](https://github.com/onyks-os/TransparentTorProxy/issues/77)). The sweep stays red
+until both are fixed; that is what it is for.
+
+**Still not measured.** Shutdown and reboot are measured on Debian with systemd-networkd
+only, not under NetworkManager. Tracked in [#30](https://github.com/onyks-os/TransparentTorProxy/issues/30).
 
 ---
 

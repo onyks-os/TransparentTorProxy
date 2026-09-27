@@ -1,5 +1,5 @@
 # Lifecycle transitions (#30): shutdown, reboot and suspend/resume with an
-# active session, measured in a QEMU VM on the hosted runner.
+# active session, and the watchdog chaos sweep, in QEMU VMs on hosted runners.
 #
 # These could not run in CI before because `ttp start` routes its whole host
 # through Tor, and on a runner that includes the runner's own connection to
@@ -21,6 +21,8 @@ on:
       - "ttp/commands/**"
       - "ttp/dns.py"
       - "ttp/dns_resolved.py"
+      - "ttp/watchdog/**"
+      - "tests/chaos_monkey.py"
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
@@ -65,5 +67,41 @@ jobs:
           path: |
             ${{ runner.temp }}/vm/*.pcap
             ${{ runner.temp }}/vm/*.txt
+            ${{ runner.temp }}/vm/*.log
+          if-no-files-found: warn
+
+  chaos:
+    name: Watchdog chaos sweep (VM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Enable KVM for the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils genisoimage
+
+      - name: Run the chaos sweep in the guest
+        env:
+          VM_WORK: ${{ runner.temp }}/vm
+        run: scripts/vm/lifecycle/chaos.sh
+
+      - name: Upload the sweep's log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: chaos-vm
+          path: |
+            ${{ runner.temp }}/vm/chaos.log
             ${{ runner.temp }}/vm/*.log
           if-no-files-found: warn
