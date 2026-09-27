@@ -284,6 +284,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Stopping Tor no longer stops the watchdog that should restart it**
+  ([#75](https://github.com/onyks-os/TransparentTorProxy/issues/75)). The
+  watchdog's unit had `Requires=ttp-tor.service`, which in systemd propagates a
+  stop: `systemctl stop ttp-tor` took the watchdog down silently and Tor stayed
+  dead, with the session table holding everything fail-closed and nothing to
+  heal it. It is now `Wants=`, which keeps the start ordering without the stop;
+  `ttp stop` stops the watchdog itself, before Tor. Measured in the lifecycle VM:
+  Tor is detected down at the next check and restarted about 15 s later, and
+  `ttp stop` still leaves neither unit running. The start limiter
+  (`StartLimitIntervalSec=60`, `StartLimitBurst=5`) was in `[Service]`, where
+  systemd ignores it with an "Unknown key" warning on every reload; it is in
+  `[Unit]` now and in effect.
+
 - **`ttp start` no longer reports "Traffic is NOT reaching Tor" through a
   running Tor exit** ([#71](https://github.com/onyks-os/TransparentTorProxy/issues/71)).
   `verify_tor()` made five attempts, but the first fallback reflector to answer

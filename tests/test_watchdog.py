@@ -1068,8 +1068,51 @@ def test_generated_unit_hardening_matches_what_the_docs_claim() -> None:
     unit = path.write_text.call_args.args[0]
     assert "User=ttp-watchdog" in unit
     assert "NoNewPrivileges=yes" in unit
-    assert "StartLimitIntervalSec=60" in unit
-    assert "StartLimitBurst=5" in unit
+    sections = _unit_sections(unit)
+    # systemd reads the start limiter from [Unit] only; in [Service] it logs
+    # "Unknown key" and ignores it, so the loop this guards against came back.
+    assert sections["Unit"].get("StartLimitIntervalSec") == ["60"]
+    assert sections["Unit"].get("StartLimitBurst") == ["5"]
+    assert "StartLimitIntervalSec" not in sections["Service"]
+    assert "StartLimitBurst" not in sections["Service"]
+
+
+def _unit_sections(unit: str) -> dict[str, dict[str, list[str]]]:
+    """A systemd unit as {section: {key: [values]}}; keys may repeat, so no configparser."""
+    sections: dict[str, dict[str, list[str]]] = {}
+    current = None
+    for line in unit.splitlines():
+        line = line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            current = sections.setdefault(line[1:-1], {})
+        elif "=" in line and current is not None:
+            key, value = line.split("=", 1)
+            current.setdefault(key, []).append(value)
+    return sections
+
+
+@pytest.mark.parametrize("has_user", [True, False], ids=["dedicated-user", "root"])
+def test_stopping_tor_does_not_stop_the_watchdog_that_should_restart_it(has_user: bool) -> None:
+    """The watchdog must outlive the Tor unit it exists to heal.
+
+    `Requires=ttp-tor.service` propagates a stop: `systemctl stop ttp-tor` took
+    the watchdog down with it, silently, and Tor stayed dead - observed in the
+    lifecycle VM, with the session table left standing and nothing healing it.
+    `Wants=` keeps the start ordering without the stop. `ttp stop` stops the
+    watchdog itself before Tor, so nothing is left running after a session.
+    """
+    lookup = MagicMock(pw_uid=964, pw_gid=964) if has_user else KeyError("ttp-watchdog")
+    with (
+        patch("pwd.getpwnam", side_effect=[lookup] if has_user else lookup),
+        patch("ttp.watchdog.service.WATCHDOG_SERVICE_PATH") as path,
+    ):
+        service._write_watchdog_service_unit()
+
+    unit = _unit_sections(path.write_text.call_args.args[0])["Unit"]
+    for binding in ("Requires", "BindsTo", "PartOf", "Requisite"):
+        assert not any("ttp-tor" in v for v in unit.get(binding, [])), f"{binding}= ties the watchdog's life to Tor's"
+    assert any("ttp-tor.service" in v for v in unit.get("Wants", []))
+    assert any("ttp-tor.service" in v for v in unit.get("After", []))
 
 
 # ---------------------------------------------------------------------------
