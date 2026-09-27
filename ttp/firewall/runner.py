@@ -3,6 +3,7 @@
 
 """Stateless Firewall Module - Low-level nftables execution engine."""
 
+import hashlib
 import json
 import logging
 import pwd
@@ -102,6 +103,29 @@ def read_table_listing() -> str | None:
     except (OSError, subprocess.TimeoutExpired):
         return None
     return res.stdout if res.returncode == 0 else None
+
+
+def table_fingerprint() -> str | None:
+    """SHA-256 of `nft -s list table inet ttp`, or ``None`` if the table cannot be read.
+
+    ``-s`` (stateless) leaves counter values out, so the fingerprint changes when
+    the rules do and not when traffic moves a counter. ``ttp start`` records it
+    in the lock and the watchdog compares against it (#80): a table can keep
+    every chain name - a flush does - while holding no rules at all.
+    """
+    try:
+        res = subprocess.run(
+            [resolve("nft"), "-s", "list", "table", "inet", "ttp"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if res.returncode != 0:
+        return None
+    return hashlib.sha256(res.stdout.encode()).hexdigest()
 
 
 def _run_nft_string(ruleset: str) -> None:
