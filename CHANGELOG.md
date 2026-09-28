@@ -92,6 +92,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Shutdown ordering is measured under NetworkManager too**
+  ([#85](https://github.com/onyks-os/TransparentTorProxy/issues/85)). The
+  lifecycle harness takes `VM_DISTRO=debian|fedora`: Debian 13's cloud image
+  brings its network up with systemd-networkd, Fedora 44's with NetworkManager
+  (and SELinux enforcing). On Fedora every scenario passes as on Debian -
+  poweroff with an active session sends no probe packet until power-off,
+  suspend/resume onto a new subnet keeps the session, a reboot ends it cleanly.
+  The lifecycle workflow runs both guests. Fedora's `cloud-init status --wait`
+  cannot read its state as an ordinary user and waited forever; the harness
+  now runs it as root, bounded.
+
 - **The chaos sweep runs three ways, and no longer only with a canary**
   ([#30](https://github.com/onyks-os/TransparentTorProxy/issues/30)).
   `--reset-between` starts a fresh session before every fault, so each meets a

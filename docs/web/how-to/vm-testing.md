@@ -64,9 +64,13 @@ no root:
 
 ```bash
 VM_WORK=~/.cache/ttp-lifecycle-vm scripts/vm/lifecycle/run.sh
+# the same on a guest whose network is managed by NetworkManager
+VM_DISTRO=fedora VM_WORK=~/.cache/ttp-lifecycle-vm-fedora scripts/vm/lifecycle/run.sh
 ```
 
-It downloads the Debian 13 cloud image once (verified against Debian's `SHA512SUMS`),
+`VM_DISTRO` is `debian` (default; Debian 13, systemd-networkd) or `fedora` (Fedora 44,
+NetworkManager, SELinux enforcing). It downloads that cloud image once (verified against
+the distribution's published checksum list; the list's signature is not checked),
 installs TTP from the working tree, and writes `results.txt`, one capture per phase
 and state snapshots into `$VM_WORK`. `scripts/vm/lifecycle/egress.py <file.pcap>`
 summarises a capture by destination; it streams the file, so size is not a concern.
