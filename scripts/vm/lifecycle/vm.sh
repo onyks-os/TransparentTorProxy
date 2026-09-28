@@ -20,27 +20,64 @@
 #   VM_WORK   working directory (images, keys, logs, pcaps)   [required]
 #   VM_SSH_PORT host port forwarded to the guest's sshd       [default 2222]
 #   VM_MEM / VM_CPUS                                          [2048 / 2]
+#   VM_DISTRO  debian (systemd-networkd) or fedora (NetworkManager)   [debian]
 
 set -euo pipefail
 
 VM_SSH_PORT="${VM_SSH_PORT:-2222}"
 VM_MEM="${VM_MEM:-2048}"
 VM_CPUS="${VM_CPUS:-2}"
-VM_IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/latest"
-VM_IMAGE_NAME="debian-13-genericcloud-amd64.qcow2"
+VM_DISTRO="${VM_DISTRO:-debian}"
+
+# One row per guest. The two bring the network up differently - Debian's cloud
+# image with systemd-networkd, Fedora's with NetworkManager - and shutdown
+# ordering is exactly where that can matter (#85). Each image is refused unless
+# its checksum matches the distribution's published list; the lists' own
+# signatures are not checked.
+case "$VM_DISTRO" in
+debian)
+    VM_IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/latest"
+    VM_IMAGE_NAME="debian-13-genericcloud-amd64.qcow2"
+    VM_SUMS_NAME="SHA512SUMS"
+    VM_SUMS_TOOL="sha512sum"
+    VM_SUMS_LINE=" $VM_IMAGE_NAME\$" # "<hash>  <name>"
+    VM_PACKAGES="nftables, tor, python3-venv, python3-pip, curl, rsync, iproute2"
+    ;;
+fedora)
+    VM_IMAGE_URL="https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images"
+    VM_IMAGE_NAME="Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2"
+    VM_SUMS_NAME="Fedora-Cloud-44-1.7-x86_64-CHECKSUM"
+    VM_SUMS_TOOL="sha256sum"
+    VM_SUMS_LINE="^SHA256 \\($VM_IMAGE_NAME\\) = " # BSD-style, inside a PGP-signed file
+    VM_PACKAGES="nftables, tor, python3, python3-pip, curl, rsync, iproute, NetworkManager"
+    ;;
+*)
+    echo "VM_DISTRO must be debian or fedora, not '$VM_DISTRO'" >&2
+    return 1
+    ;;
+esac
 
 vm_log() { printf '[vm %s] %s\n' "$(date +%T)" "$*" >&2; }
 
-# Download the base image once and refuse it unless its SHA512 matches the
-# published list. -L matters: the URL redirects to a mirror.
+# Download the base image once and refuse it unless its checksum matches the
+# published list. -L matters: both URLs redirect to a mirror.
 vm_fetch_image() {
     local base="$VM_WORK/$VM_IMAGE_NAME"
-    curl -fsSL -o "$VM_WORK/SHA512SUMS" "$VM_IMAGE_URL/SHA512SUMS"
-    if [ ! -f "$base" ] || ! (cd "$VM_WORK" && grep " $VM_IMAGE_NAME\$" SHA512SUMS | sha512sum -c --status -); then
+    curl -fsSL -o "$VM_WORK/$VM_SUMS_NAME" "$VM_IMAGE_URL/$VM_SUMS_NAME"
+    if [ ! -f "$base" ] || ! vm_image_verified --status; then
         vm_log "downloading $VM_IMAGE_NAME"
         curl -fsSL -o "$base" "$VM_IMAGE_URL/$VM_IMAGE_NAME"
     fi
-    (cd "$VM_WORK" && grep " $VM_IMAGE_NAME\$" SHA512SUMS | sha512sum -c -) >&2
+    vm_image_verified >&2
+}
+
+# Check the image against its one line in the checksum list. An empty match
+# must fail rather than let `-c` read nothing and succeed.
+vm_image_verified() {
+    local line
+    line="$(grep -E "$VM_SUMS_LINE" "$VM_WORK/$VM_SUMS_NAME" || true)"
+    [ -n "$line" ] || { vm_log "$VM_IMAGE_NAME is not in $VM_SUMS_NAME"; return 1; }
+    (cd "$VM_WORK" && printf '%s\n' "$line" | "$VM_SUMS_TOOL" -c "$@" -)
 }
 
 # A fresh copy-on-write disk and a cloud-init seed with a throwaway SSH key.
@@ -62,7 +99,7 @@ users:
     ssh_authorized_keys:
       - $(cat "$VM_WORK/id_vm.pub")
 package_update: true
-packages: [nftables, tor, python3-venv, python3-pip, curl, rsync, iproute2]
+packages: [$VM_PACKAGES]
 EOF
     genisoimage -quiet -output "$VM_WORK/seed.iso" -volid cidata -joliet -rock \
         "$VM_WORK/seed/user-data" "$VM_WORK/seed/meta-data"
@@ -102,7 +139,9 @@ vm_wait_ready() {
         [ "$SECONDS" -lt "$deadline" ] || { vm_log "no SSH within ${1:-300}s"; return 1; }
         sleep 3
     done
-    vm_ssh 'cloud-init status --wait >/dev/null 2>&1 || true'
+    # As root: on Fedora `cloud-init status` cannot read its own state as an
+    # ordinary user and `--wait` then waits forever. Bounded all the same.
+    vm_ssh 'sudo timeout 900 cloud-init status --wait >/dev/null 2>&1 || true'
     vm_log "guest ready"
 }
 

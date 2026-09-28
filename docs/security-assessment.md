@@ -244,8 +244,9 @@ reader should not have to guess which.
 | `ttp start` failing mid-sequence | The four rollback branches in `ttp/commands/start.py` each unwind a different amount of state. | Unit tests, in CI on every commit. Not on the wire |
 | A live session under tampering | `tests/chaos_monkey.py` sweeps six faults against a running session — Tor stopped, Tor `SIGKILL`ed behind systemd's back, table flushed, table destroyed, `resolv.conf` unmounted, link flapped — auditing containment after each. Every audit is paired with a **canary**: a bypassed user audited the same way in the same pass, which must be seen as this host, so a pass is only "contained" if the audit could have shown a leak at that moment (or the emergency killswitch, which blocks the canary by design, is provably loaded). Audits connect to an address resolved before the session, so a dead Tor cannot make them fail on DNS and read as containment. | In a VM, `.github/workflows/lifecycle.yml` (`scripts/vm/lifecycle/chaos.sh`), when the watchdog, firewall or lifecycle code changes, weekly, and on demand. `make chaos-monkey` still runs it on a disposable host by hand |
 
-**Measured in a VM.** `scripts/vm/lifecycle/run.sh` boots a disposable Debian 13
-guest under QEMU and records every packet it sends with QEMU's `filter-dump`, outside
+**Measured in a VM.** `scripts/vm/lifecycle/run.sh` boots a disposable guest - Debian 13,
+whose network is brought up by systemd-networkd, and Fedora 44, by NetworkManager - under
+QEMU and records every packet it sends with QEMU's `filter-dump`, outside
 the guest and below TTP's own firewall. A probe inside the guest, running as an
 ordinary non-bypassed user, keeps trying to reach `198.51.100.7` (TEST-NET-2, never a
 Tor relay) over UDP/53 and TCP/80. A packet to that address in a capture is a leak,
@@ -255,7 +256,7 @@ weekly, and on demand.
 
 | Transition | What is asserted | Result |
 | :--- | :--- | :--- |
-| **Shutdown with an active session** | No probe packet from `systemctl poweroff` until the VM is off. | Holds: the network goes down while TTP's rules are still loaded. |
+| **Shutdown with an active session** | No probe packet from `systemctl poweroff` until the VM is off. | Holds on both guests, under systemd-networkd and under NetworkManager (Fedora 44, SELinux enforcing): the network goes down while TTP's rules are still loaded, whichever stops it. |
 | **Suspend/resume onto a new network** | After S3 suspend, wake, and a move to a different subnet (new NIC, new lease), no probe packet, and the session is still `ACTIVE`. | Holds: rules, DNS overlay and Tor survive; Tor rebuilds circuits. |
 | **Reboot with an active session** | The host comes back in one defined state, not half a session. | The session **ends**: no table, no overlay, no `/run/ttp`, `ttp status` says `INACTIVE`, and the host is **in cleartext** from the first minute (DNS and NTP in the capture). |
 
@@ -293,8 +294,9 @@ session table passed the integrity check
 events meant to trigger the check never arrived
 ([#81](https://github.com/onyks-os/TransparentTorProxy/issues/81)).
 
-**Still not measured.** Shutdown and reboot are measured on Debian with systemd-networkd
-only, not under NetworkManager. Tracked in [#30](https://github.com/onyks-os/TransparentTorProxy/issues/30).
+**Every transition runs on both guests.** Until #85 shutdown ordering was measured under
+systemd-networkd only; NetworkManager, which most desktop installs use, is now covered by
+the Fedora guest, with the same probe, captures and positive control.
 
 ---
 

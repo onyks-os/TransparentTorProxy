@@ -7,7 +7,7 @@
 # network. Every verdict comes from a capture taken by QEMU outside the guest,
 # of a probe that keeps trying to reach 198.51.100.7 in cleartext (probe.py).
 #
-#   VM_WORK=~/.cache/ttp-lifecycle-vm scripts/vm/lifecycle/run.sh
+#   VM_WORK=~/.cache/ttp-lifecycle-vm [VM_DISTRO=fedora] scripts/vm/lifecycle/run.sh
 #
 # Writes captures, state snapshots and results.txt into $VM_WORK; exits non-zero
 # if any check fails. Needs KVM, qemu-system-x86_64, genisoimage and curl; no root.
