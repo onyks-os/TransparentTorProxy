@@ -29,15 +29,22 @@ from tests.chaos_monkey import (
     INJECTIONS,
     TEST_USER,
     AuditResult,
+    all_leaked,
     classify_audit,
+    inject_delete_last_filter_rule,
+    inject_insert_accept,
     inject_sigkill_tor,
     is_killswitch_table,
     judge_pass,
+    judge_pass_without_canary,
+    last_rule_handle,
     parse_main_pid,
     plan_injections,
     run_connectivity_audit,
+    start_session,
     ttp_start_command,
     verdict,
+    worst,
 )
 
 _REAL_IP = "203.0.113.7"
@@ -341,3 +348,198 @@ def test_only_the_canary_is_bypassed() -> None:
     bypassed = [argv[i + 1] for i, a in enumerate(argv) if a == "--bypass-user"]
     assert bypassed == [CANARY_USER]
     assert TEST_USER not in argv
+
+
+# ---------------------------------------------------------------------------
+# Independent trials and a variant with no bypassed user (#30).
+#
+# The canary is a bypassed user, and a bypass puts a rule in the table that the
+# watchdog checks for - so with the canary configured, a flushed table was
+# caught for a reason a normal session does not have, and #80 stayed hidden.
+# Without a bypass the positive control moves to before `ttp start`: the audited
+# user's own audit must see this host then. That is weaker than same-pass, and
+# said so; what it buys is a session the sweep has not changed.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("containment", "control", "expected"),
+    [
+        pytest.param(L, L, L, id="a-leak-is-a-leak"),
+        pytest.param(INC, L, INC, id="containment-could-not-measure"),
+        pytest.param(C, L, C, id="held-and-the-audit-saw-this-host-before-the-session"),
+        pytest.param(C, C, INC, id="the-audit-never-saw-this-host-so-held-means-nothing"),
+        pytest.param(C, INC, INC, id="the-control-could-not-measure"),
+    ],
+)
+def test_without_a_canary_the_pre_session_audit_is_the_positive_control(containment, control, expected) -> None:
+    result, reason = judge_pass_without_canary(containment, control)
+    assert result is expected, reason
+    assert reason
+
+
+def test_without_bypass_no_user_is_bypassed() -> None:
+    assert "--bypass-user" not in ttp_start_command(bypass=False)
+    assert "--watchdog" in ttp_start_command(bypass=False)
+
+
+def _events(record: list):
+    def audit(real_ip, user, target, role="audited"):
+        record.append(("audit", user))
+        return AuditResult.LEAK
+
+    def run(argv, **kwargs):
+        record.append(("run", tuple(argv[:2])))
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    return audit, run
+
+
+@pytest.mark.parametrize(
+    ("bypass", "expected"),
+    [
+        pytest.param(True, [("run", ("ttp", "start")), ("audit", CANARY_USER)], id="canary-after-start"),
+        pytest.param(False, [("audit", TEST_USER), ("run", ("ttp", "start"))], id="own-audit-before-start"),
+    ],
+)
+def test_a_session_starts_with_the_positive_control_its_variant_needs(bypass: bool, expected: list) -> None:
+    record: list = []
+    audit, run = _events(record)
+    with (
+        patch("tests.chaos_monkey.run_connectivity_audit", side_effect=audit),
+        patch("tests.chaos_monkey.run_udp_audit", side_effect=audit),
+        patch("tests.chaos_monkey.subprocess.run", side_effect=run),
+    ):
+        assert start_session(_REAL_IP, ("192.0.2.10", "192.0.2.20"), bypass=bypass) is AuditResult.LEAK
+    # each audit event is now a TCP and a UDP audit for the same user
+    collapsed = [e for i, e in enumerate(record) if i == 0 or e != record[i - 1]]
+    assert collapsed == expected
+
+
+def test_a_session_that_does_not_start_is_an_error_not_a_trial() -> None:
+    with (
+        patch("tests.chaos_monkey.run_connectivity_audit", return_value=AuditResult.LEAK),
+        patch("tests.chaos_monkey.run_udp_audit", return_value=AuditResult.LEAK),
+        patch("tests.chaos_monkey.subprocess.run", return_value=MagicMock(returncode=3, stderr="boom")),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        start_session(_REAL_IP, ("192.0.2.10", "192.0.2.20"), bypass=True)
+
+
+_FILTER_OUT = """table inet ttp {
+\tchain filter_out { # handle 5
+\t\ttype filter hook output priority filter; policy accept;
+\t\tmeta skuid 110 accept # handle 31
+\t\ttcp dport 853 counter name "dot_rejected" reject # handle 58
+\t\tcounter name "cleartext_rejected" reject # handle 64
+\t}
+}
+"""
+
+
+def test_the_last_rule_is_found_by_its_handle_and_not_the_chains() -> None:
+    assert last_rule_handle(_FILTER_OUT) == 64
+    empty = "table inet ttp {\n\tchain filter_out { # handle 5\n\t}\n}\n"
+    assert last_rule_handle(empty) is None
+
+
+def test_an_accept_is_inserted_at_the_top_of_filter_out() -> None:
+    with patch("tests.chaos_monkey.subprocess.run") as run:
+        inject_insert_accept()
+    assert run.call_args.args[0] == ["nft", "insert", "rule", "inet", "ttp", "filter_out", "accept"]
+
+
+def test_the_last_filter_rule_is_deleted_by_handle() -> None:
+    listing = MagicMock(returncode=0, stdout=_FILTER_OUT)
+    with patch("tests.chaos_monkey.subprocess.run", return_value=listing) as run:
+        inject_delete_last_filter_rule()
+    assert run.call_args.args[0] == ["nft", "delete", "rule", "inet", "ttp", "filter_out", "handle", "64"]
+
+
+def test_deleting_from_an_empty_chain_is_an_error_not_a_silent_no_op() -> None:
+    empty = MagicMock(returncode=0, stdout="table inet ttp {\n\tchain filter_out { # handle 5\n\t}\n}\n")
+    with patch("tests.chaos_monkey.subprocess.run", return_value=empty), pytest.raises(RuntimeError):
+        inject_delete_last_filter_rule()
+
+
+def test_the_sweep_includes_the_faults_a_chain_name_check_could_not_see() -> None:
+    """#80's cases: the table keeps its chains and loses what they did."""
+    assert {"insert_accept", "delete_last_filter_rule"} <= set(plan_injections())
+
+
+# ---------------------------------------------------------------------------
+# A UDP audit beside the TCP one.
+#
+# TTP's nat output sends TCP to Tor whatever filter_out does, so the faults
+# that only open filter_out - an inserted accept, a deleted catch-all - let UDP
+# out while every TCP audit reads "held". The first run of the redesigned sweep
+# showed exactly that: both faults passed on a build that does not detect them.
+# ---------------------------------------------------------------------------
+
+
+def _stun_reply(mapped: str) -> bytes:
+    import socket as _socket
+    import struct
+
+    cookie = b"\x21\x12\xa4\x42"
+    addr = bytes(b ^ m for b, m in zip(_socket.inet_aton(mapped), cookie, strict=True))
+    xor_mapped = struct.pack("!HHBBH", 0x0020, 8, 0, 1, 0x1234 ^ 0x2112) + addr
+    software = struct.pack("!HH", 0x8022, 3) + b"abc\x00"  # padded attribute before it
+    body = software + xor_mapped
+    return struct.pack("!HHI", 0x0101, len(body), 0x2112A442) + bytes(12) + body
+
+
+def _run_udp_child(reply=None, error=None) -> str:
+    import io
+    import sys
+    from contextlib import redirect_stdout
+
+    from tests.chaos_monkey import _UDP_AUDIT_SCRIPT
+
+    sock = MagicMock()
+    if error is not None:
+        sock.recvfrom.side_effect = error
+    else:
+        sock.recvfrom.return_value = (reply, ("192.0.2.20", 19302))
+    out = io.StringIO()
+    with (
+        patch("socket.socket", return_value=sock),
+        patch.object(sys, "argv", ["-c", "192.0.2.20", "19302"]),
+        redirect_stdout(out),
+    ):
+        exec(_UDP_AUDIT_SCRIPT, {})
+    return out.getvalue().strip()
+
+
+def test_the_udp_child_reads_the_mapped_address_past_other_attributes() -> None:
+    out = _run_udp_child(_stun_reply("203.0.113.7"))
+    assert out == "OK 203.0.113.7"
+    assert classify_audit(_REAL_IP, 0, out)[0] is AuditResult.LEAK
+
+
+def test_a_udp_datagram_that_gets_no_answer_is_contained() -> None:
+    out = _run_udp_child(error=TimeoutError())
+    assert out.startswith("NETFAIL")
+    assert classify_audit(_REAL_IP, 0, out)[0] is AuditResult.CONTAINED
+
+
+def test_a_reply_without_a_mapped_address_is_not_evidence() -> None:
+    import struct
+
+    bare = struct.pack("!HHI", 0x0101, 0, 0x2112A442) + bytes(12)
+    assert classify_audit(_REAL_IP, 0, _run_udp_child(bare))[0] is AuditResult.INCONCLUSIVE
+
+
+@pytest.mark.parametrize(
+    ("tcp", "udp", "audited", "control"),
+    [
+        pytest.param(C, C, C, C, id="both-held"),
+        pytest.param(C, L, L, C, id="udp-leaked-while-tcp-held"),
+        pytest.param(L, L, L, L, id="both-leaked"),
+        pytest.param(C, INC, INC, INC, id="one-channel-could-not-measure"),
+        pytest.param(L, INC, L, INC, id="a-leak-outranks-an-unmeasured-channel"),
+    ],
+)
+def test_one_leaking_channel_is_a_leak_and_a_control_needs_every_channel(tcp, udp, audited, control) -> None:
+    assert worst(tcp, udp) is audited
+    assert all_leaked(tcp, udp) is control

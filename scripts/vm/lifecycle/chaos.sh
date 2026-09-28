@@ -11,8 +11,9 @@
 # the emergency killswitch drops inbound traffic too - so it writes its log and
 # exit code to files, and this script collects them once the guest answers again.
 #
-#   VM_WORK=~/.cache/ttp-lifecycle-vm scripts/vm/lifecycle/chaos.sh
+#   VM_WORK=~/.cache/ttp-lifecycle-vm [CHAOS_ARGS="--reset-between --no-bypass"] scripts/vm/lifecycle/chaos.sh
 #
+# CHAOS_ARGS is passed to tests/chaos_monkey.py as-is (see its --help).
 # Exits with the sweep's own exit code. Needs what run.sh needs; no root.
 
 set -euo pipefail
@@ -34,15 +35,16 @@ vm_wait_ready 600
 vm_install_ttp "$ROOT"
 
 vm_ssh 'sudo systemd-run --quiet --unit=ttp-chaos --property=Type=exec \
-    /bin/sh -c "python3 /opt/ttp/tests/chaos_monkey.py >/var/tmp/chaos.log 2>&1; echo \$? >/var/tmp/chaos.rc"'
-vm_log "chaos sweep started in the guest"
+    /bin/sh -c "python3 /opt/ttp/tests/chaos_monkey.py '"${CHAOS_ARGS:-}"' >/var/tmp/chaos.log 2>&1; echo \$? >/var/tmp/chaos.rc"'
+vm_log "chaos sweep started in the guest (${CHAOS_ARGS:-default: one session, canary})"
 
-# The sweep plans every fault once and caps itself at --duration (420 s); the
-# deadline here only has to outlast that plus `ttp start` and cleanup.
-deadline=$((SECONDS + 1200))
+# The sweep plans every fault once and caps itself at --duration; with
+# --reset-between every fault also pays a Tor bootstrap. The deadline here only
+# has to outlast that plus cleanup.
+deadline=$((SECONDS + ${CHAOS_DEADLINE:-2700}))
 until vm_ssh 'test -f /var/tmp/chaos.rc' 2>/dev/null; do
     if [ "$SECONDS" -ge "$deadline" ]; then
-        vm_log "no result from the sweep within 20 minutes"
+        vm_log "no result from the sweep within ${CHAOS_DEADLINE:-2700} s"
         vm_ssh 'sudo cat /var/tmp/chaos.log' >"$VM_WORK/chaos.log" 2>/dev/null || true
         exit 1
     fi
@@ -51,6 +53,6 @@ done
 
 vm_ssh 'sudo cat /var/tmp/chaos.log' >"$VM_WORK/chaos.log"
 rc="$(vm_ssh 'cat /var/tmp/chaos.rc')"
-grep -E '^\[(INFO\] Injecting|AUDIT|ALERT|CANARY|PASS-VERDICT|PASS|FAIL|ERROR)' "$VM_WORK/chaos.log" || true
+grep -E '^\[(INFO\] (Injecting|Bootstrapping)|AUDIT|ALERT|CANARY|PASS-VERDICT|PASS|FAIL|ERROR)' "$VM_WORK/chaos.log" || true
 vm_log "chaos sweep exited $rc"
 exit "$rc"

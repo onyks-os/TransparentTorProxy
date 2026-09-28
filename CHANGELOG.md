@@ -92,6 +92,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The chaos sweep runs three ways, and no longer only with a canary**
+  ([#30](https://github.com/onyks-os/TransparentTorProxy/issues/30)).
+  `--reset-between` starts a fresh session before every fault, so each meets a
+  healthy one; without it, later faults met the killswitch an earlier one left
+  and only showed that it held. `--no-bypass` configures no bypassed user: the
+  canary's bypass rule is itself checked by the watchdog, and with it in place
+  a flushed table was caught for a reason a normal session does not have, which
+  hid #80 from the sweep. Its positive control is the audited user's own audit
+  before each `ttp start`. Two faults are new, `insert_accept` and
+  `delete_last_filter_rule`: they keep every chain name and change what the
+  chains do. They only open `filter_out`, and TTP's `nat output` still sends TCP
+  to Tor, so every audit is now TCP and UDP (a STUN request that reports the
+  address the datagram came from); with TCP alone both faults passed on a build
+  that cannot detect them. On such a build the no-bypass sweep now fails at
+  `insert_accept`; with #80 and #81 all eight faults are contained. The
+  lifecycle workflow runs the chained, independent and independent-no-bypass
+  sweeps in parallel.
+
 - **The watchdog chaos sweep runs in CI, in a VM, with a canary**
   ([#30](https://github.com/onyks-os/TransparentTorProxy/issues/30)).
   `scripts/vm/lifecycle/chaos.sh` runs `tests/chaos_monkey.py` in a disposable
