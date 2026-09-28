@@ -72,7 +72,8 @@ and state snapshots into `$VM_WORK`. `scripts/vm/lifecycle/egress.py <file.pcap>
 summarises a capture by destination; it streams the file, so size is not a concern.
 Captures are header-only and only cover scenario phases, never provisioning.
 
-`scripts/vm/lifecycle/chaos.sh` runs the watchdog chaos sweep (`tests/chaos_monkey.py`)
+`scripts/vm/lifecycle/chaos.sh` runs the watchdog chaos sweep (`tests/chaos_monkey.py`,
+options through `CHAOS_ARGS`, e.g. `CHAOS_ARGS="--reset-between --no-bypass"`)
 in the same kind of guest, detached, because two of its faults cut the SSH session on
 purpose; it collects the sweep's log and exit code when the guest answers again.
 

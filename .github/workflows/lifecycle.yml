@@ -70,10 +70,27 @@ jobs:
             ${{ runner.temp }}/vm/*.log
           if-no-files-found: warn
 
+  # Three sweeps, because each answers a different question:
+  #  - chained: one session takes every fault in turn, so later faults meet
+  #    what earlier ones left (this is the order that found #77);
+  #  - independent: every fault meets a fresh, healthy session;
+  #  - independent, no bypass: no canary either, because its bypass rule is
+  #    something the watchdog checks - with it configured, a flushed table was
+  #    caught for a reason a normal session does not have (#80).
   chaos:
-    name: Watchdog chaos sweep (VM)
+    name: Watchdog chaos sweep (VM, ${{ matrix.variant }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: chained
+            args: ""
+          - variant: independent
+            args: "--reset-between --duration 2400"
+          - variant: independent-no-bypass
+            args: "--reset-between --no-bypass --duration 2400"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -94,13 +111,14 @@ jobs:
       - name: Run the chaos sweep in the guest
         env:
           VM_WORK: ${{ runner.temp }}/vm
+          CHAOS_ARGS: ${{ matrix.args }}
         run: scripts/vm/lifecycle/chaos.sh
 
       - name: Upload the sweep's log
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: chaos-vm
+          name: chaos-vm-${{ matrix.variant }}
           path: |
             ${{ runner.temp }}/vm/chaos.log
             ${{ runner.temp }}/vm/*.log

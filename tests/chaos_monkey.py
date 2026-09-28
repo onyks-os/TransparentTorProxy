@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -128,9 +129,10 @@ def cleanup_test_user():
         subprocess.run(["userdel", "-r", user], capture_output=True)
 
 
-def ttp_start_command() -> list[str]:
-    """The session under test: watchdog on, the canary bypassed, TEST_USER not."""
-    return ["ttp", "start", "--watchdog", "--bootstrap-timeout", "300", "--bypass-user", CANARY_USER]
+def ttp_start_command(bypass: bool = True) -> list[str]:
+    """The session under test: watchdog on, the canary bypassed unless *bypass* is off; TEST_USER never."""
+    argv = ["ttp", "start", "--watchdog", "--bootstrap-timeout", "300"]
+    return [*argv, "--bypass-user", CANARY_USER] if bypass else argv
 
 
 def is_killswitch_table(nft_listing: str) -> bool:
@@ -146,6 +148,44 @@ def is_killswitch_table(nft_listing: str) -> bool:
 def killswitch_engaged() -> bool:
     res = subprocess.run(["nft", "list", "table", "inet", "ttp"], capture_output=True, text=True)
     return res.returncode == 0 and is_killswitch_table(res.stdout)
+
+
+def judge_pass_without_canary(containment: AuditResult, control: AuditResult) -> tuple[AuditResult, str]:
+    """What a pass proved when no user is bypassed.
+
+    A bypass adds a rule the watchdog checks for, so the canary changes the
+    session it observes: with it configured, a flushed table was caught for a
+    reason a normal session does not have (#80). Without it, the positive
+    control is *control*: the audited user's own audit taken before `ttp start`,
+    which must have seen this host. Weaker than a same-pass canary - it shows the
+    audit could see a leak on this host shortly before, not at this moment.
+    """
+    if containment is AuditResult.LEAK:
+        return AuditResult.LEAK, "the audited user reached the WAN as this host"
+    if containment is AuditResult.INCONCLUSIVE:
+        return AuditResult.INCONCLUSIVE, "the audited user's check could not measure"
+    if control is AuditResult.LEAK:
+        return AuditResult.CONTAINED, "held, and before this session the same audit saw this host"
+    return AuditResult.INCONCLUSIVE, "before the session the audit did not see this host, so it could not show a leak"
+
+
+def start_session(real_ip: str, targets: tuple[str, str], bypass: bool) -> AuditResult:
+    """Start a session and return the positive control its audits are judged against.
+
+    With the canary, it is the canary's audits after `ttp start`; without it, the
+    audited user's own audits before. Both TCP and UDP must have seen this host,
+    since each is a channel a leak could be reported on. Raises if the session
+    does not start: a trial with no session under it would measure nothing.
+    """
+    control = AuditResult.INCONCLUSIVE
+    if not bypass:
+        control = all_leaked(*audit_both(real_ip, TEST_USER, targets, "control"))
+    res = subprocess.run(ttp_start_command(bypass), capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"ttp start failed ({res.returncode}): {res.stderr.strip()}")
+    if bypass:
+        control = all_leaked(*audit_both(real_ip, CANARY_USER, targets, "canary"))
+    return control
 
 
 def judge_pass(containment: AuditResult, canary: AuditResult, killswitch: bool) -> tuple[AuditResult, str]:
@@ -221,6 +261,51 @@ _AUDIT_SCRIPT = (
 )
 
 
+#: A STUN server answers a binding request with the address the datagram came
+#: from, which makes it the UDP counterpart of the IP echo. The TCP audit alone
+#: cannot see a UDP leak: TTP's `nat output` sends TCP to Tor whatever
+#: filter_out does, so a fault that only opens filter_out - an inserted accept,
+#: a deleted catch-all - lets UDP out while every TCP audit still reads "held".
+STUN_HOSTS = ("stun.l.google.com", "stun1.l.google.com", "stun.cloudflare.com")
+STUN_PORT = 19302
+
+#: argv: <address> <port>. Prints "OK <mapped address>" or "NETFAIL <error>",
+#: the same shapes as _AUDIT_SCRIPT, so classify_audit reads both.
+_UDP_AUDIT_SCRIPT = (
+    "import socket, struct, sys\n"
+    "addr, port = sys.argv[1], int(sys.argv[2])\n"
+    "request = b'\\x00\\x01\\x00\\x00\\x21\\x12\\xa4\\x42' + bytes(12)\n"
+    "try:\n"
+    "    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+    "    s.settimeout(3)\n"
+    "    s.sendto(request, (addr, port))\n"
+    "    data, _ = s.recvfrom(2048)\n"
+    "    i, mapped = 20, None\n"
+    "    while i + 4 <= len(data) and mapped is None:\n"
+    "        kind, size = struct.unpack('!HH', data[i:i + 4])\n"
+    "        value = data[i + 4:i + 4 + size]\n"
+    "        if kind == 0x0020 and len(value) >= 8 and value[1] == 1:\n"
+    "            mapped = socket.inet_ntoa(bytes(b ^ m for b, m in zip(value[4:8], b'\\x21\\x12\\xa4\\x42')))\n"
+    "        i += 4 + size + (-size % 4)\n"
+    "    print('OK ' + (mapped or 'no-mapped-address'))\n"
+    "except OSError as exc:\n"
+    "    print('NETFAIL ' + type(exc).__name__)\n"
+)
+
+
+def resolve_stun_target() -> str | None:
+    """The IPv4 address of the first STUN server that resolves, before TTP owns DNS."""
+    for host in STUN_HOSTS:
+        try:
+            infos = socket.getaddrinfo(host, STUN_PORT, socket.AF_INET, socket.SOCK_DGRAM)
+        except OSError:
+            continue
+        if infos:
+            return str(infos[0][4][0])
+    print(f"[WARNING] None of {', '.join(STUN_HOSTS)} resolved")
+    return None
+
+
 def resolve_audit_target() -> str | None:
     """The IPv4 address of AUDIT_HOST, looked up before TTP owns this host's DNS."""
     try:
@@ -261,31 +346,14 @@ def classify_audit(real_ip: str | None, returncode: int, stdout: str) -> tuple[A
     return AuditResult.CONTAINED, f"the WAN saw {current_ip}, not this host's {real_ip}"
 
 
-def run_connectivity_audit(real_ip: str | None, user: str = TEST_USER, target: str | None = None) -> AuditResult:
-    """Ask what the WAN sees, as *user*, and report honestly when the question went unanswered."""
-    if real_ip is None:
-        result, reason = classify_audit(real_ip, 0, "")
-    elif target is None:
-        result, reason = AuditResult.INCONCLUSIVE, f"no address for {AUDIT_HOST} was resolved before the session"
-    else:
-        try:
-            res = subprocess.run(
-                ["python3", "-c", _AUDIT_SCRIPT, target, AUDIT_HOST],
-                capture_output=True,
-                text=True,
-                user=user,
-            )
-        except OSError as exc:
-            result, reason = AuditResult.INCONCLUSIVE, f"the audit could not be launched at all: {exc!r}"
-        else:
-            result, reason = classify_audit(real_ip, res.returncode, res.stdout)
-
-    if user == CANARY_USER:
-        # The canary is bypassed on purpose: reaching the WAN is its job.
+def _report(result: AuditResult, reason: str, user: str, role: str, proto: str) -> None:
+    if role in ("canary", "control"):
+        # A positive control is expected to reach the WAN: that is its job.
+        tag = role.upper()
         label = {
-            AuditResult.LEAK: "[CANARY] reached the WAN as this host, as it should",
-            AuditResult.CONTAINED: "[CANARY] blocked",
-            AuditResult.INCONCLUSIVE: "[CANARY] could not measure",
+            AuditResult.LEAK: f"[{tag}] reached the WAN as this host, as it should",
+            AuditResult.CONTAINED: f"[{tag}] blocked",
+            AuditResult.INCONCLUSIVE: f"[{tag}] could not measure",
         }[result]
     else:
         label = {
@@ -293,8 +361,67 @@ def run_connectivity_audit(real_ip: str | None, user: str = TEST_USER, target: s
             AuditResult.LEAK: "[ALERT] CRITICAL NET LEAK DETECTED",
             AuditResult.INCONCLUSIVE: "[ALERT] AUDIT INCONCLUSIVE",
         }[result]
-    print(f"{label} ({user}): {reason}")
+    print(f"{label} ({user}, {proto}): {reason}")
+
+
+def _run_child(real_ip: str, user: str, argv: list[str]) -> tuple[AuditResult, str]:
+    try:
+        res = subprocess.run(["python3", "-c", *argv], capture_output=True, text=True, user=user)
+    except OSError as exc:
+        return AuditResult.INCONCLUSIVE, f"the audit could not be launched at all: {exc!r}"
+    return classify_audit(real_ip, res.returncode, res.stdout)
+
+
+def run_connectivity_audit(
+    real_ip: str | None, user: str = TEST_USER, target: str | None = None, role: str = "audited"
+) -> AuditResult:
+    """Ask, over TCP, what the WAN sees as *user*; report honestly when the question went unanswered."""
+    if real_ip is None:
+        result, reason = classify_audit(real_ip, 0, "")
+    elif target is None:
+        result, reason = AuditResult.INCONCLUSIVE, f"no address for {AUDIT_HOST} was resolved before the session"
+    else:
+        result, reason = _run_child(real_ip, user, [_AUDIT_SCRIPT, target, AUDIT_HOST])
+    _report(result, reason, user, role, "tcp")
     return result
+
+
+def run_udp_audit(real_ip: str | None, user: str, stun: str | None, role: str = "audited") -> AuditResult:
+    """Ask a STUN server, over UDP, what address *user*'s datagram came from."""
+    if real_ip is None:
+        result, reason = classify_audit(real_ip, 0, "")
+    elif stun is None:
+        result, reason = AuditResult.INCONCLUSIVE, "no STUN server was resolved before the session"
+    else:
+        result, reason = _run_child(real_ip, user, [_UDP_AUDIT_SCRIPT, stun, str(STUN_PORT)])
+    _report(result, reason, user, role, "udp")
+    return result
+
+
+def worst(*results: AuditResult) -> AuditResult:
+    """The audited user's verdict over several channels: one leak is a leak."""
+    if AuditResult.LEAK in results:
+        return AuditResult.LEAK
+    if AuditResult.INCONCLUSIVE in results:
+        return AuditResult.INCONCLUSIVE
+    return AuditResult.CONTAINED
+
+
+def all_leaked(*results: AuditResult) -> AuditResult:
+    """A positive control over several channels: every channel must have seen this host."""
+    if all(r is AuditResult.LEAK for r in results):
+        return AuditResult.LEAK
+    if AuditResult.INCONCLUSIVE in results:
+        return AuditResult.INCONCLUSIVE
+    return AuditResult.CONTAINED
+
+
+def audit_both(real_ip: str, user: str, targets: tuple[str, str], role: str) -> tuple[AuditResult, AuditResult]:
+    """The TCP and the UDP audit for *user*; targets is (echo address, STUN address)."""
+    return (
+        run_connectivity_audit(real_ip, user, targets[0], role),
+        run_udp_audit(real_ip, user, targets[1], role),
+    )
 
 
 def inject_kill_tor():
@@ -353,6 +480,41 @@ def inject_sigkill_tor():
     subprocess.run(["kill", "-KILL", str(pid)], check=True)
 
 
+def inject_insert_accept():
+    """An `accept` at the top of filter_out: the table keeps every chain and stops rejecting."""
+    print("[CHAOS] Injecting Failure: accept inserted at the top of filter_out...")
+    subprocess.run(["nft", "insert", "rule", "inet", "ttp", "filter_out", "accept"], check=True)
+
+
+def last_rule_handle(listing: str) -> int | None:
+    """Handle of the last rule in an `nft -a list chain` listing; the chain's own handle is skipped."""
+    handle = None
+    for line in listing.splitlines():
+        match = re.search(r"#\s*handle (\d+)\s*$", line)
+        if match and not line.lstrip().startswith("chain "):
+            handle = int(match.group(1))
+    return handle
+
+
+def inject_delete_last_filter_rule():
+    """Delete filter_out's last rule - on a session table, the catch-all reject.
+
+    Raises:
+        RuntimeError: If the chain has no rule, rather than count a fault that did nothing.
+    """
+    print("[CHAOS] Injecting Failure: deleting the last rule of filter_out...")
+    listing = subprocess.run(
+        ["nft", "-a", "list", "chain", "inet", "ttp", "filter_out"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    handle = last_rule_handle(listing.stdout)
+    if handle is None:
+        raise RuntimeError(f"cannot delete a rule: filter_out has none ({listing.stdout.strip()!r})")
+    subprocess.run(["nft", "delete", "rule", "inet", "ttp", "filter_out", "handle", str(handle)], check=True)
+
+
 def inject_flush_firewall():
     print("[CHAOS] Injecting Failure: Flushing nftables 'inet ttp' ruleset...")
     subprocess.run(["nft", "flush", "table", "inet", "ttp"], check=True)
@@ -385,6 +547,8 @@ def inject_link_flap(interface: str):
 INJECTIONS: dict[str, Callable[[str], None]] = {
     "kill_tor": lambda interface: inject_kill_tor(),
     "sigkill_tor": lambda interface: inject_sigkill_tor(),
+    "insert_accept": lambda interface: inject_insert_accept(),
+    "delete_last_filter_rule": lambda interface: inject_delete_last_filter_rule(),
     "flush_firewall": lambda interface: inject_flush_firewall(),
     "destroy_firewall": lambda interface: inject_destroy_firewall(),
     "unmount_dns": lambda interface: inject_unmount_dns(),
@@ -469,7 +633,25 @@ def main():
         default=None,
         help="Inject only this fault, to reproduce one failure. Default: sweep all of them once.",
     )
+    parser.add_argument(
+        "--reset-between",
+        action="store_true",
+        help=(
+            "Start a fresh session before every fault, so each one meets a healthy session. "
+            "Default: one session for the whole sweep, so later faults meet what earlier ones left."
+        ),
+    )
+    parser.add_argument(
+        "--no-bypass",
+        action="store_true",
+        help=(
+            "Configure no bypassed user. The canary's bypass rule is itself something the watchdog "
+            "checks, so it changes the session under test; without it the positive control is the "
+            "audited user's own audit before each `ttp start`."
+        ),
+    )
     args = parser.parse_args()
+    bypass = not args.no_bypass
 
     try:
         plan = plan_injections(args.injection)
@@ -493,11 +675,12 @@ def main():
         )
         sys.exit(1)
 
-    target = resolve_audit_target()
-    if target is None:
-        print(f"[ERROR] {AUDIT_HOST} did not resolve before the session; no audit could run.", file=sys.stderr)
+    target, stun = resolve_audit_target(), resolve_stun_target()
+    if target is None or stun is None:
+        print("[ERROR] The audit targets did not resolve before the session; no audit could run.", file=sys.stderr)
         sys.exit(1)
-    print(f"[INFO] Audits will connect to {AUDIT_HOST} at {target}, resolved before the session")
+    targets = (target, stun)
+    print(f"[INFO] Audits: TCP to {AUDIT_HOST} at {target}, UDP to STUN at {stun}, resolved before the session")
 
     interface = get_active_interface()
     if not interface:
@@ -508,18 +691,20 @@ def main():
     setup_test_user()
 
     # 1. Start TTP
-    print("[INFO] Bootstrapping TTP with watchdog...")
-    res = subprocess.run(ttp_start_command(), capture_output=True, text=True)
-    if res.returncode != 0:
-        print(f"[ERROR] Failed to start TTP: {res.stderr}", file=sys.stderr)
+    mode = "independent trials" if args.reset_between else "one session for the whole sweep"
+    print(f"[INFO] Bootstrapping TTP with watchdog ({mode}, {'canary bypassed' if bypass else 'no bypass'})...")
+    try:
+        control = start_session(real_ip, targets, bypass)
+    except RuntimeError as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
         cleanup_test_user()
         sys.exit(1)
 
-    # Before any fault: the canary must be seen as this host. If it is not, no
-    # audit in this run can report a leak, and there is nothing to sweep for.
-    if run_connectivity_audit(real_ip, CANARY_USER, target) is not AuditResult.LEAK:
+    # Before any fault: the positive control must have seen this host. If it did
+    # not, no audit in this run can report a leak, and there is nothing to sweep for.
+    if control is not AuditResult.LEAK:
         print(
-            "[ERROR] The bypassed canary did not reach the WAN as this host before any "
+            "[ERROR] The positive control did not reach the WAN as this host before any "
             "fault was injected, so this run could not detect a leak. Not sweeping.",
             file=sys.stderr,
         )
@@ -543,6 +728,24 @@ def main():
                 print(f"[WARN] Duration budget expired before {failure_type}; the sweep is incomplete.")
                 break
 
+            # Independent trials: each fault meets a session nothing has touched.
+            # The first reuses the session started above.
+            if args.reset_between and failures_injected > 0:
+                subprocess.run(["ttp", "stop"], capture_output=True)
+                try:
+                    control = start_session(real_ip, targets, bypass)
+                except RuntimeError as exc:
+                    print(f"[ALERT] TRIAL INCONCLUSIVE ({failure_type}): {exc}")
+                    inconclusive_audits += 1
+                    failures_injected += 1
+                    continue
+                if control is not AuditResult.LEAK:
+                    print(f"[ALERT] TRIAL INCONCLUSIVE ({failure_type}): the positive control did not see this host")
+                    inconclusive_audits += 1
+                    failures_injected += 1
+                    continue
+                last_injection = 0.0  # a fresh session: nothing to space this fault from
+
             while time.time() - last_injection < args.interval:
                 time.sleep(1)
 
@@ -557,11 +760,14 @@ def main():
             print(f"[INFO] Waiting {check_wait} seconds for watchdog response...")
             time.sleep(check_wait)
 
-            # Both audits in the same pass: the canary is the positive control
-            # for this pass, not for some earlier moment.
-            containment = run_connectivity_audit(real_ip, TEST_USER, target)
-            canary = run_connectivity_audit(real_ip, CANARY_USER, target)
-            result, reason = judge_pass(containment, canary, killswitch_engaged())
+            containment = worst(*audit_both(real_ip, TEST_USER, targets, "audited"))
+            if bypass:
+                # Same pass: the canary is the positive control for this pass,
+                # not for some earlier moment.
+                canary = all_leaked(*audit_both(real_ip, CANARY_USER, targets, "canary"))
+                result, reason = judge_pass(containment, canary, killswitch_engaged())
+            else:
+                result, reason = judge_pass_without_canary(containment, control)
             print(f"[PASS-VERDICT] {result.value}: {reason}")
             if result is AuditResult.LEAK:
                 leaks_found += 1

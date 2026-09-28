@@ -267,12 +267,31 @@ changes, it changes on purpose.
 A mutant that exempts the probe's user from `nat output` and `filter_out` fails all
 three containment checks, so the suite can go red.
 
-**What the sweep found on its first VM runs.** Stopping `ttp-tor` also stopped the
-watchdog, so Tor was never restarted ([#75](https://github.com/onyks-os/TransparentTorProxy/issues/75)).
-Once the emergency killswitch is engaged the watchdog exits, and deleting the table that
-holds the killswitch releases all traffic in cleartext with nothing watching
-([#77](https://github.com/onyks-os/TransparentTorProxy/issues/77)). The sweep stays red
-until both are fixed; that is what it is for.
+**Three sweeps, each answering a different question.** *Chained*: one session takes
+every fault in turn, so later faults meet what earlier ones left. *Independent*: a fresh
+session before every fault, so each meets a healthy one. *Independent, no bypass*: no
+canary either, because a bypass puts a rule in the table that the watchdog checks for -
+with the canary configured, a flushed table was caught for a reason a normal session does
+not have. There the positive control is the audited user's own audit before each
+`ttp start`: weaker than same-pass, since it shows the audit could see a leak shortly
+before rather than at that moment. Eight faults, including an `accept` inserted into
+`filter_out` and its last rule deleted - changes that keep every chain name.
+
+**Every audit is TCP and UDP.** TTP's `nat output` sends TCP to Tor whatever
+`filter_out` does, so a fault that only opens `filter_out` lets UDP out while a TCP audit
+still reads "held". Each audit therefore also asks a STUN server, over UDP, which address
+its datagram came from; a leak on either channel is a leak, and a positive control must
+have seen this host on both. On a build without #80 the no-bypass sweep fails at
+`insert_accept`, on the UDP audit; with #80 and #81 all eight faults are contained.
+
+**What the sweep found.** Stopping `ttp-tor` also stopped the watchdog
+([#75](https://github.com/onyks-os/TransparentTorProxy/issues/75)); after the killswitch
+the watchdog exited and deleting it leaked everything
+([#77](https://github.com/onyks-os/TransparentTorProxy/issues/77)); a flushed or altered
+session table passed the integrity check
+([#80](https://github.com/onyks-os/TransparentTorProxy/issues/80)); and the nftables
+events meant to trigger the check never arrived
+([#81](https://github.com/onyks-os/TransparentTorProxy/issues/81)).
 
 **Still not measured.** Shutdown and reboot are measured on Debian with systemd-networkd
 only, not under NetworkManager. Tracked in [#30](https://github.com/onyks-os/TransparentTorProxy/issues/30).
