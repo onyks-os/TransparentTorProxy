@@ -24,8 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   image pinned by digest. The wheel and sdist are built from a copy of the
   sources with normalised permissions, in a Python image pinned by digest: the
   same files compress to different bytes under Fedora's zlib-ng, so a wheel built
-  on a Fedora host never matched one built on Ubuntu. Measured: the wheel and the
-  `.rpm` built on a Fedora workstation are byte-identical to CI's. `scripts/check-reproducible.sh` builds twice from two
+  on a Fedora host never matched one built on Ubuntu. Measured: the wheel, the
+  sdist and the `.rpm` built on a Fedora workstation are byte-identical to CI's
+  (the `.deb` depends on the host's `dpkg-deb`). `scripts/check-reproducible.sh` builds twice from two
   copies of the tree and compares; a new CI job runs it on every change, and
   `verify-release.yml` rebuilds each release from its tag and compares it with
   what was published. `docs/verification.md` explains how to rebuild a release
