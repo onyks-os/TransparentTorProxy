@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-09-29
+
+The result of TTP's first end-to-end security audit, and of the verification
+work it set off. The audit's findings are under **Security**: every one survived
+independent verification, and the full report, including the seven candidates
+that were **disproved** and the work still open, is at
+[`docs/security/audit-2026-09.md`](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/security/audit-2026-09.md).
+Checking those fixes on real hosts then found leaks and watchdog failures that no
+unit test had reached. They are under **Fixed**, and the VM, chaos and
+competing-ruleset suites that found them are under **Added**.
+
+Two things to know before upgrading:
+
+- **`ttp start` and `ttp restart` now exit `3`, not `0`, when Tor cannot be
+  verified.** Scripts that chain on their exit code should be checked; see
+  **Changed**.
+- **A session does not survive a reboot.** This is not new, but it is now
+  measured and documented: after a reboot the host is in cleartext until
+  `ttp start` is run again. See section 4.3 of
+  [`docs/security-assessment.md`](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/security-assessment.md).
+
+### Security
+
+- **`/run/ttp` is no longer handed to the `ttp-watchdog` account.** It stays
+  root-owned; the watchdog gets group read and its own subdirectory. Owning the
+  directory let that account replace root's lock, log, `resolv.conf` or ruleset
+  with a symlink and redirect a root-privileged write. This also unblocks the
+  watchdog, which previously could not read the lock it was monitoring.
+- **A lock `tor_uid` can no longer become an extra `nft` command.** `nft` joins
+  its arguments into one buffer and lexes it line-wise, so a newline in that
+  value inserted an attacker-chosen rule at the top of `filter_out` during
+  `ttp stop` — while the teardown was logged as successful.
+- **The Tor account is identified by its binary, not by a process name.** A `ps`
+  row is trusted only when `/proc/<pid>/exe` is the resolved `tor` binary, BYOD
+  account names are matched exactly rather than by substring, and a non-system
+  account is refused outright.
+- **The IPv6 kill-switch now precedes every cleartext exemption.** With
+  `--no-ipv6`, `--allow-root`, `--bypass-user/--bypass-group` and `ttp bypass`
+  previously leaked that principal's IPv6 to the WAN.
+- **A `--bridge` value must be a single line.** A newline in one injected
+  arbitrary directives into the generated torrc.
+- **The nftables ruleset is piped to `nft` on stdin**, and the volatile
+  `resolv.conf` and log file are opened with `O_NOFOLLOW` and validated, so no
+  fixed name in `/run/ttp` is resolved twice or followed.
+- **`ttp bypass` resets the supplementary group vector.** `systemd-run --scope`
+  never calls `initgroups()`, so `--uid/--gid` alone left root's groups — gid 0
+  at minimum — on the bypassed process. It is now wrapped in
+  `setpriv --init-groups`.
+- **Only `check.torproject.org` may assert `IsTor`**, and reflector values are
+  canonicalised through `ipaddress` before being displayed, so a reflector can
+  no longer flip the verification verdict, abort a command mid-output, or
+  repaint the terminal.
+- **The PID-recycling guard matches argv tokens, not a substring.** `"http"`
+  contains `"ttp"`, so any curl, wget or httpd process defeated it.
+- **Every GitHub Action is pinned to a commit SHA.** All 40 `uses:` references
+  were on mutable tags, including the Sigstore signing and PyPI publishing steps
+  in jobs holding `id-token: write`.
+
 ### Changed
 
 - **The competing-ruleset test now loads firewalld's and WireGuard's real
@@ -596,53 +654,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sys.executable -m ruff`, the lint target is asserted to exist (`ruff check` on
   a missing path still prints "All checks passed!" and exits 0), and a new test
   feeds ruff a bare-binary call site so the rule is shown to fire.
-
-## [0.4.9] - 2026-09-20
-
-A hardening-only release. No new features: it is the result of TTP's first
-end-to-end security audit, and every change below comes from a finding that
-survived independent verification. The full report, including the seven
-candidates that were **disproved** and the work still open, is at
-[`docs/security/audit-2026-09.md`](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/security/audit-2026-09.md).
-
-### Security
-
-- **`/run/ttp` is no longer handed to the `ttp-watchdog` account.** It stays
-  root-owned; the watchdog gets group read and its own subdirectory. Owning the
-  directory let that account replace root's lock, log, `resolv.conf` or ruleset
-  with a symlink and redirect a root-privileged write. This also unblocks the
-  watchdog, which previously could not read the lock it was monitoring.
-- **A lock `tor_uid` can no longer become an extra `nft` command.** `nft` joins
-  its arguments into one buffer and lexes it line-wise, so a newline in that
-  value inserted an attacker-chosen rule at the top of `filter_out` during
-  `ttp stop` — while the teardown was logged as successful.
-- **The Tor account is identified by its binary, not by a process name.** A `ps`
-  row is trusted only when `/proc/<pid>/exe` is the resolved `tor` binary, BYOD
-  account names are matched exactly rather than by substring, and a non-system
-  account is refused outright.
-- **The IPv6 kill-switch now precedes every cleartext exemption.** With
-  `--no-ipv6`, `--allow-root`, `--bypass-user/--bypass-group` and `ttp bypass`
-  previously leaked that principal's IPv6 to the WAN.
-- **A `--bridge` value must be a single line.** A newline in one injected
-  arbitrary directives into the generated torrc.
-- **The nftables ruleset is piped to `nft` on stdin**, and the volatile
-  `resolv.conf` and log file are opened with `O_NOFOLLOW` and validated, so no
-  fixed name in `/run/ttp` is resolved twice or followed.
-- **`ttp bypass` resets the supplementary group vector.** `systemd-run --scope`
-  never calls `initgroups()`, so `--uid/--gid` alone left root's groups — gid 0
-  at minimum — on the bypassed process. It is now wrapped in
-  `setpriv --init-groups`.
-- **Only `check.torproject.org` may assert `IsTor`**, and reflector values are
-  canonicalised through `ipaddress` before being displayed, so a reflector can
-  no longer flip the verification verdict, abort a command mid-output, or
-  repaint the terminal.
-- **The PID-recycling guard matches argv tokens, not a substring.** `"http"`
-  contains `"ttp"`, so any curl, wget or httpd process defeated it.
-- **Every GitHub Action is pinned to a commit SHA.** All 40 `uses:` references
-  were on mutable tags, including the Sigstore signing and PyPI publishing steps
-  in jobs holding `id-token: write`.
-
-### Fixed
 
 - The watchdog daemon can now actually start. Its generated unit drops to
   `ttp-watchdog` while its entrypoint required euid 0, so on every packaged
