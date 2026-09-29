@@ -1,0 +1,117 @@
+name: Verify release
+
+# Verifies a release from what is published, the way a user would: every asset
+# against its Sigstore bundle and this workflow identity, SHA256SUMS, PyPI
+# serving the signed bytes, and the published .deb and .rpm installing in clean
+# containers. The release job already checks its own files before signing; this
+# checks what reached users, after the fact, and keeps checking.
+#
+# - After every Release run that succeeded (workflow_run: a release created with
+#   GITHUB_TOKEN does not emit `release` events to other workflows).
+# - Weekly, on the latest release: an asset replaced on the release page later
+#   would fail its signature here, not wait for a user to notice.
+# - On demand, for any tag.
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  schedule:
+    - cron: "41 5 * * 3"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to verify (default: the latest release)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify the published release
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Install the Sigstore client
+        run: pip install "sigstore==4.5.0"
+
+      # Values from the event go through env, never into the script text.
+      - name: Resolve the tag to verify
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          RUN_REF: ${{ github.event.workflow_run.head_branch }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          tag=""
+          case "$EVENT" in
+            workflow_run) tag="$RUN_REF" ;;
+            workflow_dispatch) tag="$INPUT_TAG" ;;
+          esac
+          if [ -z "$tag" ]; then
+            tag="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          fi
+          case "$tag" in
+            v[0-9]*) ;;
+            *) echo "::error::Not a release tag: $tag"; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Verifying $tag"
+
+      - name: Verify signatures, checksums and PyPI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: scripts/verify-release.sh "$TAG" release-assets
+
+      # The strongest check: build the tag again, on a different runner, and
+      # require the published artifacts byte for byte. Only right after the
+      # release or on demand, not on the weekly run: the build venv is
+      # hash-pinned and the rpm image is pinned by digest, but the packages
+      # installed inside that image and the runner's own dpkg are those of the
+      # day. And only from the first release built to be reproducible.
+      - name: Rebuild the tag and compare with what was published
+        if: github.event_name != 'schedule'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          FIRST_REPRODUCIBLE: "0.4.10"
+        run: |
+          version="${TAG#v}"
+          oldest="$(printf '%s\n%s\n' "$FIRST_REPRODUCIBLE" "$version" | sort -V | head -n1)"
+          if [ "$oldest" != "$FIRST_REPRODUCIBLE" ]; then
+            echo "$TAG predates reproducible builds ($FIRST_REPRODUCIBLE): nothing to compare."
+            exit 0
+          fi
+          sudo apt-get update && sudo apt-get install -y rpm
+          pip install twine "cyclonedx-python-lib[json-validation]"
+          git clone --quiet --depth 1 --branch "$TAG" "https://github.com/$GITHUB_REPOSITORY" rebuild
+          (cd rebuild && packaging/release.sh)
+          status=0
+          for published in release-assets/*; do
+            name="$(basename "$published")"
+            case "$name" in *.sigstore.json) continue ;; esac
+            if cmp -s "$published" "rebuild/packaging/$name"; then
+              echo "identical  $name"
+            else
+              echo "::error::$name: the rebuild of $TAG differs from the published artifact"
+              status=1
+            fi
+          done
+          exit "$status"
+
+      - name: Install the published packages in clean containers
+        run: |
+          packaging/smoke_test.sh release-assets/*.deb docker.io/library/debian:13
+          packaging/smoke_test.sh release-assets/*.deb docker.io/library/ubuntu:24.04
+          packaging/smoke_test.sh release-assets/*.rpm registry.fedoraproject.org/fedora:44

@@ -35,6 +35,18 @@ umask 022
 # Navigate to the project root regardless of where the script is invoked from.
 cd "$(dirname "$0")/.."
 
+# Reproducible builds: every timestamp inside every artifact is the commit's, so
+# two builds of the same commit produce the same bytes. An explicit value wins,
+# which is how the container builds and scripts/check-reproducible.sh pass it on.
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    SOURCE_DATE_EPOCH="$(git log -1 --format=%ct 2>/dev/null || true)"
+fi
+if [ -z "$SOURCE_DATE_EPOCH" ]; then
+    echo "Error: SOURCE_DATE_EPOCH is not set and this is not a git checkout." >&2
+    exit 1
+fi
+export SOURCE_DATE_EPOCH
+
 # Extract the version string from pyproject.toml (the single source of truth).
 VERSION=$(grep -m 1 '^version =' pyproject.toml | cut -d '"' -f 2)
 
@@ -58,7 +70,8 @@ BUILD_TMP="$(pwd)/.build_tmp"
 rm -rf dist/ build/ "$BUILD_TMP"
 mkdir -p "$BUILD_TMP"
 
-TMPDIR="$BUILD_TMP" python3 -m build > /dev/null
+# The build environment is pinned by hash (packaging/build_python.sh).
+TMPDIR="$BUILD_TMP" packaging/build_python.sh dist > /dev/null
 python3 -m twine check dist/*
 
 rm -rf "$BUILD_TMP"
@@ -69,7 +82,7 @@ echo ""
 # Step 1: clean old packaging artifacts
 echo "[1/5] Cleaning old system artifacts..."
 rm -rf "$(pwd)/.build_tmp"
-rm -f "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.whl "$RELEASE_DIR"/SHA256SUMS.txt "$RELEASE_DIR"/SHA256SUMS.txt.asc
+rm -f "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.whl "$RELEASE_DIR"/*.cdx.json "$RELEASE_DIR"/SHA256SUMS.txt "$RELEASE_DIR"/SHA256SUMS.txt.asc
 echo "      Done."
 echo ""
 
@@ -101,6 +114,18 @@ echo ""
 echo "[3.5/5] Copying Python source distribution and wheel to release directory..."
 cp dist/*.tar.gz dist/*.whl "$RELEASE_DIR"/
 echo "      Done."
+echo ""
+
+# Step 3.6: one SBOM per artifact, read from the artifact itself
+echo "[3.6/5] Writing an SBOM for each artifact..."
+rm -f "$RELEASE_DIR"/*.cdx.json
+SBOM_INPUTS=()
+for ext in whl tar.gz deb rpm; do
+    for f in "$RELEASE_DIR"/*."$ext"; do
+        [ -f "$f" ] && SBOM_INPUTS+=("$f")
+    done
+done
+python3 "$RELEASE_DIR/make_sbom.py" "${SBOM_INPUTS[@]}" | sed 's/^/      /'
 echo ""
 
 # Step 4: SHA256 checksums for packages

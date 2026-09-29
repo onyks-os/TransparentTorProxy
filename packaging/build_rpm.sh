@@ -39,20 +39,31 @@ cd "$(dirname "$0")/.."
 # The Python ABI the rpm requires and the site-packages directory it installs
 # into both come from the Python it is built with. The release job runs on
 # Ubuntu, so 0.4.8's .rpm required python(abi) = 3.12 and installed into
-# /usr/lib/python3.12/site-packages: no supported Fedora could install it. Build
-# it on the Fedora it targets instead - in a container, unless this already is
-# that Fedora.
-RPM_TARGET_IMAGE="${RPM_TARGET_IMAGE:-registry.fedoraproject.org/fedora:44}"
-target_version="${RPM_TARGET_IMAGE##*:}"
-# shellcheck disable=SC1091 # the host's own file, read at run time
-host_id="$(. /etc/os-release 2>/dev/null && echo "${ID:-}:${VERSION_ID:-}")"
-if [ "${TTP_RPM_NATIVE:-0}" != 1 ] && [ "$host_id" != "fedora:$target_version" ]; then
+# /usr/lib/python3.12/site-packages: no supported Fedora could install it. It is
+# built inside the Fedora it targets instead, always - also on a Fedora host - and
+# in an image pinned by digest, because a reproducible build needs the same
+# toolchain every time, not whatever the host or the tag resolves to today.
+# TTP_RPM_NATIVE=1 builds on the host (that is how the container runs this).
+RPM_TARGET_IMAGE="${RPM_TARGET_IMAGE:-registry.fedoraproject.org/fedora@sha256:5340dc71866f0632130a048bebbe2d4c20c9ec5791695308fe723776eb541b00}"
+
+# Reproducible builds: every timestamp inside every artifact is the commit's, so
+# two builds of the same commit produce the same bytes. An explicit value wins,
+# which is how the container builds and scripts/check-reproducible.sh pass it on.
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    SOURCE_DATE_EPOCH="$(git log -1 --format=%ct 2>/dev/null || true)"
+fi
+if [ -z "$SOURCE_DATE_EPOCH" ]; then
+    echo "Error: SOURCE_DATE_EPOCH is not set and this is not a git checkout." >&2
+    exit 1
+fi
+export SOURCE_DATE_EPOCH
+if [ "${TTP_RPM_NATIVE:-0}" != 1 ]; then
     engine="$(command -v podman || command -v docker || true)"
     if [ -z "$engine" ]; then
-        echo "Error: building the .rpm for $RPM_TARGET_IMAGE needs podman or docker on a non-matching host ($host_id)." >&2
+        echo "Error: building the .rpm in $RPM_TARGET_IMAGE needs podman or docker." >&2
         exit 1
     fi
-    echo "==> Host is $host_id; building the .rpm inside $RPM_TARGET_IMAGE..."
+    echo "==> Building the .rpm inside $RPM_TARGET_IMAGE..."
     # Only what the build reads is mounted - the same set the source tarball
     # below is made of - so a local venv or cache never has to be relabelled
     # or read by the container.
@@ -61,7 +72,8 @@ if [ "${TTP_RPM_NATIVE:-0}" != 1 ] && [ "$host_id" != "fedora:$target_version" ]
     cp -r ttp assets packaging pyproject.toml README.md LICENSE "$stage/"
     rm -f "$stage"/packaging/*.rpm
     # shellcheck disable=SC2016 # expanded by the container's shell, not this one
-    "$engine" run --rm -v "$stage:/src:z" -w /src -e TTP_RPM_NATIVE=1 "$RPM_TARGET_IMAGE" sh -c '
+    "$engine" run --rm -v "$stage:/src:z" -w /src -e TTP_RPM_NATIVE=1 \
+        -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" "$RPM_TARGET_IMAGE" sh -c '
         set -eu
         dnf install -y -q rpm-build python3-devel python3-build python3-pip unzip curl \
             checkpolicy policycoreutils > /dev/null
@@ -141,7 +153,15 @@ sed -i -e "s/@@TRANSITIONS_VERSION@@/$TRANSITIONS_VERSION/g" \
 # rpmbuild -bb = "build binary only" (we don't need source RPMs).
 # --define "_topdir ..." overrides the default ~/rpmbuild location.
 echo "--> Running rpmbuild..."
-rpmbuild --define "_topdir $RPM_DIR" --nodeps -bb "$RPM_DIR/SPECS/ttp.spec"
+# Reproducibility: take every timestamp from SOURCE_DATE_EPOCH rather than the
+# spec's changelog or the clock, clamp file mtimes to it, and do not record the
+# name of the machine that built the package.
+rpmbuild --define "_topdir $RPM_DIR" \
+         --define "source_date_epoch_from_changelog 0" \
+         --define "clamp_mtime_to_source_date_epoch 1" \
+         --define "use_source_date_epoch_as_buildtime 1" \
+         --define "_buildhost reproducible" \
+         --nodeps -bb "$RPM_DIR/SPECS/ttp.spec"
 
 # Collect the output .rpm
 # rpmbuild places the finished .rpm inside RPMS/<arch>/.

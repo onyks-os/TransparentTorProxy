@@ -73,7 +73,9 @@ jobs:
         run: |
           missing=0
           for pattern in 'packaging/*.deb' 'packaging/*.rpm' 'packaging/*.whl' \
-                         'packaging/*.tar.gz' 'packaging/SHA256SUMS.txt'; do
+                         'packaging/*.tar.gz' 'packaging/SHA256SUMS.txt' \
+                         'packaging/*.deb.cdx.json' 'packaging/*.rpm.cdx.json' \
+                         'packaging/*.whl.cdx.json' 'packaging/*.tar.gz.cdx.json'; do
             # shellcheck disable=SC2086
             if ! compgen -G "$pattern" > /dev/null; then
               echo "::error::No release artifact matched $pattern"
@@ -84,10 +86,8 @@ jobs:
           ls -la packaging/
         shell: bash
 
-      - name: Generate SBOM
-        run: |
-          npm install -g @cyclonedx/cdxgen
-          cdxgen -o packaging/sbom.json
+      - name: Validate the SBOMs against the CycloneDX schema
+        run: python packaging/validate_sbom.py packaging/*.cdx.json
 
       # Nothing is signed or published until each native package has been
       # installed in a clean container of the distribution it targets. 0.4.8's
@@ -108,7 +108,7 @@ jobs:
             packaging/*.whl
             packaging/*.tar.gz
             packaging/SHA256SUMS.txt
-            packaging/sbom.json
+            packaging/*.cdx.json
 
       # The release body is the curated CHANGELOG section, which is how the notes
       # for v0.4.5 and earlier were written. GitHub's generate_release_notes lists
@@ -150,7 +150,7 @@ jobs:
             packaging/*.tar.gz
             packaging/SHA256SUMS.txt
             packaging/*.sigstore*
-            packaging/sbom.json
+            packaging/*.cdx.json
           body_path: RELEASE_NOTES.md
           generate_release_notes: false
 

@@ -61,8 +61,9 @@ A Linux CLI tool that transparently routes all system traffic through the Tor ne
 %autosetup
 
 %build
-# Ensure build module is available, then build the wheel
-python3 -m build --wheel
+# Build the wheel in the same hash-pinned build environment as every other
+# artifact (packaging/build_python.sh, shipped in the source tarball).
+bash packaging/build_python.sh dist --wheel
 
 # Compile SELinux policy
 cd ttp/resources/selinux

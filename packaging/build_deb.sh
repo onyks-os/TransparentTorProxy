@@ -41,6 +41,18 @@ umask 022
 # `/..` moves one level up to the root folder (TransparentTorProxy/).
 cd "$(dirname "$0")/.."
 
+# Reproducible builds: every timestamp inside every artifact is the commit's, so
+# two builds of the same commit produce the same bytes. An explicit value wins,
+# which is how the container builds and scripts/check-reproducible.sh pass it on.
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    SOURCE_DATE_EPOCH="$(git log -1 --format=%ct 2>/dev/null || true)"
+fi
+if [ -z "$SOURCE_DATE_EPOCH" ]; then
+    echo "Error: SOURCE_DATE_EPOCH is not set and this is not a git checkout." >&2
+    exit 1
+fi
+export SOURCE_DATE_EPOCH
+
 # Parse pyproject.toml for name and version
 PROJECT_NAME=$(grep -m 1 '^name =' pyproject.toml | cut -d '"' -f 2)
 VERSION=$(grep -m 1 '^version =' pyproject.toml | cut -d '"' -f 2)
@@ -69,7 +81,8 @@ mkdir -p "$BUILD_DIR/DEBIAN"
 
 # Build the Python project into a standard format called a 'wheel' (.whl).
 # This bundles all our Python source code into an archive in the 'dist/' folder.
-python3 -m build --wheel >/dev/null
+# Same hash-pinned build environment as the release (packaging/build_python.sh).
+packaging/build_python.sh dist --wheel >/dev/null
 
 # Find the newly created wheel file.
 # Note: Hatchling replaces dashes with underscores in the filename.
@@ -151,6 +164,10 @@ chmod +x "$BUILD_DIR/DEBIAN/postinst"
 
 # Finally, use the dpkg-deb tool to compress the BUILD_DIR structure into a final .deb file.
 # --root-owner-group ensures files inside the package are owned by root, which is required for system files.
+# Every file in the package gets the commit's timestamp: the wheel's files carry
+# their own, but the ones written above carry the time of this build. dpkg-deb
+# reads SOURCE_DATE_EPOCH for the archive members' own timestamps.
+find "$BUILD_DIR" -exec touch --no-dereference --date="@$SOURCE_DATE_EPOCH" {} +
 dpkg-deb --root-owner-group --build "$BUILD_DIR" "packaging/${PKG_NAME}.deb"
 
 echo "==> Done: packaging/${PKG_NAME}.deb"

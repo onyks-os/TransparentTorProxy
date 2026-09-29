@@ -76,7 +76,9 @@ build() {
     # Use standard Python tools to build a 'wheel' (.whl) package, into $srcdir
     # so that nothing is written to the checkout.
     # --no-isolation tells it to use the system's python-build dependencies (listed in makedepends)
-    # rather than downloading them in a temporary virtual environment.
+    # rather than downloading them in a temporary virtual environment. So this build uses Arch's
+    # hatchling, not the hash-pinned one in build-requirements.txt that the released .deb, .rpm
+    # and wheel are built with; that is the normal contract for a distribution package.
     python -m build --wheel --no-isolation --outdir "$srcdir/dist"
 }
 

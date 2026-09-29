@@ -139,6 +139,7 @@ packaging/*.rpm
 packaging/*.pkg.tar.*
 packaging/*.tar.gz
 packaging/SHA256SUMS.txt
+packaging/*.cdx.json
 
 # SELinux
 **/*.pp

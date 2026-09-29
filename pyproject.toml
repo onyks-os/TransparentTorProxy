@@ -1,6 +1,8 @@
 [build-system]
-# Floor only. hatchling >=1.32 emits "Metadata-Version: 2.5", which needs twine
-# >=7.0.0 to validate - see the twine floor in the dev extra below.
+# A floor, deliberately: downstream packagers build with their own hatchling.
+# TTP's own artifacts are built with the exact, hash-pinned environment in
+# packaging/build-requirements.txt. hatchling >=1.32 emits "Metadata-Version:
+# 2.5", which needs twine >=7.0.0 to validate - see the dev extra below.
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
@@ -39,6 +41,9 @@ dev = [
     # declared dependency. It was not, and the target therefore failed with
     # "unrecognized arguments" - a gate that could not run.
     "pytest-cov>=5.0.0",
+    # Validates each release SBOM against the official CycloneDX schema
+    # (packaging/validate_sbom.py), in CI and before a release is signed.
+    "cyclonedx-python-lib[json-validation]>=11.0.0",
 ]
 nse = [
     # 2.1.2 is the floor, not a preference. Before 2.1.0, the NSE runner reported
@@ -71,14 +76,19 @@ filterwarnings = [
 ]
 
 [tool.hatch.build.targets.sdist]
+# Anchored with a leading slash. Unanchored, these are gitignore patterns that
+# match at any depth: "LICENSE" pulled in every LICENSE file of a build venv
+# living under .build_tmp/, which scripts/check-reproducible.sh caught because
+# the venv's path, and so the sdist, differed between two builds.
 include = [
-    "ttp",
-    "assets",
-    "README.md",
-    "LICENSE",
-    "pyproject.toml"
+    "/ttp",
+    "/assets",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml"
 ]
 exclude = [
+    ".build_tmp",
     "tests",
     "scripts",
     "packaging",

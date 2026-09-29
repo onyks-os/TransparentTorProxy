@@ -13,14 +13,10 @@ DIST_DIR ?= dist
 
 build: lang-build ## Build the distributable artifacts into dist/
 
-sbom: ## Generate a CycloneDX SBOM for the built artifacts
-	@echo "==> [$(PROJECT_SHORT)] Generating SBOM..."
-	@if command -v cdxgen >/dev/null 2>&1; then \
-		cdxgen -o $(DIST_DIR)/sbom.json; \
-	else \
-		echo "==> cdxgen not found. Install: npm install -g @cyclonedx/cdxgen"; \
-		exit 1; \
-	fi
+sbom: ## Write a CycloneDX SBOM next to each built artifact in dist/
+	@echo "==> [$(PROJECT_SHORT)] Generating SBOMs..."
+	@$(PYTHON) packaging/make_sbom.py $(wildcard $(DIST_DIR)/*.whl $(DIST_DIR)/*.tar.gz)
+	@$(PYTHON) packaging/validate_sbom.py $(DIST_DIR)/*.cdx.json
 
 checksums: ## Generate SHA256SUMS for everything in dist/
 	@echo "==> [$(PROJECT_SHORT)] Generating checksums..."
