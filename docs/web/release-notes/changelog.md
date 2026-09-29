@@ -21,7 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for byte - wheel, sdist, `.deb`, `.rpm`, SBOMs and `SHA256SUMS.txt`. Every
   timestamp is the commit's (`SOURCE_DATE_EPOCH`), the `.deb`'s files are
   normalised, and the `.rpm` records no build host and is built in a Fedora 44
-  image pinned by digest. `scripts/check-reproducible.sh` builds twice from two
+  image pinned by digest. The wheel and sdist are built from a copy of the
+  sources with normalised permissions, in a Python image pinned by digest: the
+  same files compress to different bytes under Fedora's zlib-ng, so a wheel built
+  on a Fedora host never matched one built on Ubuntu. Measured: the wheel and the
+  `.rpm` built on a Fedora workstation are byte-identical to CI's. `scripts/check-reproducible.sh` builds twice from two
   copies of the tree and compares; a new CI job runs it on every change, and
   `verify-release.yml` rebuilds each release from its tag and compares it with
   what was published. `docs/verification.md` explains how to rebuild a release
