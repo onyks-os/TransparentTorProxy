@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The generated ruleset no longer says `Ellipsis`.** A comment in the
+  `filter_out` template wrote `{...}` inside an f-string, so the ruleset an
+  operator reads with `nft list table inet ttp` said `ip daddr Ellipsis`. A test
+  now fails if any Python value leaks into the rendered ruleset.
+- **The test suite passes with `FORCE_COLOR` set.** Rich's consoles are built
+  when `ttp` is imported and read `FORCE_COLOR` (and `TTY_COMPATIBLE`) then, so
+  11 CLI tests saw ANSI escapes in the text they assert on. `tests/conftest.py`
+  clears both before the first import, and a test runs a CLI test in a child
+  pytest with each set.
+
 ## [0.4.9] - 2026-09-29
 
 The result of TTP's first end-to-end security audit, and of the verification
