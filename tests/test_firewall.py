@@ -607,6 +607,13 @@ class TestBuildRuleset:
         result = _build_ruleset(**_base_kwargs(cgroup_bypass=False))
         assert "ttp-bypass.slice" not in result
 
+    def test_rendered_comments_contain_no_python_values(self):
+        """A brace in the f-string template is evaluated: `{...}` rendered as
+        `Ellipsis` in the ruleset an operator reads with `nft list table`."""
+        result = _build_ruleset(**_base_kwargs(ipv6_avail=True, resolved_uid=999))
+        for artefact in ("Ellipsis", "None", "True", "False"):
+            assert artefact not in result
+
     def test_resolved_uid_drop_rule(self):
         result = _build_ruleset(**_base_kwargs(resolved_uid=999))
         assert "meta skuid 999 ip daddr != 127.0.0.1 drop" in result

@@ -56,6 +56,7 @@ test, and the integration suites, which execute actual binaries - opt out with
 
 from __future__ import annotations
 
+import os
 import shutil
 import stat
 import sys
@@ -65,7 +66,15 @@ from unittest.mock import patch
 
 import pytest
 
-import ttp.paths
+# The CLI's Rich consoles are built when ttp is first imported, and read
+# FORCE_COLOR and TTY_COMPATIBLE then. With either set in the environment - some
+# terminals and CI systems set FORCE_COLOR - every line of CLI output carries
+# ANSI escapes, and the assertions on that text failed although nothing was
+# wrong. They are cleared here, before the import below, which is the first one.
+for _var in ("FORCE_COLOR", "TTY_COMPATIBLE"):
+    os.environ.pop(_var, None)
+
+import ttp.paths  # noqa: E402
 
 #: Where the inert shims live. Created once per test session.
 _shim_dir: Path | None = None

@@ -300,7 +300,7 @@ def _build_ruleset(
             #
             # These are NOT how TTP protects against DoH, and the blocklist is not the mechanism -
             # see ADR 0012. For a non-bypassed process, nat output (priority -150) has already
-            # rewritten the destination to 127.0.0.1 before filter_out runs, so `ip daddr {...}`
+            # rewritten the destination to 127.0.0.1 before filter_out runs, so `ip daddr {{ ... }}`
             # no longer matches: the rule fires only if that redirect failed, which is the case it
             # exists for. Bypassed processes are accepted at 1b above, so these rules never apply to
             # them either - an earlier version of this comment claimed they did, and was wrong.
