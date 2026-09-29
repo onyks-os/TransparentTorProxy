@@ -39,6 +39,7 @@ These are required only for building package distributions (`.deb`, `.rpm`, whee
 | [build](https://pypi.org/project/build/)                                   | `dev` | `>=1.0.0`           | MIT        | Python packaging build frontend.                                                            |
 | [twine](https://pypi.org/project/twine/)                                   | `dev` | `>=7.0.0`           | Apache-2.0 | Checking and publishing distributions. 7.0.0 is the first to accept Metadata-Version 2.5.  |
 | [bump-my-version](https://pypi.org/project/bump-my-version/)               | `dev` | `>=1.4.1`           | MIT        | Version management tool to automate release numbering.                                      |
+| [cyclonedx-python-lib](https://pypi.org/project/cyclonedx-python-lib/)     | `dev` | `>=11.0.0`          | Apache-2.0 | Validates each release SBOM against the official CycloneDX schema (`packaging/validate_sbom.py`). |
 | [network-sandbox-engine](https://pypi.org/project/network-sandbox-engine/) | `nse` | `>=2.1.2,<3`        | MIT        | Isolated netns/Scapy nftables rules validation engine for `tests/test_nse_rules.py`. The floor is a correctness requirement, not a preference: see `pyproject.toml`. |
 | [pyroute2](https://pypi.org/project/pyroute2/)                             | `nse` | unpinned            | Apache-2.0 | Netlink-based route management inside network namespaces (avoids `/sys` mount in Docker).   |
 

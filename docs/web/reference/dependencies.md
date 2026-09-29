@@ -31,6 +31,7 @@ the session starts.
 | `dev` | [pytest](https://pypi.org/project/pytest/) | `>=9.1.1` | Unit & integration test runner. |
 | `dev` | [hypothesis](https://pypi.org/project/hypothesis/) | `>=6.0.0` | Property-based fuzz testing. |
 | `dev` | [pytest-cov](https://pypi.org/project/pytest-cov/) | `>=5.0.0` | Coverage measurement and the CI ratchet. |
+| `dev` | [cyclonedx-python-lib](https://pypi.org/project/cyclonedx-python-lib/) | `>=11.0.0` | Validates each release SBOM against the CycloneDX schema. |
 | `dev` | [ruff](https://pypi.org/project/ruff/) | `>=0.1.0` | Python linter and code formatter. |
 | `dev` | [mypy](https://pypi.org/project/mypy/) | `>=1.10.0` | Static type checker. |
 | docs (CI) | [mkdocs-material](https://pypi.org/project/mkdocs-material/) | unpinned | Documentation site generation. Installed by `.github/workflows/docs.yml`, not by an extra. |

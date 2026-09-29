@@ -70,7 +70,7 @@ echo ""
 # Step 1: clean old packaging artifacts
 echo "[1/5] Cleaning old system artifacts..."
 rm -rf "$(pwd)/.build_tmp"
-rm -f "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.whl "$RELEASE_DIR"/SHA256SUMS.txt "$RELEASE_DIR"/SHA256SUMS.txt.asc
+rm -f "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.whl "$RELEASE_DIR"/*.cdx.json "$RELEASE_DIR"/SHA256SUMS.txt "$RELEASE_DIR"/SHA256SUMS.txt.asc
 echo "      Done."
 echo ""
 
@@ -102,6 +102,18 @@ echo ""
 echo "[3.5/5] Copying Python source distribution and wheel to release directory..."
 cp dist/*.tar.gz dist/*.whl "$RELEASE_DIR"/
 echo "      Done."
+echo ""
+
+# Step 3.6: one SBOM per artifact, read from the artifact itself
+echo "[3.6/5] Writing an SBOM for each artifact..."
+rm -f "$RELEASE_DIR"/*.cdx.json
+SBOM_INPUTS=()
+for ext in whl tar.gz deb rpm; do
+    for f in "$RELEASE_DIR"/*."$ext"; do
+        [ -f "$f" ] && SBOM_INPUTS+=("$f")
+    done
+done
+python3 "$RELEASE_DIR/make_sbom.py" "${SBOM_INPUTS[@]}" | sed 's/^/      /'
 echo ""
 
 # Step 4: SHA256 checksums for packages

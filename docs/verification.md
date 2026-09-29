@@ -58,7 +58,23 @@ check the artifacts against it:
 sha256sum -c SHA256SUMS.txt
 ```
 
-## 2. Optional: GPG signature
+## 2. What each artifact contains: the SBOMs
+
+Every package has its own CycloneDX SBOM beside it, named after it
+(`transparent-tor-proxy_0.4.10_all.deb.cdx.json`, and so on), signed like the
+package. It is read from the package itself by `packaging/make_sbom.py`, so it
+declares:
+
+- the package, by version and SHA-256;
+- what it **contains** besides TTP - for the `.rpm`, the copy of `transitions` it
+  bundles, by version and by the digest of the wheel it was unpacked from;
+- what it **requires**, as the package declares it, with the version floor and who
+  is expected to provide it (`pip`, or the distribution).
+
+Releases up to 0.4.9 published a single `sbom.json` instead, which described the
+build machine's Python environment rather than any package.
+
+## 3. Optional: GPG signature
 
 Releases built locally by a maintainer may additionally carry a detached GPG
 signature `SHA256SUMS.txt.asc`. **The automated pipeline does not produce one** -

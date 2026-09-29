@@ -41,6 +41,9 @@ dev = [
     # declared dependency. It was not, and the target therefore failed with
     # "unrecognized arguments" - a gate that could not run.
     "pytest-cov>=5.0.0",
+    # Validates each release SBOM against the official CycloneDX schema
+    # (packaging/validate_sbom.py), in CI and before a release is signed.
+    "cyclonedx-python-lib[json-validation]>=11.0.0",
 ]
 nse = [
     # 2.1.2 is the floor, not a preference. Before 2.1.0, the NSE runner reported
