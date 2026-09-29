@@ -39,6 +39,7 @@ from ttp.commands._common import (
 from ttp.commands._preflight import (
     check_session_state,
     preflight_checks,
+    require_watchdog_dependency,
     validate_ports,
 )
 from ttp.commands._tor_setup import (
@@ -157,6 +158,9 @@ def start_command(
             "Watchdog daemon cannot be used in external-daemon mode as it relies on systemd.",
         )
         raise typer.Exit(code=1)
+
+    if watchdog:
+        require_watchdog_dependency()
 
     # --- Input parsing & validation ---
     users, groups, bypass_uids, bypass_gids = _parse_bypass_users_groups(bypass_user, bypass_group)

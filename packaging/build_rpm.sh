@@ -36,6 +36,42 @@ umask 022
 # $(dirname "$0") resolves to packaging/, so /.. takes us to the root.
 cd "$(dirname "$0")/.."
 
+# The Python ABI the rpm requires and the site-packages directory it installs
+# into both come from the Python it is built with. The release job runs on
+# Ubuntu, so 0.4.8's .rpm required python(abi) = 3.12 and installed into
+# /usr/lib/python3.12/site-packages: no supported Fedora could install it. Build
+# it on the Fedora it targets instead - in a container, unless this already is
+# that Fedora.
+RPM_TARGET_IMAGE="${RPM_TARGET_IMAGE:-registry.fedoraproject.org/fedora:44}"
+target_version="${RPM_TARGET_IMAGE##*:}"
+# shellcheck disable=SC1091 # the host's own file, read at run time
+host_id="$(. /etc/os-release 2>/dev/null && echo "${ID:-}:${VERSION_ID:-}")"
+if [ "${TTP_RPM_NATIVE:-0}" != 1 ] && [ "$host_id" != "fedora:$target_version" ]; then
+    engine="$(command -v podman || command -v docker || true)"
+    if [ -z "$engine" ]; then
+        echo "Error: building the .rpm for $RPM_TARGET_IMAGE needs podman or docker on a non-matching host ($host_id)." >&2
+        exit 1
+    fi
+    echo "==> Host is $host_id; building the .rpm inside $RPM_TARGET_IMAGE..."
+    # Only what the build reads is mounted - the same set the source tarball
+    # below is made of - so a local venv or cache never has to be relabelled
+    # or read by the container.
+    stage="$(mktemp -d)"
+    trap 'rm -rf "$stage"' EXIT
+    cp -r ttp assets packaging pyproject.toml README.md LICENSE "$stage/"
+    rm -f "$stage"/packaging/*.rpm
+    # shellcheck disable=SC2016 # expanded by the container's shell, not this one
+    "$engine" run --rm -v "$stage:/src:z" -w /src -e TTP_RPM_NATIVE=1 "$RPM_TARGET_IMAGE" sh -c '
+        set -eu
+        dnf install -y -q rpm-build python3-devel python3-build python3-pip unzip curl \
+            checkpolicy policycoreutils > /dev/null
+        packaging/build_rpm.sh
+        chown "$(stat -c %u:%g /src)" packaging/*.rpm'
+    cp "$stage"/packaging/*.rpm packaging/
+    echo "==> Done! RPM is ready: $(ls packaging/transparent-tor-proxy-*.rpm)"
+    exit 0
+fi
+
 # Extract the version string from pyproject.toml (single source of truth).
 # Example: version = "x.y.z" → VERSION="x.y.z"
 VERSION=$(grep -m 1 '^version =' pyproject.toml | cut -d '"' -f 2)
@@ -87,9 +123,19 @@ rm -rf "$TMP_SRC"
 # can be version-controlled without hardcoding the version number.
 # We copy it to the SPECS directory and replace the placeholder with
 # the actual version extracted from pyproject.toml.
+# shellcheck source=packaging/bundled-transitions.env disable=SC1091
+. packaging/bundled-transitions.env
+echo "--> Fetching bundled transitions ${TRANSITIONS_VERSION}..."
+curl -fsSL --retry 3 -o "$RPM_DIR/SOURCES/$TRANSITIONS_WHEEL" "$TRANSITIONS_URL"
+# The digest is pinned: a different file under the same name is refused, not
+# packaged.
+echo "$TRANSITIONS_SHA256  $RPM_DIR/SOURCES/$TRANSITIONS_WHEEL" | sha256sum -c --quiet -
+
 echo "--> Preparing spec file..."
 cp packaging/ttp.spec "$RPM_DIR/SPECS/"
 sed -i "s/@@VERSION@@/$VERSION/g" "$RPM_DIR/SPECS/ttp.spec"
+sed -i -e "s/@@TRANSITIONS_VERSION@@/$TRANSITIONS_VERSION/g" \
+       -e "s/@@TRANSITIONS_WHEEL@@/$TRANSITIONS_WHEEL/g" "$RPM_DIR/SPECS/ttp.spec"
 
 # Run rpmbuild
 # rpmbuild -bb = "build binary only" (we don't need source RPMs).

@@ -14,6 +14,21 @@ from ttp.commands._common import (
 from ttp.exceptions import StateError
 
 
+def require_watchdog_dependency() -> None:
+    """Refuse, before anything is changed, a watchdog that could not run.
+
+    Checked up front rather than left to the daemon: a watchdog that fails on
+    import after the rules are loaded becomes a warning printed over a session
+    the user asked to have watched, and a unit that systemd restarts until it
+    gives up.
+    """
+    from ttp.watchdog import fsm
+
+    if not fsm.watchdog_dependency_available():
+        _print_error("Watchdog Unavailable", fsm.INSTALL_HINT)
+        raise typer.Exit(code=1)
+
+
 def validate_ports(transport_port: int, dns_port: int, external_daemon: bool) -> None:
     """Validate port ranges, equality, and availability/listening status."""
     from ttp.commands import start as start_mod

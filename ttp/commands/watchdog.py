@@ -32,6 +32,9 @@ def watchdog_start() -> None:
     if state.read_lock() is None:
         _print_error("Session Error", "No active TTP session found. Start TTP first.")
         raise typer.Exit(code=1)
+    from ttp.commands._preflight import require_watchdog_dependency
+
+    require_watchdog_dependency()
     from ttp import watchdog as wd
 
     wd.start_watchdog()

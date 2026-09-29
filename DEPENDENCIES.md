@@ -15,14 +15,14 @@ This document outlines the system and library dependencies for Transparent Tor P
 
 #### Runtime Dependencies
 
-These are required to run the core `ttp` application.
+These are required to run the core `ttp` application. The floors are the versions Ubuntu 24.04 LTS ships; CI runs the unit suite against exactly those (`packaging/oldest-supported.txt`), and `tests/test_packaging_dependencies.py` keeps the floors, that file and the three native packages in agreement.
 
 | Dependency                                           | Version Constraint | License | Purpose                                                                                                   |
 | :--------------------------------------------------- | :----------------- | :------ | :-------------------------------------------------------------------------------------------------------- |
 | [typer](https://pypi.org/project/typer/)             | `>=0.9.0`          | MIT     | CLI command construction, parameter validation, and user interface.                                       |
-| [stem](https://pypi.org/project/stem/)               | `>=1.8.0`          | LGPLv3  | Interfacing with the Tor control port/socket (e.g., authenticating, checking status, signaling `NEWNYM`). |
-| [rich](https://pypi.org/project/rich/)               | `>=15.0.0`         | MIT     | Rich text formatting, colorized terminal outputs, and interactive styling.                                |
-| [transitions](https://pypi.org/project/transitions/) | `>=0.9.3`          | MIT     | Finite state machine engine governing the watchdog daemon.                                                |
+| [stem](https://pypi.org/project/stem/)               | `>=1.8.2`          | LGPLv3  | Interfacing with the Tor control port/socket (e.g., authenticating, checking status, signaling `NEWNYM`). |
+| [rich](https://pypi.org/project/rich/)               | `>=13.7.1`         | MIT     | Rich text formatting, colorized terminal outputs, and interactive styling.                                |
+| [transitions](https://pypi.org/project/transitions/) | `>=0.9.0`          | MIT     | Finite state machine engine governing the watchdog daemon. Only the watchdog imports it; the .rpm and the PKGBUILD bundle it (see below). |
 
 #### Build & Development Dependencies
 

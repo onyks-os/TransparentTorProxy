@@ -30,12 +30,15 @@ def do_stop() -> None:
 
     if not is_external:
         console.print(f"{_PREFIX} Stopping watchdog daemon...")
-        from ttp import watchdog as wd
-
+        # The import is inside the try on purpose. Teardown must never depend on
+        # the watchdog package importing: when it raised here, a host without
+        # the watchdog's dependency could not run `ttp stop` at all.
         try:
+            from ttp import watchdog as wd
+
             wd.stop_watchdog()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Could not stop the watchdog, continuing teardown: %s", e)
 
     import pwd
 

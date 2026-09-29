@@ -10,12 +10,17 @@ This document provides an exhaustive inventory of Python package requirements, s
 
 Required for basic TTP execution (`pip install transparent-tor-proxy` or package installation):
 
+The floors are the versions Ubuntu 24.04 LTS ships, and CI runs the unit suite against
+exactly those (`packaging/oldest-supported.txt`). The watchdog is the only user of
+`transitions`: without it, everything else works and `--watchdog` is refused before
+the session starts.
+
 | Package | Constraint | License | Primary Purpose |
 |---|---|---|---|
 | [typer](https://pypi.org/project/typer/) | `>=0.9.0` | MIT | CLI command construction & parameter validation. |
-| [stem](https://pypi.org/project/stem/) | `>=1.8.0` | LGPLv3 | Interfacing with Tor Control Socket/Port (`NEWNYM`, circuit validation). |
-| [rich](https://pypi.org/project/rich/) | `>=15.0.0` | MIT | Terminal formatting, progress spinners, and diagnostic panels. |
-| [transitions](https://pypi.org/project/transitions/) | `>=0.9.3` | MIT | Finite State Machine engine governing the watchdog daemon. |
+| [stem](https://pypi.org/project/stem/) | `>=1.8.2` | LGPLv3 | Interfacing with Tor Control Socket/Port (`NEWNYM`, circuit validation). |
+| [rich](https://pypi.org/project/rich/) | `>=13.7.1` | MIT | Terminal formatting, progress spinners, and diagnostic panels. |
+| [transitions](https://pypi.org/project/transitions/) | `>=0.9.0` | MIT | Finite State Machine engine governing the watchdog daemon. |
 
 ### Optional Extras
 
@@ -66,30 +71,38 @@ TTP enforces a **Strict No Auto-Install Policy**. Pluggable transport helpers ar
 
 ## 3. Native Package Requirements Matrix
 
-What each native package declares today, copied from `packaging/build_deb.sh`,
-`packaging/ttp.spec` and `packaging/PKGBUILD`:
+What each native package declares, from `packaging/build_deb.sh`,
+`packaging/ttp.spec` and `packaging/PKGBUILD`. `tests/test_packaging_dependencies.py`
+fails if a runtime dependency in `pyproject.toml` is missing from any of them, and
+CI installs every package in a clean container before a release is signed
+(`packaging/smoke_test.sh`).
 
 === "Debian / Ubuntu (.deb)"
 
     ```text
-    Depends: python3, python3-typer, python3-rich, python3-stem, nftables, tor
+    Depends: python3, python3-typer, python3-rich (>= 13.7.1), python3-stem,
+             python3-transitions (>= 0.9.0), nftables, tor
     ```
 
-=== "Fedora / RHEL (.rpm)"
+    Tested on Debian 13 and Ubuntu 24.04.
+
+=== "Fedora (.rpm)"
 
     ```text
-    Requires: python3, python3-typer, python3-rich, python3-stem, nftables, tor, policycoreutils
+    Requires: python3, python3-typer, python3-rich, python3-stem, python3-six,
+              nftables, tor, policycoreutils
+    Provides: bundled(python3dist(transitions)) = 0.9.3
     ```
+
+    Built on, and tested on, Fedora 44 (Python 3.14). Fedora does not package
+    `transitions`, so the .rpm bundles it in `/usr/lib/transparent-tor-proxy/vendor`,
+    which TTP uses only when the system has no `transitions` of its own.
 
 === "Arch Linux (PKGBUILD)"
 
     ```text
-    depends=('python' 'python-typer' 'python-rich' 'python-stem' 'nftables' 'tor')
+    depends=('python' 'python-typer' 'python-rich' 'python-stem' 'python-six' 'nftables' 'tor')
     ```
 
-!!! warning "`transitions` is not declared"
-    None of the three packages declares `transitions`, which the watchdog imports.
-    On a host where it is not installed, the watchdog cannot start and `ttp stop`
-    fails before tearing the session down. Until the packages declare it, install
-    it yourself (`python3-transitions` on Debian, or `pip install transitions`), or
-    install TTP with `pip`/`pipx`, which resolves it from `pyproject.toml`.
+    `transitions` is only in the AUR, so the PKGBUILD bundles it the same way as the
+    .rpm, from a wheel pinned by SHA-256.

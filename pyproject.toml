@@ -12,10 +12,15 @@ readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 dependencies = [
+    # The floors are the versions Ubuntu 24.04 LTS ships, the oldest distribution
+    # the .deb targets (packaging/oldest-supported.txt, which CI runs the unit
+    # suite against). They were once raised to the latest releases without a
+    # reason (rich>=15), and the .rpm's generated dependencies then asked for a
+    # rich no Fedora release had: the package could not be installed.
     "typer>=0.9.0",
-    "stem>=1.8.0",
-    "rich>=15.0.0",
-    "transitions>=0.9.3",
+    "stem>=1.8.2",
+    "rich>=13.7.1",
+    "transitions>=0.9.0",
 ]
 
 [project.optional-dependencies]
