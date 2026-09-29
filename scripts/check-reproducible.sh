@@ -24,6 +24,10 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 out="${1:-$(mktemp -d)}"
+# Created, and made absolute before the cd below: CI passes a directory that
+# does not exist yet, and a relative one would otherwise resolve against $repo.
+mkdir -p "$out"
+out="$(cd "$out" && pwd)"
 cd "$repo"
 
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct)}"
