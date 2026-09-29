@@ -101,8 +101,10 @@ and compare with `SHA256SUMS.txt` from the release. What makes it work:
 The images matter more than they seem: the same files compress to different
 bytes under a different zlib, and Fedora ships zlib-ng, so a wheel built directly
 on a Fedora host never matches one built on Debian or Ubuntu even though every
-file inside is identical. Measured: the wheel and the `.rpm` built on a Fedora 44
-workstation are byte-identical to the ones CI built on Ubuntu.
+file inside is identical. Measured on the same commit and `SOURCE_DATE_EPOCH`:
+the wheel, the sdist, the `.rpm` and their SBOMs built on a Fedora 44
+workstation are byte-identical to the ones CI built on Ubuntu 24.04; the `.deb`
+is not, for the reason below.
 
 Two limits, stated plainly. The `.deb` is compressed by the host's `dpkg-deb`, so
 it rebuilds identically only on the same distribution release as the release
