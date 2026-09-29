@@ -6,18 +6,46 @@ verification path: it is what `.github/workflows/release.yml` produces on every
 tag, and it binds the artifact to the workflow that built it rather than to a
 private key held on a maintainer's laptop.
 
+## The short way
+
+From a checkout of the repository, with [`gh`](https://cli.github.com/) and the
+Sigstore client (`pip install sigstore`):
+
+```bash
+scripts/verify-release.sh v0.4.9
+```
+
+It downloads every asset of the release and fails unless each one verifies
+against its bundle *and* the signing certificate names this repository's release
+workflow at that tag, `SHA256SUMS.txt` matches, and PyPI serves exactly the signed
+wheel and sdist. The same script runs in CI after every release and weekly
+(`.github/workflows/verify-release.yml`), together with an install of the
+published `.deb` and `.rpm` in clean containers.
+
+The sections below do the same by hand, one artifact at a time.
+
 ## 1. Verify the Sigstore signature
 
-Every published artifact ships with a matching `.sigstore.json` bundle. Install
-[cosign](https://docs.sigstore.dev/cosign/installation/), then, for the release tag
-you downloaded (`v0.4.7` in the example):
+Every published artifact ships with a matching `.sigstore.json` bundle. With the
+Sigstore Python client (`pip install sigstore`), for the release tag you downloaded
+(`v0.4.9` in the example):
+
+```bash
+sigstore verify identity \
+  --bundle transparent-tor-proxy_0.4.9_all.deb.sigstore.json \
+  --cert-identity "https://github.com/onyks-os/TransparentTorProxy/.github/workflows/release.yml@refs/tags/v0.4.9" \
+  --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
+  transparent-tor-proxy_0.4.9_all.deb
+```
+
+Or with [cosign](https://docs.sigstore.dev/cosign/installation/):
 
 ```bash
 cosign verify-blob \
-  --bundle transparent-tor-proxy_0.4.7_all.deb.sigstore.json \
-  --certificate-identity "https://github.com/onyks-os/TransparentTorProxy/.github/workflows/release.yml@refs/tags/v0.4.7" \
+  --bundle transparent-tor-proxy_0.4.9_all.deb.sigstore.json \
+  --certificate-identity "https://github.com/onyks-os/TransparentTorProxy/.github/workflows/release.yml@refs/tags/v0.4.9" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  transparent-tor-proxy_0.4.7_all.deb
+  transparent-tor-proxy_0.4.9_all.deb
 ```
 
 The certificate identity **must** name the tag you are verifying. A bundle that
