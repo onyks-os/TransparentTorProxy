@@ -108,6 +108,38 @@ jobs:
       - name: Run unit tests
         run: python -m pytest -q
 
+  # Two independent builds of the same commit must be identical, byte for byte.
+  # A Sigstore signature proves the release workflow built an artifact; only a
+  # reproducible build lets anyone check it built what the source says. This
+  # found a real defect the day it was added: unanchored sdist patterns were
+  # packing LICENSE files from the build venv, and two stray docs files.
+  reproducible-build:
+    name: Reproducible build (two builds, byte for byte)
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Build twice and compare
+        run: scripts/check-reproducible.sh "$RUNNER_TEMP/repro"
+
+      - name: Digests
+        if: always()
+        run: sha256sum "$RUNNER_TEMP"/repro/1/* || true
+
   # Three distributions, because TTP branches on which one it is running on and
   # only one of those branches was ever executed. `is_fedora_family()` changes
   # the Tor account it looks for (debian-tor / toranon / tor), the service name,

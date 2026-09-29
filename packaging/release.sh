@@ -35,6 +35,18 @@ umask 022
 # Navigate to the project root regardless of where the script is invoked from.
 cd "$(dirname "$0")/.."
 
+# Reproducible builds: every timestamp inside every artifact is the commit's, so
+# two builds of the same commit produce the same bytes. An explicit value wins,
+# which is how the container builds and scripts/check-reproducible.sh pass it on.
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    SOURCE_DATE_EPOCH="$(git log -1 --format=%ct 2>/dev/null || true)"
+fi
+if [ -z "$SOURCE_DATE_EPOCH" ]; then
+    echo "Error: SOURCE_DATE_EPOCH is not set and this is not a git checkout." >&2
+    exit 1
+fi
+export SOURCE_DATE_EPOCH
+
 # Extract the version string from pyproject.toml (the single source of truth).
 VERSION=$(grep -m 1 '^version =' pyproject.toml | cut -d '"' -f 2)
 
@@ -58,8 +70,8 @@ BUILD_TMP="$(pwd)/.build_tmp"
 rm -rf dist/ build/ "$BUILD_TMP"
 mkdir -p "$BUILD_TMP"
 
-# The build environment is pinned by hash (packaging/build-constraints.txt).
-PIP_CONSTRAINT="$(pwd)/packaging/build-constraints.txt" TMPDIR="$BUILD_TMP" python3 -m build > /dev/null
+# The build environment is pinned by hash (packaging/build_python.sh).
+TMPDIR="$BUILD_TMP" packaging/build_python.sh dist > /dev/null
 python3 -m twine check dist/*
 
 rm -rf "$BUILD_TMP"

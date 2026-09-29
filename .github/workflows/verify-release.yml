@@ -75,6 +75,41 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
         run: scripts/verify-release.sh "$TAG" release-assets
 
+      # The strongest check: build the tag again, on a different runner, and
+      # require the published artifacts byte for byte. Only right after the
+      # release or on demand, not on the weekly run: the build venv is
+      # hash-pinned and the rpm image is pinned by digest, but the packages
+      # installed inside that image and the runner's own dpkg are those of the
+      # day. And only from the first release built to be reproducible.
+      - name: Rebuild the tag and compare with what was published
+        if: github.event_name != 'schedule'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          FIRST_REPRODUCIBLE: "0.4.10"
+        run: |
+          version="${TAG#v}"
+          oldest="$(printf '%s\n%s\n' "$FIRST_REPRODUCIBLE" "$version" | sort -V | head -n1)"
+          if [ "$oldest" != "$FIRST_REPRODUCIBLE" ]; then
+            echo "$TAG predates reproducible builds ($FIRST_REPRODUCIBLE): nothing to compare."
+            exit 0
+          fi
+          sudo apt-get update && sudo apt-get install -y rpm
+          pip install twine "cyclonedx-python-lib[json-validation]"
+          git clone --quiet --depth 1 --branch "$TAG" "https://github.com/$GITHUB_REPOSITORY" rebuild
+          (cd rebuild && packaging/release.sh)
+          status=0
+          for published in release-assets/*; do
+            name="$(basename "$published")"
+            case "$name" in *.sigstore.json) continue ;; esac
+            if cmp -s "$published" "rebuild/packaging/$name"; then
+              echo "identical  $name"
+            else
+              echo "::error::$name: the rebuild of $TAG differs from the published artifact"
+              status=1
+            fi
+          done
+          exit "$status"
+
       - name: Install the published packages in clean containers
         run: |
           packaging/smoke_test.sh release-assets/*.deb docker.io/library/debian:13

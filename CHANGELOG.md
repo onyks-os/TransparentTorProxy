@@ -12,7 +12,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Every release is verified from what was published.**
+  `scripts/verify-release.sh <tag>` downloads a release and fails unless every
+  asset verifies against its Sigstore bundle with a certificate naming this
+  repository's `release.yml` *at that tag*, `SHA256SUMS.txt` matches, and PyPI
+  serves exactly the signed wheel and sdist. `.github/workflows/verify-release.yml`
+  runs it after every release, weekly on the latest release (an asset replaced
+  later fails there) and on demand, then installs the published `.deb` and `.rpm`
+  in clean containers.
+- **Reproducible builds.** Two builds of the same commit are now identical byte
+  for byte - wheel, sdist, `.deb`, `.rpm`, SBOMs and `SHA256SUMS.txt`. Every
+  timestamp is the commit's (`SOURCE_DATE_EPOCH`), the `.deb`'s files are
+  normalised, and the `.rpm` records no build host and is built in a Fedora 44
+  image pinned by digest. `scripts/check-reproducible.sh` builds twice from two
+  copies of the tree and compares; a new CI job runs it on every change, and
+  `verify-release.yml` rebuilds each release from its tag and compares it with
+  what was published. `docs/verification.md` explains how to rebuild a release
+  yourself, and the limits.
+- **One SBOM per artifact.** `<artifact>.cdx.json` for the wheel, sdist, `.deb` and
+  `.rpm`, read from the artifact by `packaging/make_sbom.py`: the artifact by
+  version and SHA-256, what it contains besides TTP (the `.rpm`'s bundled
+  `transitions`), and what it requires, with the floor and who provides it. Each
+  is validated against the official CycloneDX schema before signing.
+
+### Changed
+
+- **The release build environment is pinned by version and hash.**
+  `packaging/build_python.sh` installs `packaging/build-requirements.txt` - the
+  `build` frontend, `hatchling` and their dependencies, each at one version and
+  one SHA-256 - with `--require-hashes` into a throwaway venv and builds from it;
+  the wheel, the sdist and the wheels inside the `.deb` and `.rpm` all go through
+  it. `pyproject.toml` keeps its `hatchling>=1.27` floor for downstream packagers.
+  `packaging/pin_build_backend.py` regenerates the file.
+- **The single `sbom.json` is gone.** It was made by `cdxgen` from the checkout
+  and described the CI runner's Python environment (rich 15.0.0, typer 0.27.2),
+  not any artifact; `cdxgen` was also installed unpinned with `npm install -g` in
+  the job holding the signing token.
+
 ### Fixed
+
+- **The sdist contains only what it is meant to.** Its include patterns were
+  unanchored gitignore patterns, so `"README.md"` and `"assets"` also matched
+  `docs/decisions/README.md` and `docs/web/assets/mark.svg`, which 0.4.9's sdist
+  shipped, and `"LICENSE"` would match any `LICENSE` file under the build
+  directory. Found by the reproducibility check, whose two builds disagreed.
 
 - **The generated ruleset no longer says `Ellipsis`.** A comment in the
   `filter_out` template wrote `{...}` inside an f-string, so the ruleset an

@@ -436,6 +436,9 @@ Building system packages is handled by scripts in the `packaging/` directory:
 * Step 0 runs `python -m build` with `TMPDIR` set **only for that command** to a project-local `.build_tmp` directory on disk. That avoids heavy use of RAM-backed `/tmp` on memory-constrained machines. The variable is not exported to the rest of the script so downstream tools (for example `dpkg-deb` inside `build_deb.sh`) keep using the system default temporary directory.
 * `build_deb.sh`: Generates a Debian archive.
 * `build_rpm.sh`: Generates a Fedora RPM. The rpm's Python ABI and site-packages path come from the Python that builds it, so on any host other than the target Fedora (44) it builds inside a Fedora container. It bundles `transitions`, which Fedora does not package, into `/usr/lib/transparent-tor-proxy/vendor`, from a wheel pinned in `bundled-transitions.env`.
+* `build_python.sh`: Builds the wheel and sdist in a throwaway venv installed from `build-requirements.txt` with `--require-hashes`; every artifact containing the wheel is built through it.
+* `make_sbom.py` / `validate_sbom.py`: Write a CycloneDX SBOM beside each artifact, read from the artifact, and validate it against the official schema.
+* Reproducibility: every timestamp comes from `SOURCE_DATE_EPOCH` (the commit's), and `scripts/check-reproducible.sh` builds twice and requires identical bytes.
 * `smoke_test.sh`: Installs a built .deb or .rpm, or builds and installs the PKGBUILD, in a clean container, and checks that the CLI runs, the watchdog can be built and teardown imports. CI runs it on every push; the release job runs it before signing.
 * `PKGBUILD`: Arch build recipe for the checkout it sits in (`cd packaging && makepkg -si`). Bundles `transitions` like the .rpm.
 

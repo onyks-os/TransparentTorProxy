@@ -5,8 +5,9 @@
 
 pyproject.toml asks for `hatchling>=1.27`, so two builds of the same tag could
 use different backends - and different backends produce different wheels. The
-release builds with packaging/build-constraints.txt instead: one version and one
-set of SHA-256 digests per package. These tests fail if a build call site stops
+release builds through packaging/build_python.sh instead, which installs
+packaging/build-requirements.txt with --require-hashes: one version and one set
+of SHA-256 digests per package. These tests fail if a build call site stops
 using it, or if the file stops pinning what it claims to.
 """
 
@@ -18,7 +19,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CONSTRAINTS = (REPO_ROOT / "packaging/build-constraints.txt").read_text(encoding="utf-8")
+CONSTRAINTS = (REPO_ROOT / "packaging/build-requirements.txt").read_text(encoding="utf-8")
+HELPER = (REPO_ROOT / "packaging/build_python.sh").read_text(encoding="utf-8")
 
 #: Where TTP's released artifacts are built. The PKGBUILD is not here on purpose:
 #: it builds with the distribution's hatchling, as a distribution package does.
@@ -39,18 +41,19 @@ def _requirements() -> dict[str, list[str]]:
 
 
 @pytest.mark.parametrize("site", BUILD_SITES)
-def test_every_release_build_uses_the_pinned_environment(site):
+def test_every_release_build_goes_through_the_pinned_helper(site):
     text = (REPO_ROOT / site).read_text(encoding="utf-8")
-    calls = [
-        line
-        for line in text.splitlines()
-        if re.search(r"python3? -m build\b", line) and not line.lstrip().startswith("#")
-    ]
-    assert calls, f"no build call found in {site}"
-    for call in calls:
-        assert "PIP_CONSTRAINT=" in call and "packaging/build-constraints.txt" in call, (
-            f"{site} builds without the pinned environment: {call.strip()}"
-        )
+    code = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+    assert not [line for line in code if re.search(r"python3? -m build\b", line)], (
+        f"{site} calls `python -m build` directly, outside the pinned environment"
+    )
+    assert any("packaging/build_python.sh" in line for line in code), f"{site} does not build through the helper"
+
+
+def test_the_helper_installs_the_pinned_environment_with_hashes_and_builds_inside_it():
+    code = "\n".join(line for line in HELPER.splitlines() if not line.lstrip().startswith("#"))
+    assert "--require-hashes" in code and "-r packaging/build-requirements.txt" in code
+    assert "-m build --no-isolation" in code, "an isolated build would fetch its own, unpinned backend"
 
 
 def test_every_requirement_is_an_exact_version_with_digests():
