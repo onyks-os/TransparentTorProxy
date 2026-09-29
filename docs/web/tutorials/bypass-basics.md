@@ -6,13 +6,13 @@ This tutorial demonstrates how to exclude specific system users, groups, local n
 
 ## 1. Local Network Bypass (LAN Exclusion)
 
-By default, `sudo ttp start` enables local subnet exclusion (RFC 1918 IPv4 ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
+By default, `sudo ttp start` leaves local networks out of Tor: the RFC 1918 ranges `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, link-local `169.254.0.0/16`, and with IPv6 `fc00::/7` and `fe80::/10`. DNS is the exception: a query to a LAN resolver is still redirected to Tor.
 
-To explicitly verify or enforce local network exclusion:
+To check that the LAN is reachable:
 
 ```bash
-# Start TTP with explicit LAN bypass enabled
-sudo ttp start --lan-bypass
+# Start TTP (LAN bypass is on by default)
+sudo ttp start
 
 # Test local router or LAN service access
 ping -c 2 192.168.1.1
@@ -38,7 +38,7 @@ sudo ttp bypass curl -s https://api.ipify.org
 sudo ttp bypass python3 -m http.server 8080
 ```
 
-`sudo ttp bypass` executes the specified target command inside a transient `systemd` scope (`ttp-bypass.slice`), de-escalating privileges to the invoking user (`SUDO_UID` / `SUDO_GID`) while bypassing `nftables` redirection.
+`sudo ttp bypass` executes the command inside a transient `systemd` scope in `ttp-bypass.slice`, which TTP's ruleset exempts by cgroup. It runs as the invoking user (`SUDO_UID` / `SUDO_GID`) without root's supplementary groups. Everything it sends, DNS included, leaves in cleartext.
 
 ---
 

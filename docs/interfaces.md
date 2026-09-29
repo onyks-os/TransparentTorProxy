@@ -137,7 +137,7 @@ TTP creates a dedicated, isolated nftables table that does not interfere with an
 | Attribute              | Value                                                           |
 | :--------------------- | :-------------------------------------------------------------- |
 | **Table name**         | `inet ttp`                                                      |
-| **Application method** | Atomic load via `nft -f <rules_file>` (all-or-nothing)          |
+| **Application method** | Atomic load, the ruleset piped to `nft -f -` on stdin (all-or-nothing; no file in `/run/ttp` is read back) |
 | **Teardown Lockdown**  | `nft insert rule inet ttp filter_out [meta skuid != <tor_uid>] oifname != "lo" drop` (applied at stop start) |
 | **Socket Slaughter**   | `nft insert rule inet ttp filter_out meta l4proto tcp counter reject with tcp reset` and `nft insert rule inet ttp filter_out meta l4proto udp counter reject` (applied before final cleanup) |
 | **Conntrack Flush**    | `conntrack -F` (atomic flush of Netfilter tracked streams)      |
@@ -150,20 +150,22 @@ TTP creates a dedicated, isolated nftables table that does not interfere with an
 | `prerouting` | `prerouting` | `nat`    | Intercepts traffic arriving on the machine (gateway mode) |
 | `output`     | `output`     | `nat`    | Redirects local TCP and DNS to Tor ports                  |
 | `filter_out` | `output`     | `filter` | Kill-switch: drops/rejects traffic that bypasses Tor      |
+| `filter_forward` | `forward` | `filter` | `policy drop`: no traffic is forwarded around Tor     |
 
 **Rule execution order within `filter_out`:**
 
 0. **Teardown Lockdown**: drop all outbound traffic except loopback and the Tor UID (inserted dynamically during the teardown sequence)
 0b. **Active Socket Slaughter**: TCP Reset (`meta l4proto tcp counter reject with tcp reset`) and UDP Port Unreachable (`meta l4proto udp counter reject`) rules (inserted dynamically at the start of final ruleset removal)
-1. Exempt Tor process user (prevent routing loops)
-2. Exempt bypass users/groups (split tunneling — `meta skuid`/`meta skgid`)
-3. Exempt root processes (if `--allow-root` is set)
-4. LAN bypass: accept RFC 1918 + IPv6 link-local/unique-local traffic (optional, `--no-lan-bypass` disables)
-5. Accept loopback interface (`lo` - IPv4 and IPv6)
-6. Block DNS-over-TLS (reject `tcp dport 853`)
-7. Block well-known DNS-over-HTTPS (DoH) IPs on port 443 (IPv4 and IPv6)
-8. Drop IPv6 traffic (if IPv6 loopback is not supported by the system OR if `--no-ipv6` is passed)
-9. **Kill-Switch**: reject all remaining traffic (forces fallback of redirected TCP/DNS or blocks unauthorized bypasses)
+1. Exempt the Tor process user (prevents routing loops)
+2. Drop all IPv6 (`meta nfproto ipv6 drop`) if IPv6 loopback is not supported or `--no-ipv6` is passed. Placed before every exemption below, because `meta skuid`/`skgid` and `socket cgroupv2` match both families
+3. Exempt bypass users/groups (`meta skuid`/`meta skgid`) and the `ttp bypass` cgroup
+4. Drop every packet from `systemd-resolved`'s UID not addressed to loopback (when resolved is active)
+5. Exempt root processes (if `--allow-root` is set)
+6. Reject DNS whose original destination was port 53 but that is not headed for Tor's DNSPort - a foreign NAT chain redirected it first. Counted as `dns_unredirected_rejected`; must precede the LAN bypass
+7. LAN bypass: accept RFC 1918, link-local and IPv6 unique-local/link-local destinations (`--no-lan-bypass` removes it)
+8. Accept loopback destinations, and destinations that are the host's own addresses (`fib daddr type local`)
+9. Reject `tcp dport 853` and known DoH resolver IPs on 443 (TCP and UDP). Defence in depth only: a non-bypassed connection has already been redirected to `127.0.0.1` by `nat output`, so these fire only if that redirect failed. Counted as `dot_rejected` / `doh_rejected`
+10. **Kill-Switch**: reject everything else - TCP with a reset, so a connection opened before `ttp start` ends at its next packet; all other protocols with ICMP. Counted as `cleartext_rejected`
 
 ### 3.2 DNS Subsystem
 
@@ -185,7 +187,7 @@ TTP manages two volatile systemd service units, written to `/run/systemd/system/
 | Unit                   | Path                                       | Purpose                                                                                  |
 | :--------------------- | :----------------------------------------- | :--------------------------------------------------------------------------------------- |
 | `ttp-tor.service`      | `/run/systemd/system/ttp-tor.service`      | Dedicated Tor instance. Runs with a custom volatile `torrc`, no sandboxing restrictions. |
-| `ttp-watchdog.service` | `/run/systemd/system/ttp-watchdog.service` | Session integrity watchdog. Invokes `ttp watchdog run` every 15 seconds.                 |
+| `ttp-watchdog.service` | `/run/systemd/system/ttp-watchdog.service` | Session integrity watchdog (`--watchdog`). A long-running `ttp watchdog run`, woken by nftables and inotify events with a 15-second heartbeat. Runs as `ttp-watchdog` with only `CAP_NET_ADMIN`, and `Wants=` rather than `Requires=` `ttp-tor.service`, so stopping Tor does not stop it. |
 
 Both units are registered via `systemctl daemon-reload` and removed on `ttp stop`.
 
@@ -195,8 +197,9 @@ All TTP runtime state is stored in tmpfs paths that **disappear on reboot**, ens
 
 | Path                                       | Contents                                                     | Cleared On           |
 | :----------------------------------------- | :----------------------------------------------------------- | :------------------- |
-| `/run/ttp/`                                | Session root directory (Restricted to owner/root via `0700`) | Reboot or `ttp stop` |
-| `/run/ttp/ttp.lock`                        | JSON session lock (Restricted to owner/root via `0600`)      | `ttp stop`           |
+| `/run/ttp/`                                | Session root directory. Always root-owned: `0750` with group `ttp-watchdog` so the watchdog can read the lock, `0700` when that account does not exist | Reboot or `ttp stop` |
+| `/run/ttp/ttp.lock`                        | JSON session lock. `0640` root:`ttp-watchdog` (read-only for the watchdog), else `0600` | `ttp stop`           |
+| `/run/ttp/watchdog/`                       | The watchdog's own writable directory, `0700` `ttp-watchdog`  | Reboot or `ttp stop` |
 | `/run/ttp/ttp.log`                         | Rolling log (1 MB limit, restricted via `0600` inside dir)   | Reboot               |
 | `/run/ttp/resolv.conf`                     | DNS resolver file for bind-mount overlay                     | Reboot               |
 | `/run/tor/ttp/torrc`                       | Generated Tor configuration                                  | Reboot               |
@@ -220,11 +223,11 @@ TTP contacts the following external URLs exclusively for session verification an
 
 | URL                                   | Trigger                  | Purpose                                          |
 | :------------------------------------ | :----------------------- | :----------------------------------------------- |
-| `https://check.torproject.org/api/ip` | `ttp start`, `ttp check` | Primary Tor exit IP verification + `IsTor` flag  |
-| `https://api.ipify.org`               | `ttp start` (fallback)   | Backup IP check if torproject.org is unreachable |
-| `https://ifconfig.me/ip`              | `ttp start` (fallback)   | Second backup IP check                           |
-| `https://torproject.org`              | `ttp check`              | Latency measurement to the Tor network           |
-| `https://api4.my-ip.io/ip`            | `ttp check-leak`         | IPv4 leak detection                              |
-| `https://api6.my-ip.io/ip`            | `ttp check-leak`         | IPv6 leak detection                              |
+| `https://check.torproject.org/api/ip` | `ttp start`, `ttp check`, `ttp check-leak` | Exit IP and the `IsTor` verdict. The only endpoint allowed to assert that traffic is on Tor. |
+| `https://api.ipify.org?format=json`   | same (fallback)          | Exit IP only, if `check.torproject.org` does not answer. Never asserts `IsTor`. |
+| `https://ifconfig.me/all.json`        | same (fallback)          | Second fallback for the exit IP. Never asserts `IsTor`. |
+| `https://api.ipify.org`               | `ttp status`             | Current public IP, shown in the status panel. |
 
-All connections to these endpoints are routed through Tor itself (verifying correct operation). They are never contacted via the clearnet directly.
+`ttp check-leak` also runs `dig` against `check.torproject.org` and `whoami.ipv4.akahelp.net` when `dig` is installed; those go through the system resolver, and therefore through Tor.
+
+While a session is active, these requests go through Tor like any other traffic, which is what makes them a check. `ttp status` is the exception: it queries `api.ipify.org` whether or not a session is running, so without a session that request is in cleartext and shows your real IP.

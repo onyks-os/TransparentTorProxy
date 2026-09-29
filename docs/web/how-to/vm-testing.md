@@ -9,20 +9,20 @@ This guide provides operational recipes for running multi-distribution integrati
 Execute automated integration test suites across containerized Linux environments:
 
 ```bash
-# Run Debian 12 integration test suite
+# Run the Debian 13 integration test suite
 make integration-debian
 
-# Run Fedora 40 integration test suite
+# Run the Fedora 41 integration test suite
 make integration-fedora
 
-# Run Arch Linux integration test suite
+# Run the Arch Linux integration test suite
 make integration-arch
 
 # Run all integration test suites sequentially
 make integration-all
 ```
 
-Docker test environments validate package installation, systemd service detection, and `nftables` syntax checks.
+The same three run in CI on every push and pull request. A container shares the host's kernel and has no real boot, so these cannot show lifecycle behaviour; section 3 covers that.
 
 ---
 
@@ -36,7 +36,7 @@ For full kernel-level, DNS mount, and `systemd` integration testing, use the pro
 # Launch an Arch Linux VM instance
 ./scripts/vm/start.sh arch
 
-# Launch a Debian 12 VM instance
+# Launch a Debian VM instance
 ./scripts/vm/start.sh debian
 ```
 
@@ -95,4 +95,4 @@ The Watchdog Chaos Monkey suite simulates live system faults, abrupt process ter
 make chaos-monkey
 ```
 
-The chaos monkey suite verifies that the FSM Watchdog correctly detects integrity violations, restores damaged `nftables` chains, and engages the emergency killswitch when recovery fails.
+The sweep runs every fault once against a live session - Tor stopped, Tor killed behind systemd's back, the table flushed, the table destroyed, the DNS overlay unmounted, the link flapped - and audits containment after each, TCP and UDP. Every audit is paired with a canary, a bypassed user audited the same way, which must be seen: a pass means the audit could have shown a leak at that moment. It requires root and cuts the network on purpose, so run it on a disposable host, or in a VM with `scripts/vm/lifecycle/chaos.sh` as above.

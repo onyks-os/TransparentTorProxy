@@ -11,13 +11,12 @@ TTP provides a Typer-powered command-line interface. Most network-modifying comm
 | [`sudo ttp start`](#sudo-ttp-start) | Root | Start transparent Tor proxying session with specified options. |
 | [`sudo ttp stop`](#sudo-ttp-stop) | Root | Stop active proxying session and restore default system networking. |
 | [`sudo ttp restart`](#sudo-ttp-restart) | Root | Restart active proxy session with new or updated options. |
-| [`sudo ttp refresh`](#sudo-ttp-refresh) | Root | Send `NEWNYM` signal to Tor ControlPort to acquire a new exit IP circuit. |
+| [`sudo ttp refresh`](#sudo-ttp-refresh) | Root | Send `NEWNYM` to Tor over its control socket to get new circuits (and usually a new exit IP). |
 | [`ttp status`](#ttp-status) | User | Display current session state, ports, IP address, and active options. |
-| [`ttp check`](#ttp-check) | User | Verify SOCKS/DNSPort reachability, circuit status, and exit IP. |
+| [`ttp check`](#ttp-check) | User | Confirm traffic exits through Tor; show exit IP, ports, IPv6 state and latency. |
 | [`ttp check-leak`](#ttp-check-leak) | User | Run automated leak tests (Tor verification, dig A, Akamai TXT resolver identity). |
 | [`sudo ttp diagnose`](#sudo-ttp-diagnose) | Root | Execute 7-layer system diagnostics and output troubleshooting report. |
-| [`sudo ttp purge`](#sudo-ttp-purge) | Root | Remove volatile locks, stale nftables tables, `/etc/resolv.conf` mounts, and SELinux modules. |
-| [`sudo ttp uninstall`](#sudo-ttp-uninstall) | Root | Alias for `purge`; cleanly uninstalls runtime modules and sentinels. |
+| [`sudo ttp uninstall`](#sudo-ttp-uninstall) | Root | Stop any session, remove the SELinux module and TTP's markers; the package itself is removed separately. |
 | [`ttp logs`](#ttp-logs) | User | Display recent volatile session logs from `/run/ttp/ttp.log`. |
 | [`sudo ttp bypass <CMD...>`](#sudo-ttp-bypass-command) | Root | Execute target command outside Tor proxying in a transient `systemd` scope. |
 | [`sudo ttp watchdog <SUBCOMMAND>`](#sudo-ttp-watchdog-subcommand) | Root | Manage background FSM integrity watchdog daemon (`start`, `stop`, `status`). |
@@ -93,7 +92,9 @@ Usage: ttp restart [OPTIONS]
 
 ### `sudo ttp refresh`
 
-Requests a new Tor exit IP circuit by issuing a `NEWNYM` signal via ControlPort.
+Requests new Tor circuits by sending `NEWNYM` over Tor's control socket
+(`/run/tor/ttp/control.sock`). New connections then usually leave from a different
+exit.
 
 ```text
 Usage: ttp refresh
@@ -113,7 +114,10 @@ Usage: ttp status
 
 ### `ttp check`
 
-Verifies SOCKS/DNSPort connectivity, Tor circuit status, public exit IP, and API latency.
+Asks `check.torproject.org` whether traffic reaches it through Tor (retrying, with
+`api.ipify.org` and `ifconfig.me` as fallbacks for the IP only - only
+`check.torproject.org` may assert that the IP is a Tor exit), then prints the exit IP,
+the TransPort and DNSPort, the IPv6 state and the latency.
 
 ```text
 Usage: ttp check
@@ -143,19 +147,11 @@ Usage: ttp diagnose
 
 ---
 
-### `sudo ttp purge`
-
-Removes temporary `/run/ttp` state, stale lock files, leftover `nftables` tables, DNS bind mounts, and SELinux policy modules (`ttp-tor.cil`).
-
-```text
-Usage: ttp purge
-```
-
----
-
 ### `sudo ttp uninstall`
 
-Alias for `purge`; cleanly removes temporary runtime modules, locks, and sentinels.
+Stops an active session, removes the `ttp_tor_policy` SELinux module if it is
+installed, and deletes TTP's markers in `/var/lib/ttp`. It does not remove the
+package or its files: use the package manager or `scripts/uninstall.sh` for that.
 
 ```text
 Usage: ttp uninstall
@@ -175,7 +171,7 @@ Usage: ttp logs
 
 ### `sudo ttp bypass <COMMAND...>`
 
-Executes a target command bypassing `nftables` redirection inside a transient `systemd` scope (`ttp-bypass.slice`), dropping privileges to the invoking `SUDO_UID` / `SUDO_GID`.
+Executes a command outside Tor, in a transient `systemd` scope in `ttp-bypass.slice` that TTP's ruleset exempts by cgroup. The command runs as the invoking `SUDO_UID` / `SUDO_GID`, wrapped in `setpriv --init-groups` so that it does not inherit root's supplementary groups. Its traffic, DNS included, leaves in cleartext.
 
 ```text
 Usage: ttp bypass COMMAND [ARGS...]
@@ -185,7 +181,7 @@ Usage: ttp bypass COMMAND [ARGS...]
 
 ### `sudo ttp watchdog <SUBCOMMAND>`
 
-Manages the background Finite State Machine watchdog daemon.
+Manages the background integrity watchdog. See [Watchdog FSM](../explanation/watchdog-fsm.md) for what it checks and how it responds.
 
 ```text
 Usage: ttp watchdog [SUBCOMMAND]
@@ -195,7 +191,7 @@ Usage: ttp watchdog [SUBCOMMAND]
 |---|---|
 | `start` | Launch background watchdog daemon process. |
 | `stop` | Stop background watchdog daemon process cleanly. |
-| `status` | View background watchdog process status and PID. |
+| `status` | Show whether the watchdog unit is running, and its PID. |
 
 ---
 

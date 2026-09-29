@@ -11,3 +11,5 @@ installation — if you do not have one, start with the [Quickstart](../tutorial
   relates to rules you already have.
 - [Test a session safely in a VM](vm-testing.md) — the QEMU matrix and the chaos monkey
   used to exercise the watchdog and killswitch.
+- [Check applications that resolve DNS on their own](apps-with-own-dns.md) — browser DoH,
+  per-link resolvers and containers: what happens to each under TTP, and how to check.

@@ -13,7 +13,7 @@ This document details the recommended security and usage profiles for Transparen
   sudo ttp start
   ```
 
-* **Why**: Runs without background active processes (no watchdog overhead), utilizing extremely efficient `nftables` redirect rules and local bypass for smooth home/work LAN printer/NAS sharing.
+* **Why**: Runs without background processes, using only the `nftables` redirect rules, with the LAN left reachable for printers and NAS. Nothing watches the session while it runs: add `--watchdog` if something on the host could flush or alter the ruleset or the DNS overlay.
 
 ## 2. Administrative / Maintenance Profile
 
@@ -37,7 +37,7 @@ This document details the recommended security and usage profiles for Transparen
   sudo ttp start --bypass-user debian-tor,mediauser --bypass-group sysadmin
   ```
 
-* **Why**: Uses `nftables` exceptions to allow the matching local user IDs or group IDs to communicate directly to the cleartext internet, bypassing redirection and the watchdog killswitch.
+* **Why**: Uses `nftables` exceptions to allow the matching local user IDs or group IDs to communicate directly to the cleartext internet, bypassing redirection. Their DNS, DoH and DoT leave in cleartext too. The emergency killswitch does not exempt them: if the watchdog engages it, everything but loopback is dropped, bypassed users included.
 
 ---
 

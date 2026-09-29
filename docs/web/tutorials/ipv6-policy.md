@@ -15,8 +15,8 @@ sudo ttp start
 
 In dual-stack mode:
 
-* IPv4 TCP traffic is redirected to Tor `127.0.0.1:9040`.
-* IPv6 TCP traffic is redirected to Tor `[::1]:9040`.
+* IPv4 TCP traffic is redirected to Tor `127.0.0.1:9041`.
+* IPv6 TCP traffic is redirected to Tor `[::1]:9041`.
 * DNS queries over IPv4 and IPv6 are bound to Tor DNSPort.
 
 ---
@@ -30,7 +30,7 @@ If your network interface or local router has partial, unstable, or misconfigure
 sudo ttp start --no-ipv6
 ```
 
-When `--no-ipv6` is active, TTP inserts an `output` hook in `nftables` that explicitly drops all IPv6 packets (`ip6 nexthdr != { icmpv6 } drop`), preventing any unproxied IPv6 leaks.
+When `--no-ipv6` is active, or the host has no IPv6 loopback to redirect to, TTP puts `meta nfproto ipv6 drop` at the top of `filter_out`, ahead of every exemption: no IPv6 packet leaves, including from bypassed users and groups.
 
 ---
 

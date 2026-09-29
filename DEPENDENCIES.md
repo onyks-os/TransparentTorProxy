@@ -17,26 +17,30 @@ This document outlines the system and library dependencies for Transparent Tor P
 
 These are required to run the core `ttp` application.
 
-| Dependency                               | Version Constraint | License | Purpose                                                                                                   |
-| :--------------------------------------- | :----------------- | :------ | :-------------------------------------------------------------------------------------------------------- |
-| [typer](https://pypi.org/project/typer/) | `>=0.9.0`          | MIT     | CLI command construction, parameter validation, and user interface.                                       |
-| [stem](https://pypi.org/project/stem/)   | `>=1.8.0`          | LGPLv3  | Interfacing with the Tor control port/socket (e.g., authenticating, checking status, signaling `NEWNYM`). |
-| [rich](https://pypi.org/project/rich/)   | `>=13.0.0`         | MIT     | Rich text formatting, colorized terminal outputs, and interactive styling.                                |
+| Dependency                                           | Version Constraint | License | Purpose                                                                                                   |
+| :--------------------------------------------------- | :----------------- | :------ | :-------------------------------------------------------------------------------------------------------- |
+| [typer](https://pypi.org/project/typer/)             | `>=0.9.0`          | MIT     | CLI command construction, parameter validation, and user interface.                                       |
+| [stem](https://pypi.org/project/stem/)               | `>=1.8.0`          | LGPLv3  | Interfacing with the Tor control port/socket (e.g., authenticating, checking status, signaling `NEWNYM`). |
+| [rich](https://pypi.org/project/rich/)               | `>=15.0.0`         | MIT     | Rich text formatting, colorized terminal outputs, and interactive styling.                                |
+| [transitions](https://pypi.org/project/transitions/) | `>=0.9.3`          | MIT     | Finite state machine engine governing the watchdog daemon.                                                |
 
 #### Build & Development Dependencies
 
-These are required only for building package distributions (`.deb`, `.rpm`, wheel) or running the test/verification suite.
+These are required only for building package distributions (`.deb`, `.rpm`, wheel) or running the test/verification suite. The `dev` extra holds the tools; the `nse` extra holds what the zero-leak ruleset suite (`make test-nse`) needs.
 
-| Dependency                                                   | Version Constraint  | License    | Purpose                                                     |
-| :----------------------------------------------------------- | :------------------ | :--------- | :---------------------------------------------------------- |
-| [hatchling](https://pypi.org/project/hatchling/)             | N/A (Build Backend) | MIT        | Modern build backend specified in PEP 517 build-system.     |
-| [pytest](https://pypi.org/project/pytest/)                   | `>=7.0.0`           | MIT        | Test suite execution and test assertions.                   |
-| [ruff](https://pypi.org/project/ruff/)                       | `>=0.1.0`           | MIT        | Code style enforcement, linting, and formatting checks.     |
-| [build](https://pypi.org/project/build/)                     | `>=1.0.0`           | MIT        | Python packaging build frontend.                            |
-| [twine](https://pypi.org/project/twine/)                                             | `>=4.0.0`           | Apache-2.0 | Tool for securely publishing distribution packages to PyPI.                                |
-| [bump-my-version](https://pypi.org/project/bump-my-version/)                         | `>=0.20.0`          | MIT        | Version management tool to automate release numbering.                                      |
-| [network-sandbox-engine](https://pypi.org/project/network-sandbox-engine/)           | `>=1.1.1`          | MIT        | Isolated netns/Scapy nftables rules validation engine for `tests/test_nse_rules.py`.       |
-| [pyroute2](https://pypi.org/project/pyroute2/)                                        | `>=0.7.0`          | Apache-2.0 | Netlink-based route management inside network namespaces (avoids `/sys` mount in Docker).   |
+| Dependency                                                                 | Extra | Version Constraint  | License    | Purpose                                                                                     |
+| :------------------------------------------------------------------------- | :---- | :------------------ | :--------- | :------------------------------------------------------------------------------------------ |
+| [hatchling](https://pypi.org/project/hatchling/)                           | build | `>=1.27`            | MIT        | PEP 517 build backend.                                                                      |
+| [pytest](https://pypi.org/project/pytest/)                                 | `dev` | `>=9.1.1`           | MIT        | Test suite execution and test assertions.                                                   |
+| [pytest-cov](https://pypi.org/project/pytest-cov/)                         | `dev` | `>=5.0.0`           | MIT        | Coverage measurement for `make coverage` and the CI ratchet.                                |
+| [hypothesis](https://pypi.org/project/hypothesis/)                         | `dev` | `>=6.0.0`           | MPL-2.0    | Property-based fuzz tests.                                                                  |
+| [ruff](https://pypi.org/project/ruff/)                                     | `dev` | `>=0.1.0`           | MIT        | Code style enforcement, linting, and formatting checks.                                     |
+| [mypy](https://pypi.org/project/mypy/)                                     | `dev` | `>=1.10.0`          | MIT        | Static type checking.                                                                       |
+| [build](https://pypi.org/project/build/)                                   | `dev` | `>=1.0.0`           | MIT        | Python packaging build frontend.                                                            |
+| [twine](https://pypi.org/project/twine/)                                   | `dev` | `>=7.0.0`           | Apache-2.0 | Checking and publishing distributions. 7.0.0 is the first to accept Metadata-Version 2.5.  |
+| [bump-my-version](https://pypi.org/project/bump-my-version/)               | `dev` | `>=1.4.1`           | MIT        | Version management tool to automate release numbering.                                      |
+| [network-sandbox-engine](https://pypi.org/project/network-sandbox-engine/) | `nse` | `>=2.1.2,<3`        | MIT        | Isolated netns/Scapy nftables rules validation engine for `tests/test_nse_rules.py`. The floor is a correctness requirement, not a preference: see `pyproject.toml`. |
+| [pyroute2](https://pypi.org/project/pyroute2/)                             | `nse` | unpinned            | Apache-2.0 | Netlink-based route management inside network namespaces (avoids `/sys` mount in Docker).   |
 
 ### 1.2 System-Level Dependencies
 

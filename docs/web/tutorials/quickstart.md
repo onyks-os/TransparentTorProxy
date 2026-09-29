@@ -57,9 +57,14 @@ Upon execution, TTP performs the following automated steps:
 
 1. Launches or verifies the dedicated Tor daemon (`ttp-tor.service`).
 2. Applies atomic kernel redirection rules within the `inet ttp` `nftables` table.
-3. Overlays `/etc/resolv.conf` to direct system DNS to Tor DNSPort (`127.0.0.1:5353`).
-4. Monitors Tor circuit bootstrap progress until 100%.
-5. Initializes the background FSM integrity watchdog.
+3. Overlays `/etc/resolv.conf` to direct system DNS to Tor's DNSPort (`127.0.0.1:9054` by default).
+4. Waits for Tor to bootstrap, then confirms through `check.torproject.org` that traffic actually exits through Tor.
+
+Add `--watchdog` to also start the background integrity watchdog.
+
+`start` exits `0` when the session is up and verified, `3` when the session is up and
+fail-closed but Tor could not be verified (traffic is blocked, not leaking), and `1`
+when there is no session. See the [exit codes](../reference/cli.md#4-cli-exit-codes).
 
 !!! note "Community & Contributions"
     If you find TTP valuable for your workflow, consider starring the [TransparentTorProxy repository on GitHub](https://github.com/onyks-os/TransparentTorProxy). Contributions in the form of issue reports, pull requests, and forks are welcome to help improve system security and compatibility.
@@ -81,7 +86,7 @@ ttp check
 curl -s https://check.torproject.org/api/ip
 ```
 
-Expected output for `ttp check` includes verification of the Tor SOCKS port, DNS resolution via DNSPort, and circuit reachability.
+`ttp check` confirms through `check.torproject.org` that traffic exits through Tor, and shows the exit IP, the TransPort and DNSPort in use, the IPv6 state and the latency.
 
 ---
 

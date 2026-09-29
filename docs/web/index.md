@@ -21,7 +21,7 @@ TTP is a Linux system utility that transparently routes all TCP and DNS traffic 
 
     ---
 
-    All session state, runtime `torrc` files, locks, and log buffers are maintained strictly in `/run/ttp` (`tmpfs`). No configuration data or session traces are written to persistent storage.
+    Session state, the generated `torrc`, the lock and the log live only in `tmpfs` (`/run/ttp`, `/run/tor/ttp`), and the session ends with the machine. The only things on disk are Tor's guard and consensus cache (`/var/lib/tor/ttp`) and a few markers in `/var/lib/ttp`.
 
 - **Kernel-Level Network Interception**
 
@@ -33,19 +33,19 @@ TTP is a Linux system utility that transparently routes all TCP and DNS traffic 
 
     ---
 
-    System DNS resolution is bound to Tor DNSPort (`127.0.0.1:5353`) via an isolated `mount --bind` overlay on `/etc/resolv.conf` and `systemd-resolved` runtime overrides.
+    System DNS resolution is bound to Tor's DNSPort (`127.0.0.1:9054` by default) via a `mount --bind` overlay on `/etc/resolv.conf` and a volatile `systemd-resolved` drop-in, backed by a kernel-level drop on resolved's non-loopback traffic.
 
-- **FSM Watchdog and Self-Healing**
+- **FSM Watchdog and Killswitch**
 
     ---
 
-    A background Finite State Machine monitors `nftables` rule integrity and process health. If tampered with or interrupted, rules are automatically repaired or reset to a closed killswitch state.
+    With `--watchdog`, a background daemon driven by a finite state machine is woken by nftables and inotify events and compares the live table, rule for rule, with the one the session applied. A failed Tor is restarted; a changed table or DNS overlay engages an emergency killswitch, held until `ttp stop`.
 
 - **Subnet and Process Exclusion**
 
     ---
 
-    Supports RFC 1918 local area network exclusion (`--lan-bypass`) and process isolation by system user or group (`--bypass-user`, `--bypass-group`, `sudo ttp bypass`).
+    Local networks (RFC 1918 and link-local) stay reachable by default (`--no-lan-bypass` routes them through Tor too), and users, groups or single commands can be exempted (`--bypass-user`, `--bypass-group`, `sudo ttp bypass`).
 
 - **IPv6 Leak Prevention**
 
@@ -60,8 +60,8 @@ TTP is a Linux system utility that transparently routes all TCP and DNS traffic 
 ## Quick Usage
 
 ```bash
-# Start transparent proxy session with default FSM watchdog
-sudo ttp start
+# Start a session, with the integrity watchdog
+sudo ttp start --watchdog
 
 # Verify Tor circuit connectivity and public exit IP
 ttp check

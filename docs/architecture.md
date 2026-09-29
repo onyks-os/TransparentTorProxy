@@ -151,7 +151,7 @@ Generates rules applied atomically via `nft -f` into the dedicated `inet ttp` ta
 3. **Multi-Chain Architecture**: A NAT hook (`output`/`prerouting`) handles redirection to Tor ports; a filter hook (`filter_out`) implements the Kill-Switch, rejecting everything that is not explicitly allowed.
 4. **Named Counters**: The DNS and TCP redirects, the DoT, DoH and un-redirected DNS rejects and the catch-all reject each carry a named nftables counter, read back through `firewall.read_counters()`. They answer questions the ruleset's *shape* cannot: whether the redirect a probe depends on actually matched, and whether a rule that should be unreachable ever fired. `ttp status` surfaces the catch-all count, the DNS leak probe reads the redirect counter around its query, and the watchdog treats a DoH, DoT or un-redirected DNS count that has risen since its previous check as an integrity failure (see ADR 0012 for why those rules are unreachable in normal operation). It compares against the previous reading rather than zero because the counters are cumulative: one matched packet would otherwise fail every later check, the re-check after healing included. A counter that cannot be read is reported as *absent*, never as `0`.
 5. **Split Tunneling**: UIDs/GIDs are resolved via Python's `pwd`/`grp` libraries and injected as `meta skuid`/`meta skgid` rules — no shell interpolation.
-6. **Emergency Killswitch**: `apply_emergency_killswitch()` replaces the table with a minimal drop-all configuration (loopback exempt), used by the watchdog on persistent integrity failure.
+6. **Emergency Killswitch**: `apply_emergency_killswitch()` replaces the table, in one transaction, with a minimal drop-all configuration (loopback exempt). The watchdog applies it on any firewall or DNS integrity failure, or when a Tor restart does not hold, and then holds it until `ttp stop` (see §3.9).
 7. **Teardown Lockdown**: `apply_teardown_lockdown(tor_uid)` inserts a drop rule at the top of the `filter_out` chain to block all outbound traffic except loopback and the Tor UID. This prevents leaks during graceful circuit closing and Tor daemon termination.
 8. **Active Socket Slaughter**: `apply_active_socket_slaughter()` injects temporary TCP Reset and standard reject rules in `filter_out` to actively terminate pending local sockets (causing ECONNREFUSED/RST) before lowering the firewall.
 
@@ -166,7 +166,7 @@ Implements a **stateless overlay** by bind-mounting a volatile resolver file fro
 * **Non-destructive by design**: The original file is never modified on disk — the overlay is transparent to the OS and evaporates on reboot.
 * **Idempotency guard**: Before applying, `/proc/mounts` is scanned to remove any stale layers from prior unclean exits, ensuring multiple invocations are safe.
 * **Symlink safety**: The real path of `/etc/resolv.conf` is resolved before mounting (common issue on systemd-managed systems where it is a symlink to `systemd-resolved`).
-* **DoH/DoT mitigation**: DoT is blocked at the firewall layer (`firewall.py`); well-known DoH resolver IPs are blocked on port 443 to trigger system fallback; other unlisted DoH is routed through Tor; and DoH canary domains are mapped to `0.0.0.0` in the generated `torrc` to disable browser-level DoH where supported.
+* **DoH/DoT**: Contained structurally, not by blocklist ([ADR 0012](decisions/0012-doh-dot-and-browser-leaks-are-out-of-scope.md)): for a non-bypassed process, DoH and DoT are TCP and are redirected to Tor like any connection, and QUIC DoH is rejected with all other UDP. The DoT/DoH reject rules in `filter_out` are defence in depth against a failed NAT redirect, counted and alarmed on by the watchdog. Separately, managed mode maps a few well-known DoH hostnames and Firefox's canary domain to `0.0.0.0` in the generated `torrc`.
 * **Resolved Delegation**: Relies on `dns_resolved.py` to transparently manage configurations when `systemd-resolved` is active, keeping bind-mount and service-configuration layers decoupled.
 
 > For mount source/target paths, teardown behavior, and the full attribute table see [`interfaces.md § 3.2`](interfaces.md#32-dns-subsystem).
@@ -177,9 +177,9 @@ Manages `/run/ttp/ttp.lock` (JSON) on a volatile `tmpfs` mount. This ensures tha
 
 **Security Hardening**:
 
-* **Directory Permissions**: The `/run/ttp` directory is created with `0700` permissions (restricted to owner/root) to prevent unprivileged local enumeration.
-* **Lock File Permissions**: The `ttp.lock` file is written with `0600` permissions, securing sensitive bridge credentials and configuration parameters from local information disclosure.
-* **PID Recycling Protection**: When checking for orphaned processes, `state.py` parses `/proc/{pid}/cmdline` to verify that the active PID still corresponds to a `ttp` process, mitigating TOCTOU issues.
+* **Directory Permissions**: `/run/ttp` is always root-owned: `0750` with group `ttp-watchdog`, so the watchdog can read the lock, or `0700` when that account does not exist. The watchdog writes only to its own `/run/ttp/watchdog`. Handing the directory itself to the watchdog account would let it swap root's lock, log, `resolv.conf` or ruleset for a symlink (audit 2026-09).
+* **Lock File Permissions**: `ttp.lock` is `0640` root:`ttp-watchdog` (read-only for the watchdog), or `0600`, securing bridge lines and configuration from other local users.
+* **PID Recycling Protection**: When checking for orphaned processes, `state.py` reads `/proc/{pid}/cmdline` and matches whole argv tokens, not a substring, to verify that the PID still belongs to a `ttp` process (`"http"` contains `"ttp"`).
 
 Also handles the **tmpfs pre-flight check** (`check_tmpfs_space`) to ensure at least 5MB of RAM is free before starting, preventing `ENOSPC` crashes mid-setup. Persistent configurations (like UX flags) are delegated to `ux.py`.
 
@@ -211,7 +211,7 @@ Encapsulates all communication with the Tor daemon.
 * Monitors bootstrap progress.
 * Requests new circuits via `Signal.NEWNYM`.
 * Executes graceful teardown via `Signal.SHUTDOWN` to close circuits cryptographically before network restoration.
-* Verifies exit IP via multiple endpoints for resilience (`check.torproject.org`, `ipify`, `ifconfig.me`).
+* Verifies the exit via `check.torproject.org`, the only endpoint allowed to assert `IsTor`; `ipify` and `ifconfig.me` are fallbacks for the IP alone. Reflected values are canonicalised through `ipaddress` before display.
 
 ### 3.8 `system_info.py`
 
@@ -229,9 +229,9 @@ Pure data gathering module, decoupled from UI.
 Implements continuous, proactive session monitoring and auto-healing features to ensure absolute traffic security. Organized as a formal Finite State Machine (FSM):
 
 * **`fsm.py` (Watchdog FSM)**: Houses the `WatchdogFSM` class which defines the state machine graph using the `transitions` library. It contains FSM state variables and executes transition triggers (`initialize`, `disconnect`, `reconnect`, `integrity_fail`, `heal_success`, `heal_fail`, `tamper`, `shutdown`) and their corresponding callback handlers.
-* **`service.py` (Volatile Service Daemon)**: Configures and writes a dynamic systemd service unit (`/run/systemd/system/ttp-watchdog.service`) that runs the command `ttp watchdog run`. Because it resides in `/run/`, it evaporates on system reboot.
-* **`inotify.py` (Continuous Monitoring Loop)**: Runs the event-driven monitoring loop using raw ctypes-based Inotify on `/etc/resolv.conf` (monitoring both realpath and symlink target swapping using `IN_DONT_FOLLOW`) and Netlink sockets for firewall events. It delegates all state changes and resource lifecycle actions directly to the FSM.
-* **`integrity.py` (Integrity Check)**: Performs modular DNS, firewall, and Tor connectivity checks.
+* **`service.py` (Volatile Service Daemon)**: Configures and writes a dynamic systemd service unit (`/run/systemd/system/ttp-watchdog.service`) that runs the command `ttp watchdog run`, as `ttp-watchdog` with only `CAP_NET_ADMIN` and `NoNewPrivileges=yes`. It `Wants=` rather than `Requires=` `ttp-tor.service`, because `Requires=` propagates a stop: stopping Tor would stop the watchdog meant to restart it. Because it resides in `/run/`, it evaporates on system reboot.
+* **`inotify.py` (Continuous Monitoring Loop)**: Runs the event-driven monitoring loop: `select()` on a netlink socket subscribed to nftables events (`NFNLGRP_NFTABLES`) and a ctypes-based inotify watch on `/etc/resolv.conf` (both realpath and symlink, `IN_DONT_FOLLOW`), with a 15-second heartbeat. Every wake-up runs the integrity check, so a changed table reaches the killswitch in tens of milliseconds. Once the FSM is in `killswitch`, the loop holds it: every 2 seconds it compares the table with the listing taken after applying it, and re-applies it if it was removed or altered, until the lock is gone.
+* **`integrity.py` (Integrity Check)**: Checks the DNS overlay and resolved drop-in, compares the live `inet ttp` table with the fingerprint recorded at start (`nft -s list table`), checks bypass rules and the DoT/DoH/un-redirected-DNS reject counters, and queries Tor's control socket. Only Tor is auto-healed (`systemctl restart ttp-tor`); a DNS or firewall failure goes straight to the killswitch.
 * **`alerts.py` (Alerts & Killswitch)**: Implements unprivileged system-wide notifications (`wall` and `notify-send`) and the emergency fail-closed killswitch. Sanitizes messages to prevent terminal escape injections.
 
 #### Watchdog FSM State Transitions
@@ -276,6 +276,7 @@ Manages configurations specific to systemd-resolved:
 * Checks service status actively via systemctl commands.
 * Writes a volatile systemd-resolved drop-in resolver mapping (`/run/systemd/resolved.conf.d/ttp.conf`) containing local DNSPort mappings (IPv4 and IPv6).
 * Restarts the systemd-resolved service and flushes the system DNS cache on both initialization and teardown.
+* Is backed by a rule in `filter_out` that drops every packet from resolved's UID not addressed to loopback, so a per-link DNS server (NetworkManager, a VPN) yields a failed lookup rather than a leak ([ADR 0009](decisions/0009-systemd-resolved-bypass.md)).
 
 ### 3.13 Architecture Graph & Module Interactions
 
@@ -412,7 +413,7 @@ Modern Linux distributions (Ubuntu 23.04+, Debian 12+) implement **PEP 668** (Ex
 
 ### 8.3 The SELinux Factor
 
-A key architectural feature is the **dynamic SELinux policy**. Because Tor is restricted by default on RHEL/Fedora, it cannot bind to ports like 9040 (TransPort) without specific permissions.
+A key architectural feature is the **dynamic SELinux policy**. Because Tor is restricted by default on RHEL/Fedora, it cannot bind to ports like 9041 (TransPort) without specific permissions.
 
 * The **Native RPM** and the **Source Installer** both handle this by compiling a type-enforcement file into a binary policy module.
 * **pip/pipx** installations will likely fail on Fedora unless the user manually handles SELinux or sets it to *Permissive* mode.
@@ -431,7 +432,7 @@ Because TTP modifies core network settings (Firewall and DNS), uninstallation re
 
 Building system packages is handled by scripts in the `packaging/` directory:
 
-* `release.sh`: Orchestrates the full release: Python wheel/sdist build + `twine check`, cleanup of prior artifacts, `.deb` (via `build_deb.sh`), `.rpm` when `rpmbuild` is available (via `build_rpm.sh`), and `SHA256SUMS.txt` for the produced packages. Invoked by `make build`.
+* `release.sh`: Orchestrates the full release: Python wheel/sdist build + `twine check`, cleanup of prior artifacts, `.deb` (via `build_deb.sh`), `.rpm` when `rpmbuild` is available (via `build_rpm.sh`), and `SHA256SUMS.txt` for the produced packages. Invoked by `make packages` (`make build` builds only the Python distributions).
 * Step 0 runs `python -m build` with `TMPDIR` set **only for that command** to a project-local `.build_tmp` directory on disk. That avoids heavy use of RAM-backed `/tmp` on memory-constrained machines. The variable is not exported to the rest of the script so downstream tools (for example `dpkg-deb` inside `build_deb.sh`) keep using the system default temporary directory.
 * `build_deb.sh`: Generates a Debian archive.
 * `build_rpm.sh`: Generates a Fedora RPM (requires `rpm-build`).
@@ -441,30 +442,30 @@ Building system packages is handled by scripts in the `packaging/` directory:
 
 ## 10. Development and Test Environment
 
-### QEMU VM Configuration
+### Makefile entry points
 
-* **OS:** Debian 13 (Trixie) Netinstall
-* **Network:** NAT + Host-Only (SSH)
-* **Workflow:** Code on host -> `scripts/vm/send.sh` or `rsync` -> Test on VM via SSH.
-
-### CI/CD Automation (Makefile)
-
-TTP employs a `Makefile` in the root directory to provide a unified entry point for local CI/CD. This ensures atomicity and consistency across different developer environments.
-
-* **`make test`**: Executes unit tests via `pytest` (Phase 1).
-* **`make integration-<distro>`**: Orchestrates Docker-based system tests for a specific distribution (Phase 2).
-* **`make verify`**: The mandatory pre-commit pipeline. It runs the full suite (Unit + all Integration tests).
-* **`make build`**: Compiles native system packages (`.deb`, `.rpm`) using the logic in `packaging/`.
-* **`make clean`**: Purges all temporary build artifacts, `__pycache__`, and compiled packages.
-* **`make pypi` / `make testpypi`**: Automates the build and upload of Python wheels to PyPI/TestPyPI.
+* **`make verify`**: The gate to run before every push: lint (ruff, mypy, ShellCheck, markdownlint, secret scan), unit tests, dependency audit.
+* **`make test`** / **`make coverage`**: Unit tests, without and with the coverage ratchet.
+* **`make test-nse`**: The zero-leak ruleset suite in a network namespace (root).
+* **`make integration-<distro>`**: Docker-based integration tests for Debian, Fedora or Arch.
+* **`make chaos-monkey`**: The watchdog chaos sweep on a disposable host (root).
+* **`make verify-full`**: The pre-release suite: lint, unit, integration and packages.
+* **`make packages`**: Native `.deb` and `.rpm` via `packaging/release.sh`.
+* **`make clean`**: Purges build artifacts, caches and compiled packages.
 
 ### Testing Strategy
 
-| Phase | Environment      | Goal                           | Status                      |
-| :---- | :--------------- | :----------------------------- | :-------------------------- |
-| 1     | Unit (Host)      | pytest, fully mocked           | PASS                        |
-| 2     | Integration      | Docker testing (`.test` files) | PASS (Debian, Arch, Fedora) |
-| 3     | Portability (VM) | Debian 13, Ubuntu              | PASS                        |
+| Layer | Environment | What it establishes | Where it runs |
+| :---- | :---------- | :------------------ | :------------ |
+| Unit | Host, fully mocked | Logic, rollback and teardown branches; coverage ratchet | CI, every push and PR (Python 3.10-3.13) |
+| Zero-leak | Network namespace (NSE), real generated ruleset | Containment, with a positive control per test, alongside competing rulesets | CI, every push and PR |
+| Integration | Privileged Docker (Debian 13, Fedora 41, Arch) | Install, systemd, nftables on a real kernel | CI, every push and PR |
+| Lifecycle | Disposable VM (Debian 13 / systemd-networkd, Fedora 44 / NetworkManager) | Shutdown, reboot, suspend/resume, judged from a capture outside the guest | CI when firewall, lifecycle, DNS or watchdog code changes; weekly |
+| Chaos | Disposable VM | The watchdog under live faults, each audit with a canary | Same as lifecycle |
+
+The QEMU scripts in `scripts/vm/` (`start.sh`, `send.sh`, `snapshot.sh`) remain for
+manual work on a long-lived VM; `scripts/vm/lifecycle/` holds the disposable-VM
+suites.
 
 ---
 
@@ -477,9 +478,9 @@ TTP employs a `Makefile` in the root directory to provide a unified entry point 
 * **`test_dns.py`**: Asserts correct mount --bind overlay, stale mount cleanup, and lazy umount.
 * **`test_state.py`**: Asserts lock creation, reading, and orphan detection.
 * **`test_fsm.py`**: Verifies WatchdogFSM state machine transitions, triggers, and callback handlers under mock conditions.
-* **`test_cli.py`**: Verifies command orchestration, option injection, UI flow, non-root OSError safety, stop command execution order (lockdown -> shutdown -> conntrack flush -> destroy), and conntrack handling when utility is missing.
+* **`test_cli_*.py`** (`start`, `stop`, `bypass`, `misc`): Verify command orchestration, option injection, UI flow, non-root OSError safety, stop command execution order (lockdown -> shutdown -> conntrack flush -> destroy), and conntrack handling when utility is missing.
 * **`test_tor_control.py`**: Verifies Tor daemon interaction, IP checking logic, and circuit bootstrap/rotation.
 * **`test_tor_install.py`**: Asserts correct PM selection, torrc generation (including DoH blocking mapping), and service management.
 * **`test_watchdog.py`**: Verifies volatile systemd unit generation, watchdog start/stop flow (mocking systemctl commands), integrity check behavior under healthy/failing states, auto-healing routing for DNS/Firewall/Tor, emergency killswitch execution, and watchdog main loop iteration logic.
 * **`test_nse_rules.py`**: Integration ruleset validation using `network-sandbox-engine`. Resolves dynamic topologies, constructs isolated namespaces, and executes Scapy packet sniffing on host virtual interfaces to assert absolute zero network leaks. (Requires root).
-* **`chaos_monkey.py`**: Destructive stress testing utility. Injects random failures (Tor socket closure, resolver umounts, nftables flushes) and asserts watchdog recovery and fail-closed security. (Requires root).
+* **`chaos_monkey.py`**: Destructive sweep, not a unit test. Applies every fault once (Tor stopped, Tor killed behind systemd's back, table flushed, table destroyed, DNS overlay unmounted, link flapped) and audits containment after each, TCP and UDP, with a canary per audit. Its oracle is unit-tested in `test_chaos_monkey.py`. (Requires root).

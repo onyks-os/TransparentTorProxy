@@ -31,7 +31,7 @@ SPDX-License-Identifier: MIT
   <a href="#usage">Usage</a> •
   <a href="#how-it-works">How It Works</a> •
   <a href="#verification">Verification</a> •
-  <a href="#obtain-feedback--contributions">Contribute</a>
+  <a href="#contributing">Contribute</a>
 </p>
 
 ---
@@ -69,10 +69,15 @@ keeps nothing on disk.
 
 ## Features
 
-* **Continuous integrity protection** - a watchdog governed by a formal FSM
-  (`transitions`) monitors Tor, the nftables chains and the DNS overlay via a
-  double inotify watch that catches symlink-target swapping. It repairs once,
-  then applies an emergency killswitch.
+* **Continuous integrity protection** (`--watchdog`) - a watchdog governed by a
+  formal FSM (`transitions`) compares the live `inet ttp` table, rule for rule,
+  with the one the session applied, and watches Tor and the DNS overlay. It is
+  woken by nftables and inotify events rather than polling, so a flushed or
+  altered table reaches the killswitch in tens of milliseconds (31-48 ms
+  measured). A failed Tor is restarted once; a changed table or DNS overlay is
+  treated as tampering. Either way, if the session is not intact the watchdog
+  applies an emergency killswitch and holds it until `ttp stop`, re-applying it
+  if something removes or alters it.
 * **Split tunnelling** - exempt users or groups (`--bypass-user`,
   `--bypass-group`) with native nftables UID/GID matching, or run a single
   command outside Tor with `ttp bypass <cmd>` via a cgroups v2 slice.
@@ -81,9 +86,11 @@ keeps nothing on disk.
 * **Dual-stack, or no stack** - IPv6 is routed through Tor when loopback
   routing is available, and dropped outright when it is not. There is no third
   option where it leaks.
-* **DoT and DoH blocked** - port 853 rejected, known public DoH resolvers
-  rejected on 443 (TCP and QUIC), and browser canary domains poisoned in
-  `torrc`.
+* **DoH and DoT contained by construction** - all TCP goes to Tor, DNS on port
+  53 goes to Tor's DNSPort, everything else is rejected. A browser's DoH or DoT
+  query therefore leaves through a Tor exit like any other connection, whoever
+  the resolver is; no blocklist is involved
+  ([ADR 0012](docs/decisions/0012-doh-dot-and-browser-leaks-are-out-of-scope.md)).
 * **Coexists with your system Tor** - runs its own volatile `ttp-tor.service`
   on non-standard ports, leaving an existing Tor instance untouched.
 * **Bridges** - obfs4 and snowflake, with BYOD (bring your own daemon) mode.
@@ -219,17 +226,21 @@ TTP transparently routes all network traffic by orchestrating standard Linux ker
 
 ```mermaid
 flowchart LR
-    App["Application"] --> Local["Local Network"]
-    Local --> DNS["systemd-resolved (Intercepted)"]
-    DNS --> NFT["nftables (inet ttp table)"]
-    NFT --> Tor["Tor Daemon"]
+    App["Application"] -->|TCP| NFT["nftables (inet ttp)"]
+    App -->|DNS| Resolver["/etc/resolv.conf overlay<br/>or systemd-resolved"]
+    Resolver -->|port 53| NFT
+    NFT -->|redirect| TransPort["Tor TransPort"]
+    NFT -->|redirect| DNSPort["Tor DNSPort"]
+    NFT -->|anything else| Reject["rejected"]
+    TransPort --> Tor["Tor"]
+    DNSPort --> Tor
     Tor --> Internet["Internet"]
 ```
 
-1. **Atomic Firewall Redirection**: Generates and loads an isolated `inet ttp` nftables ruleset atomically to intercept TCP and DNS traffic, redirecting them to Tor while preventing IPv6 and DoT/DoH leaks.
+1. **Atomic Firewall Redirection**: Generates and loads an isolated `inet ttp` nftables ruleset atomically: TCP is redirected to Tor's TransPort, DNS on port 53 to Tor's DNSPort, and every other packet is rejected.
 2. **DNS Bind-Mount Overlay**: Overlays `/etc/resolv.conf` with a volatile RAM-backed configuration via a kernel-level bind-mount to ensure DNS calls are resolved by Tor.
 3. **Tor Daemon Integration**: Configures, runs, and monitors an isolated Tor instance via volatile systemd services on non-standard ports to prevent port conflicts.
-4. **Session Watchdog**: Runs an active background monitor that verifies configuration integrity and executes a fail-closed emergency killswitch upon security breach or system modification.
+4. **Session Watchdog** (`--watchdog`): An optional background daemon that verifies the session's integrity on every nftables or inotify event and every 15 seconds. It restarts a failed Tor once; anything else that is not intact - the table, the DNS overlay - engages a fail-closed emergency killswitch, which it holds until `ttp stop`.
 
 For a detailed walkthrough of the execution flows, system hooks, security boundaries, and modular components, please refer to the:
 
@@ -241,7 +252,7 @@ TTP is designed to always restore your network, even in edge cases:
 
 | Scenario                 | What happens                                                                                                                                                                                                                              |
 | :----------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ttp stop`               | **Zero-leak cleanup**: applies teardown lockdown, gracefully shuts down Tor, executes active socket slaughter, waits 1.5s, flushes connection tracking, restores firewall and DNS (via table flush and delete), and deletes the lock file |
+| `ttp stop`               | **Zero-leak cleanup**: stops the watchdog, applies the teardown lockdown, shuts Tor down gracefully, kills open sockets, flushes connection tracking, removes the `inet ttp` table, restores DNS, and deletes the lock file - the lock last, even if a step before it fails |
 | Ctrl+C / `kill`          | Signal handler catches `SIGINT`/`SIGTERM` and runs normal cleanup before exit                                                                                                                                                             |
 | `kill -9` / Power Outage | Next `ttp start` detects the orphaned lock file, clears any stale mount stacks, and auto-restores                                                                                                                                         |
 | Manual emergency         | Run `sudo ./scripts/restore-network.sh` to flush all nftables rules, reset DNS, and delete the lock file                                                                                                                                  |
@@ -251,7 +262,7 @@ TTP is designed to always restore your network, even in edge cases:
 > [!WARNING]
 >
 > * **Tor Browser**: Applications using an explicit SOCKS5 proxy will create a double Tor hop. Use a regular browser instead while TTP is active.
-> * **DNS-over-HTTPS (DoH)**: Normal browsers (Firefox, Chrome, Brave, Edge) may use DoH, bypassing system DNS. TTP mitigates DoH via a 3-layer defense: (1) all outbound TCP traffic (including DoH) is redirected to Tor TransPort; (2) common DoH canary domains are mapped to `0.0.0.0` in `torrc`; (3) public DoH IP resolvers are blocked on TCP/UDP port 443 (blocking HTTP/3 QUIC DoH). For maximum security, disable **DoH / "Secure DNS"** in your browser settings.
+> * **DNS-over-HTTPS (DoH)**: Browsers (Firefox, Chrome, Brave, Edge) may use DoH instead of the system resolver. For a process that is not bypassed this is not a leak: DoH is TCP, and all TCP goes through Tor. It does mean a DoH provider sees your queries (from a Tor exit), and some settings make name resolution fail rather than leak. Turning off **DoH / "Secure DNS"** in the browser keeps DNS on Tor's own resolver. What happens to each application-level resolver, and how to check yours: [Applications that resolve DNS on their own](docs/web/how-to/apps-with-own-dns.md).
 > * **IPv6**: Fully supported when available. TTP dynamically detects IPv6 loopback and routes IPv6 traffic through Tor. If the host lacks IPv6 loopback support OR if the `--no-ipv6` option is passed, TTP drops all outgoing IPv6 traffic to prevent leaks.
 > * **Exit IP variation**: Different connections may show different exit IPs due to Tor stream isolation.
 > * **No protection across a reboot**: a session does not survive a reboot, and TTP has no start-at-boot mode. After a reboot TTP is not running and **all traffic is in cleartext**, from early in boot, until you run `ttp start` again. `ttp status` says so (`No active session. Traffic is in cleartext.`), but nothing warns you on its own. This is measured, not assumed: see [section 4.3 of the security assessment](docs/security-assessment.md#43-lifecycle-transitions-what-is-measured-and-what-is-not).
@@ -271,14 +282,17 @@ TTP uses a **Makefile** to automate and standardize the testing pipeline. This e
 
 ### Essential Commands
 
-| Command                   | Goal                                                                      |
-| :------------------------ | :------------------------------------------------------------------------ |
-| `make test`               | Runs fast **Unit Tests** locally (no root needed, fully mocked).          |
-| `make integration-debian` | Runs full system tests inside a privileged **Docker** container (Debian). |
-| `make integration-all`    | Runs integration tests for all supported distros (Debian, Fedora, Arch).  |
-| `make verify`             | Runs Unit Tests + All Integration Tests.                                  |
-| `make build`              | Generates native `.deb` and `.rpm` packages.                              |
-| `make clean`              | Removes all build artifacts, caches, and temp files.                      |
+| Command                   | Goal                                                                                 |
+| :------------------------ | :----------------------------------------------------------------------------------- |
+| `make verify`             | The gate to run before every push: lint (ruff, mypy, ShellCheck, markdownlint, secret scan), unit tests, dependency audit. |
+| `make test`               | Unit tests only (no root needed, fully mocked).                                      |
+| `make coverage`           | Unit tests with a coverage report; fails below the ratchet.                          |
+| `make test-nse`           | The zero-leak ruleset suite in a network namespace (root, `.[nse]` extra).           |
+| `make integration-debian` | Integration tests in a privileged **Docker** container (also `-fedora`, `-arch`, `-all`). |
+| `make chaos-monkey`       | The watchdog chaos sweep on a disposable host (root).                                |
+| `make verify-full`        | The pre-release suite: lint, unit, integration and packages.                         |
+| `make packages`           | Builds the native `.deb` and `.rpm` packages (`make build` builds the Python distributions). |
+| `make clean`              | Removes all build artifacts, caches, and temp files.                                 |
 
 ## Verification
 
@@ -296,9 +310,13 @@ that TTP's ruleset stops it. A harness that cannot observe a leak fails the
 test rather than passing it.
 
 Covered: plain DNS (UDP and TCP), ordinary TCP, DoT on 853, QUIC DoH on UDP/443,
-ICMP, arbitrary UDP, IPv6 — plus the other direction, that a bypassed UID can
-still reach the LAN. A firewall that blocked everything would pass the first
-seven and fail the eighth.
+ICMP, arbitrary UDP, IPv6 and routable ICMPv6; containment with a Docker-, ufw-,
+firewalld- or WireGuard-shaped ruleset loaded alongside TTP's, and with a foreign
+NAT chain that DNATs DNS to a LAN resolver; forwarded traffic; the teardown
+lockdown; a connection open before `ttp start`, which must be reset rather than
+left hanging. And the other direction: a bypassed UID still reaches the LAN and
+gets an answer back. A firewall that blocked everything would pass every
+containment test and fail those.
 
 ```bash
 # libpcap is required: the sniffer compiles a BPF filter, and Scapy dlopen()s
@@ -312,20 +330,23 @@ make test-nse            # runs as root; TTP_REQUIRE_NSE=1 so it cannot skip its
 This runs in CI on every push (the **Zero-leak ruleset verification** job) and as
 a step in `scripts/verify.sh` before a release.
 
-### Advanced: Real-World VM Testing
+### Lifecycle and chaos, in a VM
 
-While Docker integration tests are fast and atomic, they don't capture 100% of the kernel/systemd nuances. For critical changes, it is **highly recommended** to test in a real QEMU VM:
+Two things a namespace cannot show run in a disposable VM, in CI
+(`.github/workflows/lifecycle.yml`) whenever firewall, lifecycle, DNS or watchdog
+code changes, and weekly:
 
-```bash
-# Start a specific VM (e.g., arch)
-./scripts/vm/start.sh arch
+* **Lifecycle transitions** - shutdown, reboot, and suspend/resume onto a new
+  network, judged from a packet capture QEMU writes outside the guest, on Debian 13
+  (systemd-networkd) and Fedora 44 (NetworkManager, SELinux enforcing).
+* **The watchdog chaos sweep** - every fault once against a live session (Tor
+  stopped or killed behind systemd's back, the table flushed or destroyed, the DNS
+  overlay unmounted, the link flapped), each audit paired with a canary that proves
+  it could have seen a leak.
 
-# Sync current code to the VM
-./scripts/vm/send.sh
-
-# Snapshot management for easy rollbacks
-./scripts/vm/snapshot.sh arch save before-risky-test
-```
+What each asserts, and what it found, is in
+[section 4.3 of the security assessment](docs/security-assessment.md#43-lifecycle-transitions-what-is-measured-and-what-is-not).
+To run them locally, see [VM & Chaos Testing](docs/web/how-to/vm-testing.md).
 
 ### Diagnostics
 

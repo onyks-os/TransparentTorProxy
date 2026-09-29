@@ -19,15 +19,15 @@ Each ADR is formatted using the Markdown standard and named using a sequential I
 
 ## Index of Decisions
 
-1. [0001-volatile-standard-core.md](file:///home/onyks/Documents/GitHub/TransparentTorProxy/docs/decisions/0001-volatile-standard-core.md) — Volatile standard core (`/run/ttp`) to prevent stale lock states.
-2. [0002-stateless-dns-overlay.md](file:///home/onyks/Documents/GitHub/TransparentTorProxy/docs/decisions/0002-stateless-dns-overlay.md) — Stateless DNS overlay using `mount --bind` on `/etc/resolv.conf`.
-3. [0003-watchdog-emergency-killswitch.md](file:///home/onyks/Documents/GitHub/TransparentTorProxy/docs/decisions/0003-watchdog-emergency-killswitch.md) — Background watchdog and emergency fail-closed killswitch.
-4. [0004-split-tunneling-uid-gid.md](file:///home/onyks/Documents/GitHub/TransparentTorProxy/docs/decisions/0004-split-tunneling-uid-gid.md) — Split tunneling exceptions by UID/GID in `nftables`.
-5. [0005-tor-bridge-support.md](file:///home/onyks/Documents/GitHub/TransparentTorProxy/docs/decisions/0005-tor-bridge-support.md) — Native bridge and pluggable transports support in generated `torrc`.
-6. [0006-subprocess-orchestration.md](file:///home/onyks/Documents/GitHub/TransparentTorProxy/docs/decisions/0006-subprocess-orchestration.md) — Retaining `subprocess`-based network orchestration instead of a native Netlink implementation.
-7. [0007-ruleset-testing-with-nse.md](file:///home/onyks/Documents/GitHub/TransparentTorProxy/docs/decisions/0007-ruleset-testing-with-nse.md) — Programmatic testing using Network Sandbox Engine (NSE) and Scapy sniffer.
-8. [0008-byod-architecture.md](docs/decisions/0008-byod-architecture.md) — Support for custom external Tor instances via Bring Your Own Daemon (BYOD) on systemd hosts.
-9. [0009-systemd-resolved-bypass.md](docs/decisions/0009-systemd-resolved-bypass.md) — systemd-resolved DNS bypass and fail-closed firewall kernel drop.
-10. [0010-watchdog-finite-state-machine.md](docs/decisions/0010-watchdog-finite-state-machine.md) — Watchdog FSM (Finite State Machine) using the transitions library.
+1. [0001-volatile-standard-core.md](0001-volatile-standard-core.md) — Volatile standard core (`/run/ttp`) to prevent stale lock states.
+2. [0002-stateless-dns-overlay.md](0002-stateless-dns-overlay.md) — Stateless DNS overlay using `mount --bind` on `/etc/resolv.conf`.
+3. [0003-watchdog-emergency-killswitch.md](0003-watchdog-emergency-killswitch.md) — Background watchdog and emergency fail-closed killswitch.
+4. [0004-split-tunneling-uid-gid.md](0004-split-tunneling-uid-gid.md) — Split tunneling exceptions by UID/GID in `nftables`.
+5. [0005-tor-bridge-support.md](0005-tor-bridge-support.md) — Native bridge and pluggable transports support in generated `torrc`.
+6. [0006-subprocess-orchestration.md](0006-subprocess-orchestration.md) — Retaining `subprocess`-based network orchestration instead of a native Netlink implementation.
+7. [0007-ruleset-testing-with-nse.md](0007-ruleset-testing-with-nse.md) — Programmatic testing using Network Sandbox Engine (NSE) and Scapy sniffer.
+8. [0008-byod-architecture.md](0008-byod-architecture.md) — Support for custom external Tor instances via Bring Your Own Daemon (BYOD) on systemd hosts.
+9. [0009-systemd-resolved-bypass.md](0009-systemd-resolved-bypass.md) — systemd-resolved DNS bypass and fail-closed firewall kernel drop.
+10. [0010-watchdog-finite-state-machine.md](0010-watchdog-finite-state-machine.md) — Watchdog FSM (Finite State Machine) using the transitions library.
 11. [0011-start-exit-codes.md](0011-start-exit-codes.md) — Distinct exit code for a session that is active but whose Tor routing could not be verified.
 12. [0012-doh-dot-and-browser-leaks-are-out-of-scope.md](0012-doh-dot-and-browser-leaks-are-out-of-scope.md) — The structural guarantee, not a resolver blocklist, is what protects against DoH/DoT; browser-level WebRTC leaks are not packets and are out of scope.

@@ -37,7 +37,7 @@ ACTION="$2"
 if [ "$IFACE" = "wlan0" ] || [ "$IFACE" = "eth0" ]; then
     case "$ACTION" in
         up)
-            /usr/local/bin/ttp --quiet start --watchdog --lan-bypass
+            /usr/local/bin/ttp --quiet start --watchdog
             ;;
         down)
             /usr/local/bin/ttp --quiet stop
@@ -64,7 +64,7 @@ To run TTP as a system service managed by `systemd`:
 ```ini
 [Unit]
 Description=Transparent Tor Proxy (TTP)
-After=network-online.target ttp-tor.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]
@@ -85,6 +85,15 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload
 sudo systemctl enable transparent-tor-proxy.service
 ```
+
+!!! warning "This is not protection from boot"
+    TTP has no start-at-boot mode, and a unit like this one does not add one. It
+    runs after `network-online.target`, so the host is already on the network, in
+    cleartext, before the session exists; DNS and NTP were observed leaving in that
+    window when a reboot was measured
+    ([security assessment, section 4.3](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/security-assessment.md#43-lifecycle-transitions-what-is-measured-and-what-is-not)).
+    If the session fails to start, the unit fails and the host stays in cleartext.
+    `ttp status` tells you which state you are in.
 
 ---
 
