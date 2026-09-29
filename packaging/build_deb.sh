@@ -80,16 +80,21 @@ mkdir -p "$BUILD_DIR/DEBIAN"
 
 
 # Build the Python project into a standard format called a 'wheel' (.whl).
-# This bundles all our Python source code into an archive in the 'dist/' folder.
 # Same hash-pinned build environment as the release (packaging/build_python.sh).
-packaging/build_python.sh dist --wheel >/dev/null
+# Native: the wheel is unpacked into the package, so its compression is not shipped.
+# Into a directory of its own, not dist/: release.sh publishes dist/*.whl, and a
+# native wheel written there replaced the one it had built in the pinned image
+# under the same name - which scripts/check-reproducible.sh exposed.
+DEB_WHEEL_DIR="$(mktemp -d)"
+trap 'rm -rf "$DEB_WHEEL_DIR"' EXIT
+TTP_PY_NATIVE=1 packaging/build_python.sh "$DEB_WHEEL_DIR" --wheel >/dev/null
 
 # Find the newly created wheel file.
 # Note: Hatchling replaces dashes with underscores in the filename.
 WHEEL_NAME=$(echo "$PROJECT_NAME" | tr '-' '_')
 # The name is fully determined, so build the path directly instead of globbing
 # through ls, and fail with a readable message if the wheel is not there.
-WHEEL_FILE="dist/${WHEEL_NAME}-${VERSION}-py3-none-any.whl"
+WHEEL_FILE="${DEB_WHEEL_DIR}/${WHEEL_NAME}-${VERSION}-py3-none-any.whl"
 if [ ! -f "$WHEEL_FILE" ]; then
     echo "ERROR: expected wheel not found: $WHEEL_FILE" >&2
     exit 1
