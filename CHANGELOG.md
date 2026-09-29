@@ -72,6 +72,23 @@ Two things to know before upgrading:
 
 ### Changed
 
+- **The documentation describes the code again.** A pass over every page against
+  the source found the published site in particular describing a different
+  program: ports `9040`/`5353` where TTP uses `9041`/`9054`, a `ttp purge` command
+  and a `--lan-bypass` flag that do not exist, a ruleset with `policy accept` and no
+  catch-all reject, watchdog states that are not in `fsm.py`, a 5-second poll, and
+  a watchdog that "repairs" the table. It never has: only Tor is restarted, and a
+  changed table or DNS overlay goes straight to the killswitch. Those pages, the
+  README, `docs/architecture.md`, `docs/interfaces.md`, `DEPENDENCIES.md` (which
+  still listed the NSE floor as `>=1.1.1`) and CONTRIBUTING now match the code;
+  ADR 0003 carries an amendment, the ADR index no longer links to a local
+  `file:///` path, and the dependency reference states that the native packages
+  do not declare `transitions`. `ROADMAP.md` is brought up to date: v0.5.0 gains
+  an NSE test for the systemd-resolved drop rule in place of the unscheduled
+  "field hardening" item, and the `ttp doctor --dns` auditor proposed in #43 is
+  declined in favour of a new how-to page, *Applications that resolve DNS on
+  their own*, which states what happens to each under TTP and how to check.
+
 - **The competing-ruleset test now loads firewalld's and WireGuard's real
   rulesets, captured from the tools** ([#29](https://github.com/onyks-os/TransparentTorProxy/issues/29)).
   Until now every competitor was a shape written from what the tool is known to

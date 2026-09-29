@@ -59,20 +59,35 @@ Each of these is a path by which a transparent proxy is known to leak:
 | UDP DNS to a public resolver | plain DNS is redirected to Tor's DNSPort |
 | TCP DNS (port 53) | the other DNS path, redirected separately |
 | TCP to a web port | ordinary traffic reaches Tor's TransPort |
-| DoT (TCP 853) | rejected outright rather than proxied |
-| QUIC DoH (UDP 443) | the gap NAT cannot close - only the filter rule stops it |
+| DoT (TCP 853) | it never reaches the WAN in cleartext: like any TCP it is redirected to Tor |
+| QUIC DoH (UDP 443) | the gap NAT cannot close - UDP is not redirected, so the reject must stop it |
 | ICMP | Tor cannot carry it, so it must be rejected |
 | Arbitrary UDP | the catch-all reject holds |
-| IPv6 | the classic leak path when a proxy only reasons about IPv4 |
+| IPv6, and routable ICMPv6 | the classic leak path when a proxy only reasons about IPv4 |
 
-And one assertion in the other direction:
+Three of them are also checked for *which rule* handled the packet, read back from
+TTP's named counters: DNS by the DNS redirect, TCP by the TransPort redirect, ICMP
+by a reject. "Nothing leaked" alone cannot tell a redirect from an unrelated drop.
+
+The same ruleset is then tested against the situations real hosts create:
+
+| Situation | What it proves |
+| :--- | :--- |
+| A Docker-, ufw-, firewalld- (2.4.4, captured) or WireGuard- (`wg-quick`, captured) shaped ruleset loaded alongside | containment holds when another table has base chains at the same hooks; nftables resolves those by priority, not ownership |
+| A foreign NAT chain that DNATs DNS to a LAN resolver before TTP's redirect | the query is rejected instead of leaving through the LAN bypass |
+| Traffic forwarded through the host | `filter_forward` drops it |
+| The teardown lockdown | it closes the bypass while sparing Tor, and destroying the rules leaves nothing behind |
+| A connection open before `ttp start` | it is reset, not left hanging; a LAN connection survives |
+
+And assertions in the other direction:
 
 | Stimulus | What it proves |
 | :--- | :--- |
-| UDP from a bypassed UID to the LAN | TTP is a proxy, not a brick |
+| Traffic from a bypassed UID to the LAN | TTP is a proxy, not a brick |
+| The reply to it | the bypass works in both directions |
 
-That last row matters more than it looks. A firewall that dropped every packet
-would pass all eight containment tests. Without a test that something is *still
+Those last rows matter more than they look. A firewall that dropped every packet
+would pass every containment test. Without a test that something is *still
 allowed*, "zero leaks" and "zero connectivity" are indistinguishable.
 
 ## Where it runs
@@ -97,13 +112,33 @@ can shadow - which looks exactly like "not installed".
 The suite runs in CI on every push, and as a step in `scripts/verify.sh` before
 a release.
 
+## What a namespace cannot show
+
+A namespace has no boot, no shutdown and no NetworkManager, and nobody tampers with
+it while it runs. Two more suites cover that, in a disposable VM, in CI
+(`.github/workflows/lifecycle.yml`) whenever firewall, lifecycle, DNS or watchdog
+code changes, and weekly:
+
+- **Lifecycle transitions**: shutdown, reboot and suspend/resume onto a new
+  network, judged from a packet capture QEMU writes outside the guest, under
+  systemd-networkd and under NetworkManager.
+- **The watchdog chaos sweep**: every fault once against a live session. Each audit
+  is paired with a **canary**, a bypassed user audited the same way in the same
+  pass, which must be seen - the same positive-control rule, applied to a running
+  host.
+
+What they assert and what they found is in section 4.3 of the
+[security assessment](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/security-assessment.md#43-lifecycle-transitions-what-is-measured-and-what-is-not).
+
 ## The dependency, and why it is pinned hard
 
-`network-sandbox-engine>=2.1.0,<3`. The floor is not a preference.
+`network-sandbox-engine>=2.1.2,<3`. The floor is not a preference.
 
 Before 2.1.0 the engine's own test runner reported PASSED when its oracle had
 observed nothing, and its kernel trace monitor could stop reading mid-run without
-saying so. A green result from such an engine would not have been evidence of
+saying so. Before 2.1.2 its sniffer's default BPF filter discarded all ICMPv6 in
+the kernel, routable echoes included, so the routable-ICMPv6 test could not see its
+own subject. A green result from such an engine would not have been evidence of
 anything - the same defect as the one described at the top of this page, one
 layer down. TTP refuses to run this suite against an older engine rather than
 produce a reassuring number.

@@ -21,14 +21,15 @@ Required for basic TTP execution (`pip install transparent-tor-proxy` or package
 
 | Group | Package | Constraint | Purpose |
 |---|---|---|---|
-| `nse` | [network-sandbox-engine](https://pypi.org/project/network-sandbox-engine/) | `>=1.1.1` | Isolated network namespace testing & Scapy rule validation. |
-| `nse` | [pyroute2](https://pypi.org/project/pyroute2/) | `>=0.7.0` | Netlink route & interface management inside sandbox namespaces. |
+| `nse` | [network-sandbox-engine](https://pypi.org/project/network-sandbox-engine/) | `>=2.1.2,<3` | Isolated network namespace testing & Scapy rule validation. |
+| `nse` | [pyroute2](https://pypi.org/project/pyroute2/) | unpinned | Netlink route & interface management inside sandbox namespaces. |
 | `dev` | [pytest](https://pypi.org/project/pytest/) | `>=9.1.1` | Unit & integration test runner. |
 | `dev` | [hypothesis](https://pypi.org/project/hypothesis/) | `>=6.0.0` | Property-based fuzz testing. |
+| `dev` | [pytest-cov](https://pypi.org/project/pytest-cov/) | `>=5.0.0` | Coverage measurement and the CI ratchet. |
 | `dev` | [ruff](https://pypi.org/project/ruff/) | `>=0.1.0` | Python linter and code formatter. |
 | `dev` | [mypy](https://pypi.org/project/mypy/) | `>=1.10.0` | Static type checker. |
-| `dev` | [mkdocs-material](https://pypi.org/project/mkdocs-material/) | `>=9.5.0` | Documentation site generation. |
-| `dev` | [mkdocstrings](https://pypi.org/project/mkdocstrings/) | `>=0.24.0` | Automatic docstring extraction for API reference. |
+| docs (CI) | [mkdocs-material](https://pypi.org/project/mkdocs-material/) | unpinned | Documentation site generation. Installed by `.github/workflows/docs.yml`, not by an extra. |
+| docs (CI) | [mkdocstrings](https://pypi.org/project/mkdocstrings/) | unpinned | Automatic docstring extraction for the API reference. Same. |
 
 ---
 
@@ -50,8 +51,7 @@ Required for basic TTP execution (`pip install transparent-tor-proxy` or package
 | Binary | Package Name | Purpose |
 |---|---|---|
 | `dig` | `bind-utils` / `dnsutils` | DNS leak verification in `ttp check-leak`. |
-| `curl` | `curl` | HTTP endpoint verification in `ttp check`. |
-| `semodule` | `policycoreutils` | Compiling and loading `ttp-tor.cil` SELinux policy modules on Fedora/RHEL. |
+| `semodule` | `policycoreutils` | Loading the `ttp_tor_policy` SELinux module on Fedora/RHEL. |
 
 ### Pluggable Transport Binaries (Censorship Circumvention)
 
@@ -66,25 +66,30 @@ TTP enforces a **Strict No Auto-Install Policy**. Pluggable transport helpers ar
 
 ## 3. Native Package Requirements Matrix
 
-When building or installing TTP native packages (`.deb`, `.rpm`, `PKGBUILD`), distribution package managers resolve system dependencies automatically according to this mapping:
+What each native package declares today, copied from `packaging/build_deb.sh`,
+`packaging/ttp.spec` and `packaging/PKGBUILD`:
 
 === "Debian / Ubuntu (.deb)"
 
     ```text
-    Depends: python3 (>= 3.10), python3-typer, python3-stem, python3-rich, python3-transitions, nftables, tor, systemd, util-linux
-    Recommends: obfs4proxy, snowflake-client, dnsutils, curl
+    Depends: python3, python3-typer, python3-rich, python3-stem, nftables, tor
     ```
 
 === "Fedora / RHEL (.rpm)"
 
     ```text
-    Requires: python3 >= 3.10, python3-typer, python3-stem, python3-rich, python3-transitions, nftables, tor, systemd, util-linux
-    Recommends: obfs4proxy, snowflake-client, bind-utils, curl
+    Requires: python3, python3-typer, python3-rich, python3-stem, nftables, tor, policycoreutils
     ```
 
 === "Arch Linux (PKGBUILD)"
 
     ```text
-    depends=('python>=3.10' 'python-typer' 'python-stem' 'python-rich' 'python-transitions' 'nftables' 'tor' 'systemd' 'util-linux')
-    optdepends=('obfs4proxy: obfs4 bridge support' 'snowflake: Snowflake bridge support' 'bind: DNS leak probes')
+    depends=('python' 'python-typer' 'python-rich' 'python-stem' 'nftables' 'tor')
     ```
+
+!!! warning "`transitions` is not declared"
+    None of the three packages declares `transitions`, which the watchdog imports.
+    On a host where it is not installed, the watchdog cannot start and `ttp stop`
+    fails before tearing the session down. Until the packages declare it, install
+    it yourself (`python3-transitions` on Debian, or `pip install transitions`), or
+    install TTP with `pip`/`pipx`, which resolves it from `pyproject.toml`.

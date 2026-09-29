@@ -123,16 +123,19 @@ module, and again after, to check the tests you expected to go red actually did.
 ## Testing
 
 - **Unit Tests**: Must pass on every PR. They are fully mocked and run without root.
-- **Integration Tests**: Should be run in a VM (see `README.md`) to verify actual network behavior.
+- **Everything that needs a real kernel** runs in CI, so you do not need a VM to open a PR. For changes to the firewall, DNS, lifecycle or watchdog, running the relevant suite locally first is still the fastest way to learn what it checks.
 
 ### When Tests Run
 
-- **Pull Requests**: Every PR automatically triggers the CI pipeline (GitHub Actions). The following checks are executed:
-  - Linting with `ruff check` and `ruff format`
-  - Shell scripting linting with ShellCheck
-  - Unit tests on Python versions 3.10, 3.11, 3.12, and 3.13
-- **Push to Main**: The same suite of tests and checks is run on any push to the main branch.
-- **Locally**: You can (and should) run `pytest tests/ -v` locally before submitting your pull request.
+- **Every pull request and every push to `main`** (`.github/workflows/ci.yml`):
+  - lint: ruff (check and format), mypy, ShellCheck, markdownlint, secret scan
+  - unit tests on Python 3.10, 3.11, 3.12 and 3.13, with the coverage ratchet
+  - the zero-leak ruleset suite (`make test-nse`) in a network namespace
+  - integration tests in privileged Docker containers: Debian, Fedora, Arch
+  - a release rehearsal (`make packages`)
+  - plus DCO sign-off, CodeQL, dependency review, a vulnerability scan and property-based fuzzing in their own workflows
+- **Pull requests that touch the firewall, commands, DNS or watchdog code, weekly, and on demand** (`.github/workflows/lifecycle.yml`): the lifecycle transitions and the watchdog chaos sweep, in disposable VMs.
+- **Locally**: `make verify` before every push (lint, unit tests, dependency audit). See the [README](README.md#development--testing) for the other targets.
 
 ### Interpreting Results
 
@@ -151,7 +154,7 @@ In these cases, the contributor **must**:
 
 - Add new unit tests to cover the functionality.
 - Update existing tests if the expected behavior changes.
-- Manually run integration tests in a virtual machine (VM).
+- Run the suite that covers the change locally where you can (`make test-nse` for the ruleset, `scripts/vm/lifecycle/run.sh` for lifecycle behaviour); CI runs them all regardless.
 
 Pull requests will be blocked from merging if tests do not sufficiently cover the changes.
 

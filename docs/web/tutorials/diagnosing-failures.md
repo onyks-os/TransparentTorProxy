@@ -19,7 +19,7 @@ The diagnostic command collects and formats 7 critical system layers:
 3. **Torrc Configuration**: Active volatile configuration in `/run/tor/ttp/torrc`.
 4. **nftables Ruleset**: Active `inet ttp` redirection rules and chain counters.
 5. **DNS Configuration**: `/etc/resolv.conf` mount overlay and `systemd-resolved` drop-ins.
-6. **Tor Control Interface**: Connection status on control socket `/run/tor/ttp/control`.
+6. **Tor Control Interface**: Connection status on the control socket `/run/tor/ttp/control.sock`.
 7. **TTP Internal State**: Session lock content and volatile RAM file state in `/run/ttp`.
 
 ---
@@ -42,29 +42,41 @@ Log entries capture preflight check events, `nftables` rule applications, DNS mo
 
 ## 3. Resolving Port Conflicts
 
-TTP requires dedicated TCP and UDP ports for Tor TransPort (`9040`), DNSPort (`5353`), and ControlPort (`9051`).
+TTP's Tor needs two local ports: the TransPort (`9041` by default, `--transport-port`) and the DNSPort (`9054` by default, `--dns-port`). They are deliberately not Tor's usual `9040` and `5353`, so a system Tor can keep running; the control interface is a Unix socket, not a port.
 
 If another process occupies these ports, preflight checks report a port conflict:
 
 ```bash
-# Check if Tor TransPort (9040) is occupied by another process
-sudo ss -tulpn | grep 9040
+# Check if the TransPort (9041) is occupied by another process
+sudo ss -tulpn | grep 9041
 
-# Check DNS port (5353) listener
-sudo ss -tulpn | grep 5353
+# Check the DNSPort (9054) listener
+sudo ss -tulpn | grep 9054
 ```
 
-If another Tor instance or local resolver occupies these ports, stop the conflicting daemon or allow TTP to manage its dedicated `ttp-tor.service` instance.
+If another process holds one of them, stop it or pick other ports with `--transport-port` / `--dns-port`.
 
 ---
 
-## 4. Emergency State Purge (`sudo ttp purge`)
+## 4. Restoring the Network After a Crash
 
-If a session crashes abruptly or leaves stale lock files, SELinux policy modules, or invalid `/run/ttp` files, run `sudo ttp purge`:
+If a session crashed, or a lock file outlived its session, force a teardown:
 
 ```bash
-# Clean up temporary state, locks, and SELinux modules
-sudo ttp purge
+# Remove TTP's table, restore DNS and delete the lock, even with no session running
+sudo ttp stop --restore-only
 ```
 
-`sudo ttp purge` stops active sessions, flushes stale `nftables` rules, unmounts temporary `/etc/resolv.conf` overlays, removes temporary files from `/run/ttp`, and unloads SELinux policy modules.
+If `ttp` itself cannot run, the repository ships a standalone script that does the
+same with plain `nft` and `umount`:
+
+```bash
+sudo ./scripts/restore-network.sh
+```
+
+A `kill -9` or a power cut needs neither: the lock lives in `tmpfs`, and the next
+`ttp start` detects an orphaned one and recovers before starting.
+
+To remove TTP from the system entirely - stopping any session, unloading the
+SELinux module and removing its markers - use `sudo ttp uninstall`, then remove the
+package or run `scripts/uninstall.sh`.

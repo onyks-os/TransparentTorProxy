@@ -4,51 +4,52 @@ This document outlines the **realistic, near-term** development plan for Transpa
 
 ---
 
-## Current Status (v0.4.7 — shipped)
+## Current Status (v0.4.9)
 
-Delivered:
+Delivered and in use:
 
 - Volatile core, stateless nftables, DNS overlay + systemd-resolved bypass
-- Watchdog governed by a formal FSM (`transitions`), with auto-healing and emergency killswitch
+- Watchdog governed by a formal FSM (`transitions`), woken by nftables and inotify events; it restarts a failed Tor, and otherwise applies an emergency killswitch it holds until `ttp stop`
 - Split tunneling (UID/GID + cgroups v2 `ttp bypass`)
 - Tor bridges (obfs4/snowflake), BYOD mode, zero-leak teardown
 - Privilege-separated watchdog user (`ttp-watchdog` + `CAP_NET_ADMIN`)
-- NSE ruleset tests (written; wired into CI in 0.4.8), chaos monkey, multi-distro Docker integration
-- `cli.py` split into `ttp/commands/`; Debian Docker integration runs on every push and PR
-- Single quality gate: CI and `scripts/verify.sh` both delegate to `make lint` / `make test`,
-  so ruff, mypy, ShellCheck and the secret scan cannot drift apart
+- Distinct exit code (`3`) for a session that is up but whose Tor routing is unverified ([ADR 0011](docs/decisions/0011-start-exit-codes.md))
+
+What backs those claims, as of this release:
+
+| Evidence | Where it runs |
+| :------- | :------------ |
+| **Zero-leak ruleset suite.** TTP's real ruleset in a network namespace, every containment test preceded by a positive control, alongside Docker-, ufw-, firewalld- and WireGuard-shaped competing rulesets. | CI, every push and PR (`make test-nse`) |
+| **Lifecycle transitions.** Shutdown, reboot and suspend/resume onto a new network, judged from a packet capture taken outside the guest, under systemd-networkd (Debian 13) and NetworkManager (Fedora 44, SELinux enforcing). | CI, in a VM, when firewall, lifecycle, DNS or watchdog code changes, and weekly |
+| **Watchdog chaos sweep.** Every fault once, each audit paired with a canary, TCP and UDP, in three variants. | CI, in a VM, same trigger |
+| **Integration suite** on Debian, Fedora and Arch. | CI, every push and PR |
+| **Unit suite.** 921 tests, 96.7% line coverage of `ttp/`, with a ratchet. | CI, Python 3.10-3.13 |
+
+What is *not* protected, and says so: a session does not survive a reboot, and
+TTP has no start-at-boot mode ([security assessment, 4.3](docs/security-assessment.md#43-lifecycle-transitions-what-is-measured-and-what-is-not)).
 
 ---
 
-## v0.4.8 — Verification Debt (in progress)
+## Released
 
-**Goal:** Make a green test suite mean something. Every item here exists because a
-real defect survived the current suite, not because the metric looked low.
+### v0.4.9 — Audit and verification
 
-### Done
+TTP's first end-to-end security audit ([report](docs/security/audit-2026-09.md)),
+and the verification work it set off. The VM lifecycle suite, the chaos sweep in CI
+and the competing-ruleset tests found real leaks that no unit test had reached: DNS
+carried to a LAN resolver by a foreign DNAT chain, a watchdog that stopped with Tor,
+exited once its killswitch was engaged, passed a flushed table, and never received
+the nftables events it subscribed to. All are fixed, and each has the test that
+would have caught it. The field hardening of systemd-resolved planned for this
+release did not happen: no field report ever arrived to act on. It is replaced in
+v0.5.0 by something measurable.
 
-| Item | Outcome |
-| :--- | :------ |
-| **Zero-leak suite is executed** | `tests/test_nse_rules.py` had no make target, no CI job and no step in `verify.sh`, and its marker is excluded from the default run. It now has `make test-nse`, a CI job on every push, and a pre-release step. |
-| **Positive controls** | Every containment test first runs its stimulus with the ruleset flushed and requires the leak to be *observed*. "The sniffer saw nothing" can no longer be mistaken for "the firewall blocked it". |
-| **State and validation coverage** | `_ports.py` 45% → 100%, `_validation.py` 58% → 98%, `tor_install.py` 64% → 100%, `state.py` 66% → 99%, `firewall/builder.py` 79% → 100%, `ux.py` 57% → 100%. Total 80% → 86%, 295 tests → 428. |
-| **Coverage is enforceable** | `make coverage` invoked `pytest --cov` without `pytest-cov` being a dependency, so it failed outright. Fixed, and `--cov-fail-under` now ratchets it. |
-| **markdownlint (and ShellCheck) in CI** | Both were invoked only when present and had never been installed on the runner. Both are installed, the job asserts they are on PATH, and the backlog they had accumulated is fixed. |
-| **NSE pinned to `>=2.1.0,<3`** | Was `>=1.1.1`, open across a major with breaking changes. 2.1.0 is the first release whose oracle cannot report a clean result having observed nothing. |
-| **Release rehearsal in CI** | `make packages` runs on every push and asserts every artifact the release job signs actually exists, plus `twine check`. The two blockers that motivated this were invisible until tag time, when the tag already existed. |
-| **Behavioural CLI tests** | `tests/test_cli_*.py` rewritten with system-boundary mocks (`_run_nft_string`, `sys.exit`, `os.geteuid`), asserting on generated nftables rulesets, lock file contents, and CLI output. |
+### v0.4.8 — Verification debt
 
-### Remaining
-
-*None (all v0.4.8 verification debt items complete).*
-
----
-
-## v0.4.9 — systemd-resolved field hardening
-
-| Item | Description |
-| :--- | :---------- |
-| **systemd-resolved hardening** | Refine the ADR 0009 implementation based on field reports (D-Bus/NSS edge cases). Carried over from the 0.4.7 cycle: it needs real-world reports to act on, so it is scheduled where the reports will exist rather than kept open indefinitely. |
+Made a green suite mean something: the zero-leak suite wired into CI with positive
+controls, coverage made enforceable, markdownlint and ShellCheck actually installed
+on the runner, the NSE dependency pinned, a release rehearsal on every push, and
+behavioural CLI tests in place of call-count assertions.
 
 ---
 
@@ -62,6 +63,7 @@ real defect survived the current suite, not because the metric looked low.
 | **Desktop notifications** | Extend the existing `wall` + `notify-send` alerts in `ttp/watchdog/alerts.py` to proper D-Bus notifications, and cover circuit rotation as well as killswitch activation. |
 | **`ttp monitor` (TUI)** | Real-time bandwidth/circuit stats via Rich or Textual. |
 | **Supply chain & reproducibility** | The project already publishes Sigstore-signed assets, an SBOM, and a verification guide; what is missing is evidence they hold. Verify the published signatures in CI, keep the build backend pinned deliberately rather than by accident, and check that a rebuild of the same tag produces identical artifacts. |
+| **systemd-resolved drop rule, measured** | [ADR 0009](docs/decisions/0009-systemd-resolved-bypass.md)'s last layer — `meta skuid <resolved> ip daddr != 127.0.0.1 drop` — is what turns a resolved misconfiguration (a per-link DNS server, a VPN pushing `~.`) into a failed lookup instead of a leak. Today it is only checked as a string in the generated ruleset. Add an NSE test that sends a query as resolved's UID and requires it to be seen with the ruleset flushed and dropped with it loaded. |
 
 *Deferred until v0.5.0+ unless a contributor picks them up:*
 
@@ -89,15 +91,25 @@ real defect survived the current suite, not because the metric looked low.
 
 ## Explicitly Out of Scope (for now)
 
-These were removed from committed release dates because they require a larger team or change the product category:
+These are not planned: each either needs a larger team, changes the product category, or would add no protection:
 
 - Full GUI / system tray as a core deliverable
 - Cloud-native K8s sidecar as a v1.0 requirement
 - Mathematical leak proofs via eBPF (research track only)
+- A DNS configuration auditor (`ttp doctor --dns`, [#43](https://github.com/onyks-os/TransparentTorProxy/issues/43)).
+  For every process that is not bypassed, the structural guarantee already contains
+  DoH, DoT and per-application resolvers ([ADR 0012](docs/decisions/0012-doh-dot-and-browser-leaks-are-out-of-scope.md)),
+  so an auditor would add visibility, not protection, at the cost of a parser per
+  application. What it would have reported is documented instead, with the manual
+  checks: [Applications that resolve DNS on their own](docs/web/how-to/apps-with-own-dns.md).
 
 ---
 
 ## Contributing
+
+TTP has one maintainer and is looking for more: reviewers for the nftables ruleset,
+a co-maintainer, and people who run it on distributions CI does not cover. See
+[#40](https://github.com/onyks-os/TransparentTorProxy/issues/40).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Priority areas where help is most needed:
 
