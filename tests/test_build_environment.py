@@ -73,3 +73,23 @@ def test_the_pinned_backend_satisfies_the_floor_in_pyproject():
         return tuple(int(part) for part in version.split("."))
 
     assert as_tuple(pinned) >= as_tuple(floor.group(1))
+
+
+def test_the_python_distributions_are_built_in_a_digest_pinned_image():
+    """The same files compress to different bytes under a different zlib (Fedora
+    ships zlib-ng), so only a pinned image makes the wheel and sdist rebuildable
+    to the same bytes on someone else's machine."""
+    image = re.search(r'PYTHON_BUILD_IMAGE="\$\{PYTHON_BUILD_IMAGE:-([^}]+)\}"', HELPER)
+    assert image, "build_python.sh has no default build image"
+    assert re.fullmatch(r"[\w./-]+@sha256:[0-9a-f]{64}", image.group(1)), f"not pinned by digest: {image.group(1)}"
+
+
+def test_only_release_sh_writes_the_published_distributions():
+    """release.sh publishes dist/*.whl. build_deb.sh used to build its own wheel
+    into dist/ too, natively, and so replaced the one built in the pinned image
+    under the same file name: the release shipped a host-dependent wheel."""
+    deb = (REPO_ROOT / "packaging/build_deb.sh").read_text(encoding="utf-8")
+    calls = [line for line in deb.splitlines() if "build_python.sh" in line and not line.lstrip().startswith("#")]
+    assert calls, "build_deb.sh no longer builds its wheel through the helper"
+    for call in calls:
+        assert " dist" not in call, f"build_deb.sh builds into dist/: {call.strip()}"

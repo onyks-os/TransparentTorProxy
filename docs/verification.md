@@ -92,17 +92,23 @@ and compare with `SHA256SUMS.txt` from the release. What makes it work:
 
 - every timestamp is the tagged commit's (`SOURCE_DATE_EPOCH`), and the `.rpm`
   records no build host;
-- the wheel and sdist are built in a venv installed from
-  `packaging/build-requirements.txt` with `--require-hashes` - one version and
-  one digest per package, backend included;
+- the wheel and sdist are built from a copy of the sources with normalised
+  permissions, in a venv installed from `packaging/build-requirements.txt` with
+  `--require-hashes` - one version and one digest per package, backend included -
+  inside a Python image pinned by digest;
 - the `.rpm` is built in a Fedora 44 image pinned by digest.
 
-Two limits, stated plainly. The wheel, the sdist and the `.rpm` should rebuild
-identically on any machine with podman or docker. The `.deb` is compressed by the
-host's `dpkg-deb`, so it rebuilds identically only on the same distribution
-release as the release runner (Ubuntu 24.04). And the tools installed *inside*
-the pinned Fedora image are that day's packages, so a rebuild months later may
-differ in the `.rpm` for reasons that are not tampering. CI checks both ends:
+The images matter more than they seem: the same files compress to different
+bytes under a different zlib, and Fedora ships zlib-ng, so a wheel built directly
+on a Fedora host never matches one built on Debian or Ubuntu even though every
+file inside is identical. Measured: the wheel and the `.rpm` built on a Fedora 44
+workstation are byte-identical to the ones CI built on Ubuntu.
+
+Two limits, stated plainly. The `.deb` is compressed by the host's `dpkg-deb`, so
+it rebuilds identically only on the same distribution release as the release
+runner (Ubuntu 24.04). And the tools installed *inside* the pinned Fedora image
+are that day's packages, so a rebuild months later may differ in the `.rpm` for
+reasons that are not tampering. CI checks both ends:
 every change is built twice and must match (`scripts/check-reproducible.sh`), and
 every release is rebuilt from its tag on a fresh runner right after publication
 and compared with what was published (`.github/workflows/verify-release.yml`).

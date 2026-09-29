@@ -63,7 +63,8 @@ A Linux CLI tool that transparently routes all system traffic through the Tor ne
 %build
 # Build the wheel in the same hash-pinned build environment as every other
 # artifact (packaging/build_python.sh, shipped in the source tarball).
-bash packaging/build_python.sh dist --wheel
+# Native: this already runs inside the digest-pinned Fedora image.
+TTP_PY_NATIVE=1 bash packaging/build_python.sh dist --wheel
 
 # Compile SELinux policy
 cd ttp/resources/selinux
