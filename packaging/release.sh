@@ -58,7 +58,8 @@ BUILD_TMP="$(pwd)/.build_tmp"
 rm -rf dist/ build/ "$BUILD_TMP"
 mkdir -p "$BUILD_TMP"
 
-TMPDIR="$BUILD_TMP" python3 -m build > /dev/null
+# The build environment is pinned by hash (packaging/build-constraints.txt).
+PIP_CONSTRAINT="$(pwd)/packaging/build-constraints.txt" TMPDIR="$BUILD_TMP" python3 -m build > /dev/null
 python3 -m twine check dist/*
 
 rm -rf "$BUILD_TMP"

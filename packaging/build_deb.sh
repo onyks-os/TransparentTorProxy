@@ -69,7 +69,8 @@ mkdir -p "$BUILD_DIR/DEBIAN"
 
 # Build the Python project into a standard format called a 'wheel' (.whl).
 # This bundles all our Python source code into an archive in the 'dist/' folder.
-python3 -m build --wheel >/dev/null
+# Same hash-pinned build environment as the release (packaging/build-constraints.txt).
+PIP_CONSTRAINT="$(pwd)/packaging/build-constraints.txt" python3 -m build --wheel >/dev/null
 
 # Find the newly created wheel file.
 # Note: Hatchling replaces dashes with underscores in the filename.

@@ -1,6 +1,8 @@
 [build-system]
-# Floor only. hatchling >=1.32 emits "Metadata-Version: 2.5", which needs twine
-# >=7.0.0 to validate - see the twine floor in the dev extra below.
+# A floor, deliberately: downstream packagers build with their own hatchling.
+# TTP's own artifacts are built with the exact, hash-pinned environment in
+# packaging/build-constraints.txt. hatchling >=1.32 emits "Metadata-Version:
+# 2.5", which needs twine >=7.0.0 to validate - see the dev extra below.
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
