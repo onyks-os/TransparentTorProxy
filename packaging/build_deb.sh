@@ -124,7 +124,7 @@ Section: net
 Priority: optional
 Homepage: https://github.com/onyks-os/TransparentTorProxy
 License: MIT
-Depends: python3, python3-typer, python3-rich, python3-stem, nftables, tor
+Depends: python3, python3-typer, python3-rich (>= 13.7.1), python3-stem, python3-transitions (>= 0.9.0), nftables, tor
 Description: Transparent Tor Proxy
  A Linux CLI tool that transparently routes all system traffic through the Tor network.
 EOF

@@ -81,9 +81,8 @@ Two things to know before upgrading:
   changed table or DNS overlay goes straight to the killswitch. Those pages, the
   README, `docs/architecture.md`, `docs/interfaces.md`, `DEPENDENCIES.md` (which
   still listed the NSE floor as `>=1.1.1`) and CONTRIBUTING now match the code;
-  ADR 0003 carries an amendment, the ADR index no longer links to a local
-  `file:///` path, and the dependency reference states that the native packages
-  do not declare `transitions`. `ROADMAP.md` is brought up to date: v0.5.0 gains
+  ADR 0003 carries an amendment, and the ADR index no longer links to a local
+  `file:///` path. `ROADMAP.md` is brought up to date: v0.5.0 gains
   an NSE test for the systemd-resolved drop rule in place of the unscheduled
   "field hardening" item, and the `ttp doctor --dns` auditor proposed in #43 is
   declined in favour of a new how-to page, *Applications that resolve DNS on
@@ -166,6 +165,17 @@ Two things to know before upgrading:
   [ADR 0011](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/decisions/0011-start-exit-codes.md).
 
 ### Added
+
+- **Every native package is installed before a release is signed.**
+  `packaging/smoke_test.sh` installs the .deb on Debian 13 and Ubuntu 24.04 and
+  the .rpm on Fedora 44, builds and installs the PKGBUILD on Arch, each in a clean
+  container, and checks that the CLI runs, the watchdog can be built and teardown
+  imports. It runs in the release-rehearsal job on every push, and the release job
+  runs it before signing. Until now no job had ever installed a package, which is
+  how the three defects above shipped. A new CI job, *Unit Tests (oldest supported
+  dependencies)*, runs the suite against `packaging/oldest-supported.txt`, and
+  `tests/test_packaging_dependencies.py` fails if a runtime dependency is added to
+  `pyproject.toml` and not to all three packages.
 
 - **Shutdown ordering is measured under NetworkManager too**
   ([#85](https://github.com/onyks-os/TransparentTorProxy/issues/85)). The
@@ -400,6 +410,35 @@ Two things to know before upgrading:
   nothing to report it.
 
 ### Fixed
+
+- **`ttp stop` works on a host without `transitions`, and every native package
+  now provides it.** The watchdog's state-machine library was never declared by
+  the .deb, the .rpm or the PKGBUILD, and `ttp stop` imported the watchdog package
+  - which imported it at module level - outside any `try`. On such a host `ttp
+  stop` raised before tearing anything down (the host stayed fail-closed, not in
+  cleartext, but could not be restored with TTP). `transitions` is now imported
+  only when the state machine is built; teardown no longer depends on the
+  watchdog package importing at all; and `start --watchdog` and `ttp watchdog
+  start` refuse, before anything is changed, when the watchdog could not run. The
+  .deb depends on `python3-transitions`; the .rpm and the PKGBUILD bundle a
+  SHA-256-pinned copy in `/usr/lib/transparent-tor-proxy/vendor`, used only when
+  the system has none, because Fedora does not package it and Arch has it only in
+  the AUR.
+- **The .rpm can be installed on Fedora again.** It was built on the release
+  runner's Ubuntu, so it required `python(abi) = 3.12` and installed into
+  `/usr/lib/python3.12/site-packages`, which no supported Fedora has; its
+  generated dependencies also asked for `rich >= 15` and a `transitions` that no
+  Fedora provides. `dnf` refused it outright. It is now built inside a Fedora 44
+  container, and its Python requirements are ones Fedora can meet.
+- **The PKGBUILD builds.** It listed the checkout as `local-source::..`, which
+  makepkg rejects before doing anything ("local-source was not found in the build
+  directory"), and it omitted `python-hatchling`, the build backend. It now
+  builds the checkout it sits in, as the README has always said it did.
+- **Dependency floors are the versions the suite is run against.** They had been
+  raised to the newest releases without a reason (`rich>=15`, `typer>=0.9.0`
+  untested); they are now what Ubuntu 24.04 ships (`typer>=0.9.0`, `stem>=1.8.2`,
+  `rich>=13.7.1`, `transitions>=0.9.0`), pinned in
+  `packaging/oldest-supported.txt`.
 
 - **The watchdog now actually receives nftables events**
   ([#81](https://github.com/onyks-os/TransparentTorProxy/issues/81)). It joined

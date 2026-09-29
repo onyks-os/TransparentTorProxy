@@ -8,7 +8,7 @@ This tutorial guides you through installing TTP and running your first transpare
 
 Before starting, ensure your system meets these prerequisites:
 
-* **Operating System**: Linux with `systemd` (Debian 12+, Ubuntu 22.04+, Fedora 40+, Arch Linux)
+* **Operating System**: Linux with `systemd`. Native packages are built and tested for Debian 13, Ubuntu 24.04, Fedora 44 and Arch Linux; elsewhere, install with `pipx`.
 * **Runtime**: Python 3.10 or higher
 * **Firewall Engine**: `nftables`
 * **Privileges**: Root access (`sudo`)
@@ -17,19 +17,23 @@ Before starting, ensure your system meets these prerequisites:
 
 ## 2. Installation Options
 
-=== "Debian / Ubuntu (.deb)"
+Download the `.deb` or `.rpm` from the
+[latest release](https://github.com/onyks-os/TransparentTorProxy/releases/latest),
+then install it:
+
+=== "Debian 13 / Ubuntu 24.04 (.deb)"
 
     ```bash
-    sudo apt install ./packaging/transparent-tor-proxy_*_all.deb
+    sudo apt install ./transparent-tor-proxy_*_all.deb
     ```
 
-=== "Fedora / RHEL (.rpm)"
+=== "Fedora 44 (.rpm)"
 
     ```bash
-    sudo dnf install ./packaging/transparent-tor-proxy-*.noarch.rpm
+    sudo dnf install ./transparent-tor-proxy-*.fc44.noarch.rpm
     ```
 
-=== "Arch Linux"
+=== "Arch Linux (from the repository)"
 
     ```bash
     cd packaging && makepkg -si

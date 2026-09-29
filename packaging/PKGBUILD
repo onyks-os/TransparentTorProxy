@@ -45,38 +45,49 @@ license=('MIT')
 
 # Runtime dependencies. Pacman will ensure these are installed before TTP runs.
 # Notice how Arch package names differ slightly from Debian (e.g., 'python-typer' instead of 'python3-typer').
-depends=('python' 'python-typer' 'python-rich' 'python-stem' 'nftables' 'tor')
+# python-six is for the bundled transitions below.
+depends=('python' 'python-typer' 'python-rich' 'python-stem' 'python-six' 'nftables' 'tor')
 
 # Build dependencies. These are only needed temporarily while creating the package.
-makedepends=('python-build' 'python-installer' 'python-wheel')
+# python-hatchling is the build backend; with --no-isolation it must be installed.
+makedepends=('python-build' 'python-installer' 'python-wheel' 'python-hatchling')
 
-# Where to get the source code. 
-# In a real Arch User Repository (AUR) package, this would be a GitHub release URL.
-# Since this is a local build script, it points to the local directory (.).
-source=("local-source::..")
+# Where to get the source code. TTP itself is not a source entry: this PKGBUILD
+# lives in the repository and builds the checkout it sits in, "$startdir/..".
+# It used to list that directory as "local-source::..", which makepkg rejects
+# ("local-source was not found in the build directory"), so the documented
+# `cd packaging && makepkg -si` could not build anything.
+#
+# Arch has `transitions` only in the AUR, so it is bundled into a private
+# directory that ttp falls back to (ttp/watchdog/fsm.py, VENDOR_DIR). Same
+# version and digest as packaging/bundled-transitions.env.
+_transitions_whl=transitions-0.9.3-py2.py3-none-any.whl
+source=("https://files.pythonhosted.org/packages/f4/05/fea3020e90aa378941ff10de8860fb3b1288313c27efd10fa0c476498f7e/${_transitions_whl}")
+noextract=("${_transitions_whl}")
 
-# Checksums to verify source file integrity. 'SKIP' is used for local sources since they change during development.
-md5sums=('SKIP')
+# Checksums to verify source file integrity.
+sha256sums=('02463248f2b668d86f66636b1e3c9e8de84d93e22915247f4e1aa9ee1cae28aa')
 
 # The build() function is run first. Its job is to compile the code.
 build() {
-    # Move into the source directory.
-    cd "$srcdir/local-source"
-    
-    # Use standard Python tools to build a 'wheel' (.whl) package.
+    # Move into the repository checkout this PKGBUILD belongs to.
+    cd "$startdir/.."
+
+    # Use standard Python tools to build a 'wheel' (.whl) package, into $srcdir
+    # so that nothing is written to the checkout.
     # --no-isolation tells it to use the system's python-build dependencies (listed in makedepends)
     # rather than downloading them in a temporary virtual environment.
-    python -m build --wheel --no-isolation
+    python -m build --wheel --no-isolation --outdir "$srcdir/dist"
 }
 
 # The package() function is run next. Its job is to take the compiled files 
 # and place them into a fake root directory ($pkgdir) exactly as they should appear on the real system.
 package() {
-    cd "$srcdir/local-source"
-    
+    cd "$startdir/.."
+
     # Use python-installer to extract the wheel built in the previous step
     # and place its contents (the Python code and the 'ttp' executable command) into $pkgdir.
-    python -m installer --destdir="$pkgdir" dist/*.whl
+    python -m installer --destdir="$pkgdir" "$srcdir"/dist/*.whl
     
     # Install systemd service
     # install -D creates necessary parent directories. -m644 sets permissions (read/write for owner, read for others).
@@ -89,6 +100,10 @@ package() {
     # Install Polkit rules
     install -Dm644 ttp/resources/polkit/50-ttp-watchdog.rules "$pkgdir/usr/share/polkit-1/rules.d/50-ttp-watchdog.rules"
     
+    # The bundled transitions, where ttp falls back to it.
+    install -d "$pkgdir/usr/lib/transparent-tor-proxy/vendor"
+    bsdtar -xf "$srcdir/${_transitions_whl}" -C "$pkgdir/usr/lib/transparent-tor-proxy/vendor"
+
     # Install the license file (required by Arch Linux standards for MIT).
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

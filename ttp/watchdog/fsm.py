@@ -5,13 +5,14 @@
 
 import ctypes
 import ctypes.util
+import importlib
 import logging
 import os
 import socket
+import sys
 import time
+from pathlib import Path
 from typing import Any
-
-from transitions import Machine
 
 from ttp.watchdog.alerts import trigger_emergency_killswitch
 from ttp.watchdog.integrity import (
@@ -35,6 +36,55 @@ IN_DONT_FOLLOW = 0x02000000
 WATCH_MASK = IN_CLOSE_WRITE | IN_ATTRIB | IN_DELETE_SELF | IN_MOVE_SELF
 
 
+#: Where the .rpm and the PKGBUILD bundle `transitions` for distributions that do
+#: not ship it (Fedora, Arch). A private directory rather than site-packages, so
+#: the bundle can never collide with a copy the distribution or the administrator
+#: installs later; and a fallback, so such a copy always wins. Root-owned, and
+#: appended to sys.path rather than prepended, so it can shadow nothing.
+VENDOR_DIR = Path("/usr/lib/transparent-tor-proxy/vendor")
+
+#: What to tell an operator whose host has no `transitions` at all.
+INSTALL_HINT = (
+    "The watchdog needs the Python package 'transitions'. Install python3-transitions "
+    "(Debian/Ubuntu), or run: pip install transitions"
+)
+
+
+class WatchdogUnavailableError(ImportError):
+    """The watchdog cannot run on this host: `transitions` is not installed."""
+
+
+def load_machine() -> Any:
+    """Return `transitions.Machine`, from the system if it has one, else the bundle.
+
+    Imported here rather than at module level so that everything else in the
+    watchdog package - and so `ttp stop`, which imports it - works on a host
+    without `transitions`. Only running the state machine needs it.
+    """
+    try:
+        from transitions import Machine
+    except ImportError:
+        if not (VENDOR_DIR / "transitions").is_dir():
+            raise WatchdogUnavailableError(INSTALL_HINT) from None
+        if str(VENDOR_DIR) not in sys.path:
+            sys.path.append(str(VENDOR_DIR))
+        importlib.invalidate_caches()
+        try:
+            from transitions import Machine
+        except ImportError as e:
+            raise WatchdogUnavailableError(f"{INSTALL_HINT} (bundled copy unusable: {e})") from e
+    return Machine
+
+
+def watchdog_dependency_available() -> bool:
+    """True if the watchdog's state machine could be built on this host."""
+    try:
+        load_machine()
+    except WatchdogUnavailableError:
+        return False
+    return True
+
+
 class WatchdogFSM:
     """Watchdog Finite State Machine managing transitions, sockets, and recovery logic."""
 
@@ -53,6 +103,7 @@ class WatchdogFSM:
         self._libc: Any = None
 
         # Initialize Transitions Machine
+        Machine = load_machine()
         self.machine = Machine(
             model=self,
             states=WatchdogFSM.states,

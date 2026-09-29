@@ -10,6 +10,7 @@ from ttp import dns, firewall, state, tor_install
 from ttp.commands._common import (
     _PREFIX,
     console,
+    logger,
     require_systemd,
 )
 from ttp.commands._common import (
@@ -32,13 +33,14 @@ def stop_command(
     if restore_only:
         console.print(f"{_PREFIX} Forcing network restoration (restore-only)...")
 
-        # Stop watchdog first
-        from ttp import watchdog as wd
-
+        # Stop watchdog first. The import is inside the try: restoration must not
+        # depend on the watchdog package importing (see do_stop).
         try:
+            from ttp import watchdog as wd
+
             wd.stop_watchdog()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Could not stop the watchdog, continuing restoration: %s", e)
 
         # Graceful shutdown even in restore-only mode
         from ttp import tor_control

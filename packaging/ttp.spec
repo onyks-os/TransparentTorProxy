@@ -28,6 +28,11 @@ Summary:        Transparent Tor Proxy
 License:        MIT
 URL:            https://github.com/onyks-os/TransparentTorProxy
 Source0:        %{name}-%{version}.tar.gz
+# Fedora does not package `transitions`, which the watchdog needs. It is bundled
+# into a private directory (see ttp/watchdog/fsm.py, VENDOR_DIR) rather than
+# site-packages, so it cannot collide with a copy installed later, and a system
+# copy always wins. build_rpm.sh fetches it and checks its pinned digest.
+Source1:        @@TRANSITIONS_WHEEL@@
 
 BuildArch:      noarch
 BuildRequires:  python3-devel
@@ -41,6 +46,13 @@ Requires:       python3-stem
 Requires:       nftables
 Requires:       tor
 Requires:       policycoreutils
+Requires:       python3-six
+Provides:       bundled(python3dist(transitions)) = @@TRANSITIONS_VERSION@@
+
+# The dependency generator reads ttp's metadata and would require
+# python3dist(transitions), which no Fedora package provides: the rpm was
+# uninstallable. The bundle above satisfies it instead.
+%global __requires_exclude ^python3(\\.[0-9]+)?dist\\(transitions\\)
 
 %description
 A Linux CLI tool that transparently routes all system traffic through the Tor network.
@@ -62,6 +74,10 @@ cd -
 # Unpack the wheel directly into the Python site-packages directory
 mkdir -p %{buildroot}%{python3_sitelib}
 unzip -q dist/*.whl -d %{buildroot}%{python3_sitelib}/
+
+# The bundled transitions (Source1), into the directory ttp falls back to
+mkdir -p %{buildroot}/usr/lib/transparent-tor-proxy/vendor
+unzip -q %{SOURCE1} -d %{buildroot}/usr/lib/transparent-tor-proxy/vendor/
 
 # Create the main executable script for the CLI
 mkdir -p %{buildroot}%{_bindir}
@@ -125,6 +141,7 @@ fi
 %{_bindir}/ttp
 %{python3_sitelib}/ttp/
 %{python3_sitelib}/transparent_tor_proxy-*.dist-info/
+/usr/lib/transparent-tor-proxy/
 %{_unitdir}/ttp.service
 %{_datadir}/polkit-1/rules.d/50-ttp-watchdog.rules
 %dir /opt/ttp

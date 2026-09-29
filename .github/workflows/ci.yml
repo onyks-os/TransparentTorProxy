@@ -81,6 +81,33 @@ jobs:
         if: matrix.python-version == '3.12'
         run: make coverage
 
+  # The floors in pyproject.toml are the versions Ubuntu 24.04 ships, and the
+  # native packages run on whatever the distribution has. The job above always
+  # installs the newest releases, so without this one a floor is a claim nobody
+  # has tested: rich>=15 went in that way, and made the .rpm uninstallable.
+  unit-tests-oldest:
+    name: Unit Tests (oldest supported dependencies)
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install the oldest supported runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r packaging/oldest-supported.txt pytest hypothesis
+          pip install --no-deps -e .
+          pip list
+
+      - name: Run unit tests
+        run: python -m pytest -q
+
   # Three distributions, because TTP branches on which one it is running on and
   # only one of those branches was ever executed. `is_fedora_family()` changes
   # the Tor account it looks for (debian-tor / toranon / tor), the service name,
@@ -223,3 +250,19 @@ jobs:
         run: |
           pip install --upgrade twine
           twine check packaging/*.whl packaging/*.tar.gz
+
+      # Building a package proves nothing about installing it. These install
+      # each one in a clean container of the distribution it targets and check
+      # that the CLI runs, the watchdog can be built and teardown imports - the
+      # three things the 0.4.8 packages got wrong between them.
+      - name: Install the .deb on Debian 13
+        run: packaging/smoke_test.sh packaging/*.deb docker.io/library/debian:13
+
+      - name: Install the .deb on Ubuntu 24.04
+        run: packaging/smoke_test.sh packaging/*.deb docker.io/library/ubuntu:24.04
+
+      - name: Install the .rpm on Fedora 44
+        run: packaging/smoke_test.sh packaging/*.rpm registry.fedoraproject.org/fedora:44
+
+      - name: Build and install the PKGBUILD on Arch
+        run: packaging/smoke_test.sh arch
