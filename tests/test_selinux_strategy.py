@@ -550,7 +550,7 @@ def test_the_shipped_version_is_read_from_the_policy_source():
     """The `.te` file is the single place the policy revision is declared."""
     from ttp.selinux import shipped_policy_version
 
-    assert shipped_policy_version() == "1.2"
+    assert shipped_policy_version() == "1.3"
 
 
 def test_a_host_carrying_the_version_we_ship_is_current():
@@ -648,7 +648,7 @@ def test_installing_the_module_records_the_version_it_installed(tmp_path):
         mock_tempdir.return_value.__enter__.return_value = str(tmp_path / "build")
         selinux.setup_selinux_if_needed()
 
-    assert stamp.read_text(encoding="utf-8").strip() == "1.2"
+    assert stamp.read_text(encoding="utf-8").strip() == selinux.shipped_policy_version()
 
 
 def test_a_failed_install_records_nothing(tmp_path):

@@ -53,6 +53,38 @@ def _write_watchdog_service_unit() -> None:
             ]
         )
 
+    # The sandbox, from what the watchdog was measured to use: netlink (its
+    # nftables subscription and nft itself) and UNIX sockets (systemctl, Tor's
+    # control socket, the journal); reads of /run/ttp, /etc/resolv.conf and
+    # /proc; writes only to its own directory. ProtectHome is read-only rather
+    # than off-limits because a pipx install puts sys.executable under a home
+    # directory. No PrivateDevices: wall needs the terminals under /dev/pts.
+    service_lines.extend(
+        [
+            "ProtectSystem=strict",
+            # '-': the directory exists only when the ttp-watchdog account does
+            # (state.ensure_runtime_dir). Without the prefix a pip install, where
+            # the watchdog runs as root and has no such directory, failed with
+            # 226/NAMESPACE and the watchdog never ran - which the chaos sweep
+            # caught as a leak.
+            "ReadWritePaths=-/run/ttp/watchdog",
+            "ProtectHome=read-only",
+            "PrivateTmp=yes",
+            "ProtectKernelTunables=yes",
+            "ProtectKernelModules=yes",
+            "ProtectKernelLogs=yes",
+            "ProtectControlGroups=yes",
+            "ProtectClock=yes",
+            "ProtectHostname=yes",
+            "RestrictAddressFamilies=AF_UNIX AF_NETLINK",
+            "RestrictNamespaces=yes",
+            "RestrictRealtime=yes",
+            "RestrictSUIDSGID=yes",
+            "LockPersonality=yes",
+            "SystemCallArchitectures=native",
+        ]
+    )
+
     service_str = "\n".join(service_lines)
 
     unit = f"""\

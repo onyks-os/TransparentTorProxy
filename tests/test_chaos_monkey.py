@@ -409,6 +409,7 @@ def test_a_session_starts_with_the_positive_control_its_variant_needs(bypass: bo
         patch("tests.chaos_monkey.run_connectivity_audit", side_effect=audit),
         patch("tests.chaos_monkey.run_udp_audit", side_effect=audit),
         patch("tests.chaos_monkey.subprocess.run", side_effect=run),
+        patch("tests.chaos_monkey.watchdog_stays_active", return_value=True),
     ):
         assert start_session(_REAL_IP, ("192.0.2.10", "192.0.2.20"), bypass=bypass) is AuditResult.LEAK
     # each audit event is now a TCP and a UDP audit for the same user
@@ -424,6 +425,43 @@ def test_a_session_that_does_not_start_is_an_error_not_a_trial() -> None:
         pytest.raises(RuntimeError, match="boom"),
     ):
         start_session(_REAL_IP, ("192.0.2.10", "192.0.2.20"), bypass=True)
+
+
+def test_a_sweep_refuses_to_run_without_the_watchdog() -> None:
+    """With a watchdog that never started, the first fault only it can contain
+    was reported as a leak: true, but it hid the actual defect."""
+    with (
+        patch("tests.chaos_monkey.run_connectivity_audit", return_value=AuditResult.LEAK),
+        patch("tests.chaos_monkey.run_udp_audit", return_value=AuditResult.LEAK),
+        patch("tests.chaos_monkey.subprocess.run", return_value=MagicMock(returncode=0, stderr="")),
+        patch("tests.chaos_monkey.watchdog_stays_active", return_value=False),
+        pytest.raises(RuntimeError, match=r"ttp-watchdog\.service is not running"),
+    ):
+        start_session(_REAL_IP, ("192.0.2.10", "192.0.2.20"), bypass=True)
+
+
+@pytest.mark.parametrize(
+    ("states", "expected"),
+    [
+        (["active"] * 6, True),
+        (["activating", "failed", "activating", "failed"] * 5, False),
+        (["active", "failed"] * 10, False),  # up between restarts is not up
+    ],
+)
+def test_the_watchdog_counts_as_running_only_if_it_stays_up(states, expected) -> None:
+    from tests.chaos_monkey import watchdog_stays_active
+
+    clock = iter(range(1000))
+    answers = iter(states)
+    with (
+        patch("tests.chaos_monkey.time.monotonic", side_effect=lambda: next(clock)),
+        patch("tests.chaos_monkey.time.sleep"),
+        patch(
+            "tests.chaos_monkey.subprocess.run",
+            side_effect=lambda *a, **k: MagicMock(stdout=next(answers, "failed")),
+        ),
+    ):
+        assert watchdog_stays_active(timeout=len(states)) is expected
 
 
 _FILTER_OUT = """table inet ttp {

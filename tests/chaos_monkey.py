@@ -169,6 +169,31 @@ def judge_pass_without_canary(containment: AuditResult, control: AuditResult) ->
     return AuditResult.INCONCLUSIVE, "before the session the audit did not see this host, so it could not show a leak"
 
 
+def watchdog_stays_active(timeout: float = 20.0) -> bool:
+    """True once ttp-watchdog.service is active, and still active 3 s later.
+
+    `ttp start --watchdog` only prints an error when the watchdog fails, and a
+    unit that dies at once (226/NAMESPACE, when its sandbox could not be built)
+    shows "activating" or even "active" between restarts. Without this check
+    the sweep ran with no watchdog at all and reported the first fault only
+    the watchdog can contain as a leak - true, but not the defect.
+    """
+    deadline = time.monotonic() + timeout
+    confirmed_at: float | None = None
+    while time.monotonic() < deadline:
+        state = subprocess.run(
+            ["systemctl", "is-active", "ttp-watchdog"], capture_output=True, text=True
+        ).stdout.strip()
+        if state != "active":
+            confirmed_at = None
+        elif confirmed_at is None:
+            confirmed_at = time.monotonic()
+        elif time.monotonic() - confirmed_at >= 3:
+            return True
+        time.sleep(1)
+    return False
+
+
 def start_session(real_ip: str, targets: tuple[str, str], bypass: bool) -> AuditResult:
     """Start a session and return the positive control its audits are judged against.
 
@@ -183,6 +208,11 @@ def start_session(real_ip: str, targets: tuple[str, str], bypass: bool) -> Audit
     res = subprocess.run(ttp_start_command(bypass), capture_output=True, text=True)
     if res.returncode != 0:
         raise RuntimeError(f"ttp start failed ({res.returncode}): {res.stderr.strip()}")
+    if not watchdog_stays_active():
+        raise RuntimeError(
+            "ttp-watchdog.service is not running after `ttp start --watchdog`; "
+            "a sweep without it would measure the ruleset alone"
+        )
     if bypass:
         control = all_leaked(*audit_both(real_ip, CANARY_USER, targets, "canary"))
     return control
