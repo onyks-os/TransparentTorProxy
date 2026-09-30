@@ -230,4 +230,4 @@ TTP contacts the following external URLs exclusively for session verification an
 
 `ttp check-leak` also runs `dig` against `check.torproject.org` and `whoami.ipv4.akahelp.net` when `dig` is installed; those go through the system resolver, and therefore through Tor.
 
-While a session is active, these requests go through Tor like any other traffic, which is what makes them a check. `ttp status` is the exception: it queries `api.ipify.org` whether or not a session is running, so without a session that request is in cleartext and shows your real IP.
+While a session is active, these requests go through Tor like any other traffic, which is what makes them a check. When `ttp` runs as root, the requests are made by a child process running as `nobody`, so the root process never parses what these services send back. `ttp status` is the exception: it queries `api.ipify.org` whether or not a session is running, so without a session that request is in cleartext and shows your real IP.

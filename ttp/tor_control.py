@@ -22,7 +22,10 @@ import ipaddress
 import json
 import logging
 import os
+import pwd
 import re
+import subprocess
+import sys
 import time
 import urllib.request  # noqa: F401
 from collections.abc import Callable
@@ -55,14 +58,8 @@ except ImportError:
 _TTP_CONTROL_SOCKET = "/run/tor/ttp/control.sock"
 
 
-def _fetch_endpoint(url: str) -> dict | None:
-    """Fetch a JSON payload from *url*, returning the parsed dict or ``None``.
-
-    Uses stdlib ``urllib.request`` to avoid adding a ``requests`` dependency.
-    Returns ``None`` on any network, timeout, or parse error, and also when
-    the endpoint answers with valid JSON that is not an object (these are
-    third-party services: the payload shape cannot be assumed).
-    """
+def _fetch_in_process(url: str) -> dict | None:
+    """Fetch and parse *url* in this process. See :func:`_fetch_endpoint`."""
     import urllib.error
 
     try:
@@ -78,6 +75,81 @@ def _fetch_endpoint(url: str) -> dict | None:
         UnicodeDecodeError,
     ):
         return None
+
+
+#: Largest answer accepted from the probe child: four short fields.
+_MAX_PROBE_OUTPUT = 4096
+
+
+def _fetch_as_nobody(url: str) -> dict | None:
+    """Run :mod:`ttp.netprobe` as ``nobody`` and validate what it hands back.
+
+    Raises ``OSError`` if the child could not run at all, so the caller can
+    fall back; a child that ran and found nothing usable returns ``None``.
+    """
+    try:
+        entry = pwd.getpwnam("nobody")
+        uid, gid = entry.pw_uid, entry.pw_gid
+    except KeyError:
+        uid, gid = 65534, 65534
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-I", "-m", "ttp.netprobe", url],
+            user=uid,
+            group=gid,
+            extra_groups=[],
+            capture_output=True,
+            text=True,
+            timeout=25,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if proc.returncode != 0:
+        raise OSError(proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else f"exit {proc.returncode}")
+    if len(proc.stdout) > _MAX_PROBE_OUTPUT:
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    checked: dict = {}
+    for key in ("IP", "ip", "ip_addr"):
+        value = data.get(key)
+        if isinstance(value, str) and len(value) <= 64:
+            checked[key] = value
+    if isinstance(data.get("IsTor"), bool):
+        checked["IsTor"] = data["IsTor"]
+    return checked
+
+
+def _fetch_endpoint(url: str) -> dict | None:
+    """Fetch a JSON payload from *url*, returning the parsed dict or ``None``.
+
+    Uses stdlib ``urllib.request`` to avoid adding a ``requests`` dependency.
+    Returns ``None`` on any network, timeout, or parse error, and also when
+    the endpoint answers with valid JSON that is not an object (these are
+    third-party services: the payload shape cannot be assumed).
+
+    As root, the fetch runs in a child as ``nobody`` (:mod:`ttp.netprobe`):
+    TLS, HTTP and JSON from a third party are kept out of the root process,
+    and only four bounded fields come back. ``nobody`` rather than the invoking
+    user because it is never in a bypass list, so the probe goes through Tor.
+    If the child cannot run - an install under a home directory ``nobody``
+    cannot read - the fetch falls back to this process and logs why.
+    """
+    if os.geteuid() != 0:
+        return _fetch_in_process(url)
+    try:
+        return _fetch_as_nobody(url)
+    except OSError as e:
+        logger.warning(
+            "Could not run the network check unprivileged (%s); running it as root instead.",
+            e,
+        )
+        return _fetch_in_process(url)
 
 
 def _canonical_ip(value: object) -> str | None:
