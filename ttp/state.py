@@ -129,10 +129,10 @@ def check_tmpfs_space(min_bytes: int = MIN_TMPFS_BYTES) -> None:
                 f"minimum {min_mb:.1f}MB required. "
                 f"Free space before starting TTP."
             )
-    except OSError as e:
-        if isinstance(e, StateError):
-            raise
-        # Cannot stat /run - non-fatal, proceed with best effort
+    except OSError:
+        # Cannot stat /run - non-fatal, proceed with best effort. (StateError is
+        # not an OSError, so the error raised above is never caught here.)
+        pass
 
 
 def write_lock(
