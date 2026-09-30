@@ -1,11 +1,13 @@
-module ttp_tor_policy 1.2;
+module ttp_tor_policy 1.3;
 
 require {
+	type init_t;
 	type tor_t;
 	type tor_port_t;
 	type unreserved_port_t;
 	class tcp_socket name_bind;
 	class udp_socket name_bind;
+	class process2 nnp_transition;
 }
 
 #============= tor_t ==============
@@ -19,3 +21,13 @@ allow tor_t unreserved_port_t:udp_socket name_bind;
 # config, and the control socket that "ttp start" waits on never appears.
 allow tor_t tor_port_t:tcp_socket name_bind;
 allow tor_t tor_port_t:udp_socket name_bind;
+
+#============= init_t ==============
+# ttp-tor.service runs Tor with NoNewPrivileges=yes, and SELinux refuses a
+# domain transition under no_new_privs unless it is allowed explicitly. Without
+# this, systemd starts Tor in init_t instead of tor_t, and init_t may not create
+# Tor's lock file in its tor_var_lib_t DataDirectory: Tor exits with "Couldn't
+# open .../lock for locking: Permission denied". Fedora's own tor.service does
+# not set NoNewPrivileges, so the base policy has no such rule for it.
+allow init_t tor_t:process2 nnp_transition;
+

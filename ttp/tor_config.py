@@ -173,8 +173,8 @@ def _build_torrc_content(
                 raise ValueError("Bridge value contains a line separator; refusing to write torrc")
             lines.append(f"Bridge {b}")
 
-    if tor_user != "root":
-        lines.append(f"User {tor_user}")
+    # No `User` directive: ttp-tor.service starts Tor as its account directly
+    # (User= in the unit), so there is no root process for Tor to drop from.
 
     return "\n".join(lines) + "\n"
 

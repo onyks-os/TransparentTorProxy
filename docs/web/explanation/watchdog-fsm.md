@@ -121,10 +121,12 @@ table inet ttp {
 ```
 
 Everything is dropped in every direction except loopback. The watchdog then
-announces it with `wall`, which reaches open terminals. It also calls `notify-send`,
-but the watchdog is a system service with no access to any user's session bus,
-so no desktop notification appears: check `journalctl -u ttp-watchdog`. Desktop
-notifications that actually arrive are planned for v0.5.0.
+tries to announce it with `wall` and `notify-send`. Neither reaches anyone when the
+watchdog runs as its own account, as it does in every package: terminals are
+writable only by their owner and the `tty` group, which `ttp-watchdog` is not in,
+and a system service has no user's session bus. The killswitch itself does not
+depend on either - check `journalctl -u ttp-watchdog`. Announcements that arrive
+are planned for v0.5.0.
 
 The killswitch is **held**, not fired and forgotten. Every 2 seconds the watchdog
 compares the table with the listing it took right after applying it, and
