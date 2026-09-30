@@ -12,6 +12,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`--bridge-file` no longer lets `sudo ttp` read files its caller cannot**
+  ([GHSA-wc5v-93m5-3vc6](https://github.com/onyks-os/TransparentTorProxy/security/advisories/GHSA-wc5v-93m5-3vc6),
+  0.4.5-0.4.10). `ttp start` runs as root and opened the file as root. A rejected
+  line was printed verbatim in the error, and any line whose first token merely
+  contained `:` - every line of `/etc/shadow` - was accepted as a bridge and
+  written into the torrc. Where sudo is granted for `ttp` alone, that read
+  root-only files. Under sudo or pkexec the file is now read by a child running
+  as the caller, with the caller's groups, so the kernel applies the caller's
+  permissions and root never opens the path; a bridge address must be an IP and
+  a port, as Tor requires; and errors name the line number, never its content.
+  Verified in a container: as root with `SUDO_UID` set, a root-only file is
+  refused (`Permission denied`) and the caller's own file is read.
+
 ### Changed
 
 - **Untrusted network input is handled by an unprivileged process.** `ttp start`

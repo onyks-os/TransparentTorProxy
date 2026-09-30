@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import grp
+import os
 import pwd
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +27,11 @@ from ttp.commands._common import (
     validate_bridge_line as _validate_bridge_line,
 )
 from ttp.exceptions import TorError
+from ttp.paths import resolve
+
+#: Largest bridge file read. A real one is a few lines; this bounds what a
+#: caller can make root buffer.
+_MAX_BRIDGE_FILE_BYTES = 1 << 20
 
 
 def _parse_bypass_users_groups(
@@ -71,6 +78,76 @@ def _parse_bypass_users_groups(
     return users, groups, bypass_uids, bypass_gids
 
 
+def _invoking_identity() -> tuple[int, int, str] | None:
+    """The unprivileged caller behind this root process, if there is one.
+
+    sudo sets SUDO_UID/SUDO_GID and pkexec sets PKEXEC_UID; neither can be
+    chosen by the caller under a default sudoers (env_reset). ``None`` means
+    either not root, or root with no one behind it - a root shell, systemd - in
+    which case there is no less-privileged identity to read files as.
+    """
+    if os.geteuid() != 0:
+        return None
+    raw_uid = os.environ.get("SUDO_UID") or os.environ.get("PKEXEC_UID")
+    if raw_uid is None:
+        return None
+    if not raw_uid.isdigit():
+        raise OSError("the invoking user's id is not a number; refusing to read files on its behalf")
+    uid = int(raw_uid)
+    if uid == 0:
+        return None
+    try:
+        entry = pwd.getpwuid(uid)
+        name, default_gid = entry.pw_name, entry.pw_gid
+    except KeyError:
+        name, default_gid = str(uid), uid
+    raw_gid = os.environ.get("SUDO_GID") if os.environ.get("SUDO_UID") else None
+    gid = int(raw_gid) if raw_gid and raw_gid.isdigit() else default_gid
+    return uid, gid, name
+
+
+def _read_as_invoking_user(path: Path) -> str:
+    """Read *path* with the privileges of whoever invoked ttp through sudo/pkexec.
+
+    `ttp start` runs as root, so opening a caller-supplied path directly let
+    `sudo ttp` read files the caller could not - which matters wherever sudo is
+    granted for ttp alone (GHSA-wc5v-93m5-3vc6). The read happens in a child
+    running as the caller, with the caller's groups, so the kernel applies the
+    caller's permissions, and root never opens the path at all.
+    """
+    identity = _invoking_identity()
+    if identity is None:
+        if not path.exists():
+            raise FileNotFoundError(f"File '{path}' not found.")
+        data = path.read_bytes()
+    else:
+        uid, gid, name = identity
+        try:
+            groups = os.getgrouplist(name, gid)
+        except (KeyError, OSError):
+            groups = [gid]
+        proc = subprocess.run(
+            [resolve("cat"), "--", str(path)],
+            user=uid,
+            group=gid,
+            extra_groups=groups,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        if proc.returncode != 0:
+            # cat's own message: the path and the errno, never file content.
+            reason = proc.stderr.decode("utf-8", "replace").strip().splitlines()[-1:] or ["unreadable"]
+            raise OSError(f"'{path}' cannot be read as {name}: {reason[0]}")
+        data = proc.stdout
+    if len(data) > _MAX_BRIDGE_FILE_BYTES:
+        raise OSError(f"'{path}' is larger than {_MAX_BRIDGE_FILE_BYTES} bytes; not a bridge file")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise OSError(f"'{path}' is not UTF-8 text") from e
+
+
 def _parse_bridges(
     bridge_file: Path | None,
     bridge: list[str] | None,
@@ -80,25 +157,30 @@ def _parse_bridges(
     bridge_lines: list[str] = []
 
     if bridge_file:
-        if not bridge_file.exists():
+        try:
+            text = _read_as_invoking_user(bridge_file)
+        except FileNotFoundError:
             _print_error("Bridge File Missing", f"File '{bridge_file}' not found.")
             raise typer.Exit(code=1)
-        try:
-            for line in bridge_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    try:
-                        _validate_bridge_line(line)
-                        bridge_lines.append(line)
-                    except ValueError as exc:
-                        _print_error(
-                            "Invalid Bridge Line",
-                            f"Line '{line}' in file '{bridge_file}': {exc}",
-                        )
-                        raise typer.Exit(code=1)
         except OSError as exc:
             _print_error("Failed to read bridge file", str(exc))
             raise typer.Exit(code=1)
+        for number, raw in enumerate(text.splitlines(), start=1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                _validate_bridge_line(line)
+            except ValueError:
+                # The line number, never the line: its content is the caller's
+                # file, and an error message must not become a way to print it.
+                _print_error(
+                    "Invalid Bridge Line",
+                    f"Line {number} of '{bridge_file}' is not a valid bridge line. "
+                    "Expected '<ip>:<port>' or '<transport> <ip>:<port>'.",
+                )
+                raise typer.Exit(code=1)
+            bridge_lines.append(line)
 
     if bridge:
         for b in bridge:

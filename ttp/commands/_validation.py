@@ -10,6 +10,7 @@ that drives the bootstrap progress UI.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import time
@@ -33,6 +34,28 @@ from ttp.exceptions import TorError
 _BRIDGE_ILLEGAL_CHARS = re.compile(r"[^\x20-\x7e\t]")
 
 
+_BRIDGE_ADDRESS = re.compile(r"\[(?P<v6>[0-9A-Fa-f:.]+)\]:(?P<p6>\d{1,5})|(?P<v4>[0-9.]+):(?P<p4>\d{1,5})")
+
+
+def _is_bridge_address(token: str) -> bool:
+    """True for ``<IPv4>:<port>`` or ``[<IPv6>]:<port>``, the only forms Tor takes.
+
+    A Bridge line names an address, never a hostname. Checking for a bare ':'
+    accepted any token containing one - every line of /etc/shadow among them -
+    which let `sudo ttp start --bridge-file` copy root-only files into the torrc.
+    """
+    m = _BRIDGE_ADDRESS.fullmatch(token)
+    if not m:
+        return False
+    host, port, version = (m["v6"], m["p6"], 6) if m["v6"] is not None else (m["v4"], m["p4"], 4)
+    try:
+        if ipaddress.ip_address(host).version != version:
+            return False
+    except ValueError:
+        return False
+    return 1 <= int(port) <= 65535
+
+
 def validate_bridge_line(line: str) -> None:
     """Perform basic format validation on a bridge configuration line."""
     if _BRIDGE_ILLEGAL_CHARS.search(line):
@@ -46,10 +69,10 @@ def validate_bridge_line(line: str) -> None:
     if not parts:
         raise ValueError("Empty bridge line")
 
-    if ":" in parts[0]:
+    if _is_bridge_address(parts[0]):
         return
 
-    if len(parts) >= 2 and ":" in parts[1]:
+    if len(parts) >= 2 and _is_bridge_address(parts[1]):
         first_word = parts[0].lower()
         if first_word in {"obfs4", "snowflake", "meek", "meek_lite"}:
             return
