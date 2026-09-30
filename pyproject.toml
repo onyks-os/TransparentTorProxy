@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "transparent-tor-proxy"
-version = "0.4.9"
+version = "0.4.10"
 description = "Transparent Tor Proxy - route all system traffic through Tor"
 readme = "README.md"
 license = {text = "MIT"}
@@ -106,7 +106,7 @@ exclude = [
 packages = ["ttp"]
 
 [tool.bumpversion]
-current_version = "0.4.9"
+current_version = "0.4.10"
 commit = false
 tag = false
 
@@ -130,10 +130,14 @@ filename = "packaging/PKGBUILD"
 search = "pkgver={current_version}"
 replace = "pkgver={new_version}"
 
+# One rule for both install lines: the .deb (transparent-tor-proxy_X_all.deb)
+# and the .rpm (transparent-tor-proxy-X-1.fc44.noarch.rpm). A second rule for the
+# same file was not applied on later bumps.
 [[tool.bumpversion.files]]
 filename = "README.md"
-search = "transparent-tor-proxy_{current_version}_all.deb"
-replace = "transparent-tor-proxy_{new_version}_all.deb"
+regex = true
+search = "transparent-tor-proxy(?P<sep>[_-]){current_version}(?P<rest>_all\\.deb|-1\\.)"
+replace = "transparent-tor-proxy\\g<sep>{new_version}\\g<rest>"
 
 [[tool.bumpversion.files]]
 filename = "README.md"

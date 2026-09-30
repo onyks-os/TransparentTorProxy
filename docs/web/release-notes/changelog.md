@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.10] - 2026-09-30
+
+A release of the release process. Nothing a running session does has changed;
+what changed is what a published TTP can be checked against. It is the first
+release built to be reproducible: right after it is published, CI rebuilds it
+from its tag on a separate runner and compares the result, byte for byte, with
+what was published. Every asset is signed and verified from what was published,
+the build environment is pinned by hash, each package has its own SBOM, and the
+unit suite now covers 99.9% of `ttp/`.
+
+Nothing to do before upgrading. Two things to know:
+
+- **Desktop notifications do not arrive, and never have.** The watchdog calls
+  `notify-send` from a system service that has no user's session bus. Only
+  `wall` reaches anyone, in terminals. The docs said otherwise; they no longer
+  do. Real desktop notifications are a v0.5.0 item.
+- **The single `sbom.json` is replaced** by one `<artifact>.cdx.json` per package.
+
 ### Added
 
 - **Every release is verified from what was published.**
@@ -39,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Test coverage of `ttp/` is 99.9%, and the ratchet is 99%** (was 96%). The
+  new tests are the branches that run when something has already gone wrong: a
+  killswitch that fails to apply, teardown with no usable Tor UID, an unreadable
+  firewall listing, a control socket that refuses TTP, a crashed watchdog loop,
+  a resolver file swapped or hard-linked between being written and being used,
+  a binary in a directory someone other than root can write. None of them had
+  ever been executed by a test. The four lines left are the CLI's
+  `__main__` guard and the fallback for a missing `stem`, a hard dependency.
 - **The release build environment is pinned by version and hash.**
   `packaging/build_python.sh` installs `packaging/build-requirements.txt` - the
   `build` frontend, `hatchling` and their dependencies, each at one version and
@@ -53,6 +79,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The documentation no longer promises desktop notifications.**
+  `docs/architecture.md`, the watchdog page and `ROADMAP.md` said the killswitch
+  was announced with `notify-send`; it is called, but from a system service with
+  no session bus, so no desktop shows it.
+- **A dead branch in `check_tmpfs_space` is gone.** It re-raised `StateError`
+  from an `except OSError` that `StateError` can never reach; found because no
+  test could execute it.
 - **The sdist contains only what it is meant to.** Its include patterns were
   unanchored gitignore patterns, so `"README.md"` and `"assets"` also matched
   `docs/decisions/README.md` and `docs/web/assets/mark.svg`, which 0.4.9's sdist

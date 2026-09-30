@@ -4,7 +4,7 @@ This document outlines the **realistic, near-term** development plan for Transpa
 
 ---
 
-## Current Status (v0.4.9)
+## Current Status (v0.4.10)
 
 Delivered and in use:
 
@@ -23,7 +23,8 @@ What backs those claims, as of this release:
 | **Lifecycle transitions.** Shutdown, reboot and suspend/resume onto a new network, judged from a packet capture taken outside the guest, under systemd-networkd (Debian 13) and NetworkManager (Fedora 44, SELinux enforcing). | CI, in a VM, when firewall, lifecycle, DNS or watchdog code changes, and weekly |
 | **Watchdog chaos sweep.** Every fault once, each audit paired with a canary, TCP and UDP, in three variants. | CI, in a VM, same trigger |
 | **Integration suite** on Debian, Fedora and Arch. | CI, every push and PR |
-| **Unit suite.** 921 tests, 96.7% line coverage of `ttp/`, with a ratchet. | CI, Python 3.10-3.13 |
+| **Unit suite.** 1025 tests, 99.9% line coverage of `ttp/`, ratchet at 99%. Also run against the oldest supported dependency versions (Ubuntu 24.04's). | CI, Python 3.10-3.13 |
+| **Release integrity.** Every release verified from what was published (signatures bound to the tag's workflow, checksums, PyPI bytes) after release and weekly; builds reproducible, and each release rebuilt from its tag and compared. | CI, on every change and after every release |
 
 What is *not* protected, and says so: a session does not survive a reboot, and
 TTP has no start-at-boot mode ([security assessment, 4.3](docs/security-assessment.md#43-lifecycle-transitions-what-is-measured-and-what-is-not)).
@@ -31,6 +32,13 @@ TTP has no start-at-boot mode ([security assessment, 4.3](docs/security-assessme
 ---
 
 ## Released
+
+### v0.4.10 — Release integrity
+
+The first reproducible release: rebuilt from its tag and compared byte for byte
+with what was published. Signatures verified from the release page after every
+release and weekly, a hash-pinned build environment, one SBOM per package, and
+unit coverage from 96% to 99.9% - the new tests being the failure paths.
 
 ### v0.4.9 — Audit and verification
 
@@ -60,7 +68,7 @@ behavioural CLI tests in place of call-count assertions.
 | Item | Description |
 | :--- | :---------- |
 | **VPN coexistence** | Detect `tun+`/`wg+` interfaces and generate compatible nftables rules for Tor-over-VPN / VPN-over-Tor. |
-| **Desktop notifications** | Extend the existing `wall` + `notify-send` alerts in `ttp/watchdog/alerts.py` to proper D-Bus notifications, and cover circuit rotation as well as killswitch activation. |
+| **Desktop notifications** | Today only `wall` reaches anyone. `alerts.py` also calls `notify-send`, but from the watchdog's system service, which has no user's session bus, so no desktop ever shows it. Delivering them means crossing a privilege boundary - a small root helper started through polkit, or a per-user agent listening on the system bus - which needs an ADR before code. Then cover circuit rotation as well as killswitch activation. |
 | **`ttp monitor` (TUI)** | Real-time bandwidth/circuit stats via Rich or Textual. |
 | **Supply chain & reproducibility** | *Done ahead of schedule; ships in 0.4.10.* Published releases are verified from what was published (signatures bound to the tag's workflow, checksums, PyPI bytes) after every release and weekly; the build environment is pinned by version and hash; every artifact has its own SBOM; and builds are reproducible - checked on every change, and every release is rebuilt from its tag and compared. See `docs/verification.md`. |
 | **systemd-resolved drop rule, measured** | [ADR 0009](docs/decisions/0009-systemd-resolved-bypass.md)'s last layer — `meta skuid <resolved> ip daddr != 127.0.0.1 drop` — is what turns a resolved misconfiguration (a per-link DNS server, a VPN pushing `~.`) into a failed lookup instead of a leak. Today it is only checked as a string in the generated ruleset. Add an NSE test that sends a query as resolved's UID and requires it to be seen with the ruleset flushed and dropped with it loaded. |
