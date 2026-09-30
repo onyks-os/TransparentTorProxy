@@ -62,7 +62,12 @@ def _write_watchdog_service_unit() -> None:
     service_lines.extend(
         [
             "ProtectSystem=strict",
-            "ReadWritePaths=/run/ttp/watchdog",
+            # '-': the directory exists only when the ttp-watchdog account does
+            # (state.ensure_runtime_dir). Without the prefix a pip install, where
+            # the watchdog runs as root and has no such directory, failed with
+            # 226/NAMESPACE and the watchdog never ran - which the chaos sweep
+            # caught as a leak.
+            "ReadWritePaths=-/run/ttp/watchdog",
             "ProtectHome=read-only",
             "PrivateTmp=yes",
             "ProtectKernelTunables=yes",

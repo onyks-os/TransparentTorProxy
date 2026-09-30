@@ -108,7 +108,9 @@ def test_the_torrc_no_longer_asks_tor_to_switch_user():
 def test_the_watchdog_can_write_only_its_own_directory(tmp_path):
     d = _directives(_watchdog_unit(tmp_path))
     assert d["ProtectSystem"] == ["strict"]
-    assert d["ReadWritePaths"] == ["/run/ttp/watchdog"]
+    # Optional ('-'): without the ttp-watchdog account the directory does not
+    # exist, and a missing ReadWritePaths entry fails the unit with 226/NAMESPACE.
+    assert d["ReadWritePaths"] == ["-/run/ttp/watchdog"]
     assert d["CapabilityBoundingSet"] == ["CAP_NET_ADMIN"]
 
 

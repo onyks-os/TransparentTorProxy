@@ -24,9 +24,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   network socket), and the same kernel protections. `systemd-analyze security`
   exposure: ttp-tor 9.6 (UNSAFE) -> 3.2 (OK); ttp-watchdog 6.6 (MEDIUM) -> 3.4
   (OK). `systemd-analyze verify` accepts every directive (tested).
+- **The SELinux module allows the Tor domain transition under `NoNewPrivileges`**
+  (`ttp_tor_policy` 1.3). SELinux refuses a domain transition for a process
+  with no_new_privs unless it is allowed explicitly, so on Fedora the sandboxed
+  unit started Tor in `init_t` rather than `tor_t`, and Tor died on its own lock
+  file (`Couldn't open .../lock for locking: Permission denied`). Found by the
+  Fedora lifecycle VM; the module now carries
+  `allow init_t tor_t:process2 nnp_transition`, and hosts pick it up through
+  the existing version stamp.
 
 ### Fixed
 
+- **The chaos sweep refuses to run without a running watchdog.** A watchdog
+  that fails to start only makes `ttp start --watchdog` print an error; the
+  sweep then ran with no watchdog and reported the first fault only the
+  watchdog can contain as a leak. It now requires `ttp-watchdog.service` to be
+  active, and still active 3 s later, before injecting anything. (The watchdog
+  had failed with `226/NAMESPACE`: its new `ReadWritePaths` named a directory
+  that exists only with the `ttp-watchdog` account. The entry is now optional.)
 - **The documentation no longer says `wall` reaches terminals.** 0.4.10 said
   only `wall` reached anyone. It does not, from the `ttp-watchdog` account:
   terminals are `0620 <user>:tty`, the account is not in `tty`, `wall` is not
