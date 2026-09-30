@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Untrusted network input is handled by an unprivileged process.** `ttp start`
+  and `ttp check` verify Tor by fetching JSON from `check.torproject.org` and two
+  IP echo services; as root, the TLS, HTTP and JSON parsing of that third-party
+  data ran in the root process. It now runs in a child as `nobody`
+  (`ttp/netprobe.py`, standard library only), which hands back at most four
+  fields - the three address keys and `IsTor` - reduced to their types and
+  bounded lengths, and root validates them again. `nobody` rather than the
+  invoking user because it is never in a bypass list, so the probe always goes
+  through Tor. If the child cannot run, as for an install under a home
+  directory, the check falls back to the old behaviour and logs why. Verified in
+  a container as root: the child runs as uid/gid 65534 with no supplementary
+  groups, and a real fetch through it returns the reduced answer.
+
 ## [0.4.10] - 2026-09-30
 
 A release of the release process. Nothing a running session does has changed;
