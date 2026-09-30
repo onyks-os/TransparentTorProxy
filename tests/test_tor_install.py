@@ -565,7 +565,8 @@ def test_build_torrc_content_ipv4_only():
         bridges=None,
         ipv6_avail=False,
     )
-    assert "User debian-tor" in content
+    # Not in the torrc any more: the unit starts Tor as its account (User=).
+    assert "User debian-tor" not in content
     assert "TransPort 9041" in content
     assert "DNSPort 9054" in content
     assert "ClientUseIPv6 0" in content

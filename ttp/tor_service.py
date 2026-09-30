@@ -23,6 +23,46 @@ TTP_SERVICE_PATH = Path(f"/run/systemd/system/{TTP_SERVICE_NAME}.service")
 logger = logging.getLogger("ttp")
 
 
+def _tor_sandbox(tor_user: str) -> str:
+    """The identity and sandbox of ttp-tor, as unit directives.
+
+    The distributions' units start Tor as root and let it drop to its account
+    through the torrc's `User` directive, keeping CAP_SETUID/CAP_SETGID and
+    CAP_NET_BIND_SERVICE for ports below 1024. TTP's ports are above 1024, so
+    Tor never needs root here: systemd starts it as its account with no
+    capabilities at all. The ExecStartPre lines above carry '+' and still run
+    as root, which is what prepares the directories Tor then owns - and the
+    only thing root does in this unit.
+    """
+    identity = "" if tor_user == "root" else f"User={tor_user}\n"
+    return f"""{identity}NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Tor writes only its cache and its runtime directory (control socket, cookie).
+ProtectSystem=strict
+ReadWritePaths={TOR_CACHE_DIR} {TOR_RUNTIME_DIR}
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+# INET/INET6 for the network, UNIX for the control socket, NETLINK for the
+# interface addresses Tor reads at startup.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+UMask=0077
+"""
+
+
 def _build_service_unit_content(tor_user: str, tor_bin: str) -> str:
     """Build and return the volatile systemd ttp-tor.service unit content.
 
@@ -65,7 +105,7 @@ ExecStart={tor_bin} -f {TOR_RUNTIME_DIR / "torrc"} --RunAsDaemon 0
 Restart=no
 TimeoutStartSec=120
 LimitNOFILE=32768
-"""
+{_tor_sandbox(tor_user)}"""
 
 
 def _write_service_unit(tor_user: str) -> None:

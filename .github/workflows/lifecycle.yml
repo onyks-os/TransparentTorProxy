@@ -21,6 +21,8 @@ on:
       - "ttp/commands/**"
       - "ttp/dns.py"
       - "ttp/dns_resolved.py"
+      - "ttp/tor_service.py"
+      - "ttp/tor_config.py"
       - "ttp/watchdog/**"
       - "tests/chaos_monkey.py"
   schedule:
