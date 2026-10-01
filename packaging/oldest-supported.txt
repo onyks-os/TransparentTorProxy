@@ -10,7 +10,7 @@
 #
 # click is not a direct dependency, but typer 0.9.0 does not work with click
 # 8.2 or later, and 8.1.6 is the version Ubuntu 24.04 pairs with it.
-typer==0.9.0
+typer==0.27.2
 click==8.1.6
 stem==1.8.2
 rich==13.7.1
