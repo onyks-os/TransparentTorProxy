@@ -15,7 +15,7 @@ license = {text = "MIT"}
 requires-python = ">=3.10"
 dependencies = [
     # The floors are the versions Ubuntu 24.04 LTS ships, the oldest distribution
-    # the .deb targets (packaging/oldest-supported.txt, which CI runs the unit
+    # the .deb targets (packaging/oldest-supported.pins, which CI runs the unit
     # suite against). They were once raised to the latest releases without a
     # reason (rich>=15), and the .rpm's generated dependencies then asked for a
     # rich no Fedora release had: the package could not be installed.

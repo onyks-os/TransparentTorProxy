@@ -31,7 +31,7 @@ PKGBUILD = (REPO_ROOT / "packaging/PKGBUILD").read_text(encoding="utf-8")
 BUILD_RPM = (REPO_ROOT / "packaging/build_rpm.sh").read_text(encoding="utf-8")
 OLDEST = dict(
     line.split("==", 1)
-    for line in (REPO_ROOT / "packaging/oldest-supported.txt").read_text(encoding="utf-8").splitlines()
+    for line in (REPO_ROOT / "packaging/oldest-supported.pins").read_text(encoding="utf-8").splitlines()
     if line and not line.startswith("#")
 )
 BUNDLE = dict(
@@ -145,7 +145,7 @@ def test_every_floor_is_the_version_ci_tests_against(name):
     """A floor nobody has run the suite against is a guess."""
     assert OLDEST.get(name) == _runtime_dependencies()[name], (
         f"pyproject says {name}>={_runtime_dependencies()[name]}, "
-        f"packaging/oldest-supported.txt pins {OLDEST.get(name)}"
+        f"packaging/oldest-supported.pins pins {OLDEST.get(name)}"
     )
 
 
@@ -155,3 +155,18 @@ def test_the_pkgbuild_does_not_list_the_checkout_as_a_source():
     code = "\n".join(line for line in PKGBUILD.splitlines() if not line.lstrip().startswith("#"))
     assert "local-source" not in code
     assert 'cd "$startdir/.."' in PKGBUILD
+
+
+def test_the_oldest_supported_pins_are_not_a_file_dependabot_updates():
+    """Dependabot raises any pins it finds in a requirements-like .txt to the
+    newest releases. Here that would silently turn the oldest-supported job into
+    a newest-supported one."""
+    assert not (REPO_ROOT / "packaging/oldest-supported.txt").exists()
+    assert (REPO_ROOT / "packaging/oldest-supported.pins").exists()
+
+
+def test_the_indirect_pins_are_ubuntu_24_04s_too():
+    """six and click are not floors in pyproject.toml, so the floor test above
+    does not see them; their pins must still be the oldest distribution's."""
+    assert OLDEST["six"] == "1.16.0"
+    assert OLDEST["click"] == "8.1.6"

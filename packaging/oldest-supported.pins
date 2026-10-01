@@ -8,6 +8,12 @@
 # ("Unit Tests (oldest supported dependencies)"), so a floor is always a version
 # that has been tested, never a guess.
 #
+# Not a .txt on purpose: Dependabot treats any requirements-like .txt as
+# something to keep current, and opened PRs raising these pins to the latest
+# releases - which would make "oldest supported" mean "newest". One of them
+# (six 1.16.0 -> 1.17.0) was merged before this was noticed.
+# tests/test_packaging_dependencies.py fails if the file is renamed back.
+#
 # click is not a direct dependency, but typer 0.9.0 does not work with click
 # 8.2 or later, and 8.1.6 is the version Ubuntu 24.04 pairs with it.
 typer==0.9.0
@@ -15,4 +21,4 @@ click==8.1.6
 stem==1.8.2
 rich==13.7.1
 transitions==0.9.0
-six==1.17.0
+six==1.16.0

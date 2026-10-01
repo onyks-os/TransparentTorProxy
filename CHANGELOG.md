@@ -52,6 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Dependabot no longer raises the oldest-supported pins.** It treated
+  `packaging/oldest-supported.txt` as a requirements file to keep current and
+  opened PRs moving typer, click, rich and transitions to their newest releases;
+  one (six 1.16.0 -> 1.17.0) was merged. That file is what the "oldest supported
+  dependencies" CI job installs, so the PRs would have made it test the newest
+  versions instead. It is now `packaging/oldest-supported.pins`, which Dependabot
+  does not read, six is back at Ubuntu 24.04's 1.16.0, and a test fails if either
+  regresses.
+
 - **The chaos sweep refuses to run without a running watchdog.** A watchdog
   that fails to start only makes `ttp start --watchdog` print an error; the
   sweep then ran with no watchdog and reported the first fault only the

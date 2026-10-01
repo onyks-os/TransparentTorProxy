@@ -15,7 +15,7 @@ This document outlines the system and library dependencies for Transparent Tor P
 
 #### Runtime Dependencies
 
-These are required to run the core `ttp` application. The floors are the versions Ubuntu 24.04 LTS ships; CI runs the unit suite against exactly those (`packaging/oldest-supported.txt`), and `tests/test_packaging_dependencies.py` keeps the floors, that file and the three native packages in agreement.
+These are required to run the core `ttp` application. The floors are the versions Ubuntu 24.04 LTS ships; CI runs the unit suite against exactly those (`packaging/oldest-supported.pins`), and `tests/test_packaging_dependencies.py` keeps the floors, that file and the three native packages in agreement.
 
 | Dependency                                           | Version Constraint | License | Purpose                                                                                                   |
 | :--------------------------------------------------- | :----------------- | :------ | :-------------------------------------------------------------------------------------------------------- |
