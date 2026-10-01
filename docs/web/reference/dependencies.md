@@ -11,7 +11,7 @@ This document provides an exhaustive inventory of Python package requirements, s
 Required for basic TTP execution (`pip install transparent-tor-proxy` or package installation):
 
 The floors are the versions Ubuntu 24.04 LTS ships, and CI runs the unit suite against
-exactly those (`packaging/oldest-supported.txt`). The watchdog is the only user of
+exactly those (`packaging/oldest-supported.pins`). The watchdog is the only user of
 `transitions`: without it, everything else works and `--watchdog` is refused before
 the session starts.
 

@@ -101,7 +101,7 @@ jobs:
       - name: Install the oldest supported runtime dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r packaging/oldest-supported.txt pytest hypothesis "cyclonedx-python-lib[json-validation]"
+          pip install -r packaging/oldest-supported.pins pytest hypothesis "cyclonedx-python-lib[json-validation]"
           pip install --no-deps -e .
           pip list
 
