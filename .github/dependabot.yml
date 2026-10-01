@@ -11,6 +11,14 @@ updates:
     labels:
       - "dependencies"
       - "ci"
+    # init, analyze and upload-sarif must move together: CodeQL refuses to
+    # analyze with a different version from the one that initialised
+    # ("Loaded a configuration file for version '4.38.2', but running version
+    # '4.38.1'"), so one PR per action failed every time (#102, #104).
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   - package-ecosystem: "pip"
     directory: "/"
