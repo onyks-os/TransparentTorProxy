@@ -4,7 +4,7 @@ This document outlines the **realistic, near-term** development plan for Transpa
 
 ---
 
-## Current Status (v0.4.10)
+## Current Status (v0.4.11)
 
 Delivered and in use:
 
@@ -13,6 +13,7 @@ Delivered and in use:
 - Split tunneling (UID/GID + cgroups v2 `ttp bypass`)
 - Tor bridges (obfs4/snowflake), BYOD mode, zero-leak teardown
 - Privilege-separated watchdog user (`ttp-watchdog` + `CAP_NET_ADMIN`)
+- Tor started as its own account with no capabilities; both units TTP starts sandboxed by systemd; Tor verification parsed as `nobody`
 - Distinct exit code (`3`) for a session that is up but whose Tor routing is unverified ([ADR 0011](docs/decisions/0011-start-exit-codes.md))
 
 What backs those claims, as of this release:
@@ -23,7 +24,7 @@ What backs those claims, as of this release:
 | **Lifecycle transitions.** Shutdown, reboot and suspend/resume onto a new network, judged from a packet capture taken outside the guest, under systemd-networkd (Debian 13) and NetworkManager (Fedora 44, SELinux enforcing). | CI, in a VM, when firewall, lifecycle, DNS or watchdog code changes, and weekly |
 | **Watchdog chaos sweep.** Every fault once, each audit paired with a canary, TCP and UDP, in three variants. | CI, in a VM, same trigger |
 | **Integration suite** on Debian, Fedora and Arch. | CI, every push and PR |
-| **Unit suite.** 1025 tests, 99.9% line coverage of `ttp/`, ratchet at 99%. Also run against the oldest supported dependency versions (Ubuntu 24.04's). | CI, Python 3.10-3.13 |
+| **Unit suite.** 1083 tests, 99.8% line coverage of `ttp/`, ratchet at 99%. Also run against the oldest supported dependency versions (Ubuntu 24.04's). | CI, Python 3.10-3.13 |
 | **Release integrity.** Every release verified from what was published (signatures bound to the tag's workflow, checksums, PyPI bytes) after release and weekly; builds reproducible, and each release rebuilt from its tag and compared. | CI, on every change and after every release |
 
 What is *not* protected, and says so: a session does not survive a reboot, and
@@ -32,6 +33,16 @@ TTP has no start-at-boot mode ([security assessment, 4.3](docs/security-assessme
 ---
 
 ## Released
+
+### v0.4.11 — Less root
+
+A security fix
+([GHSA-wc5v-93m5-3vc6](https://github.com/onyks-os/TransparentTorProxy/security/advisories/GHSA-wc5v-93m5-3vc6)):
+`--bridge-file` is read with the caller's permissions, not root's. And the first
+step of taking root out of TTP's moving parts: Tor starts as its own account
+with no capabilities, both units are sandboxed (`systemd-analyze security`:
+ttp-tor 9.6 -> 3.2, ttp-watchdog 6.6 -> 3.4), and the third-party answers used
+to verify Tor are parsed by `nobody`.
 
 ### v0.4.10 — Release integrity
 

@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-10-06
+
+A security fix, and less root in what TTP runs. `--bridge-file` let a caller
+allowed to run `sudo ttp` and nothing else read root-only files; it now reads the
+file with the caller's own permissions. Tor is no longer started as root, both
+units TTP starts are sandboxed, and the answers TTP fetches from the network to
+check that it is using Tor are parsed by `nobody` instead of root.
+
+Upgrade if a sudoers rule grants `ttp` to anyone who is not otherwise root
+([GHSA-wc5v-93m5-3vc6](https://github.com/onyks-os/TransparentTorProxy/security/advisories/GHSA-wc5v-93m5-3vc6)).
+On Fedora, the SELinux module is updated at the next `ttp start`.
+
 ### Security
 
 - **`--bridge-file` no longer lets `sudo ttp` read files its caller cannot**
