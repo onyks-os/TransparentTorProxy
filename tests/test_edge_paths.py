@@ -78,7 +78,7 @@ def test_a_numeric_bypass_group_is_accepted_by_gid():
 def test_an_unreadable_bridge_file_stops_start(tmp_path):
     bridges = tmp_path / "bridges.txt"
     bridges.write_text("obfs4 192.0.2.1:443 AAAA cert=x iat-mode=0\n")
-    with patch.object(Path, "read_text", side_effect=PermissionError("denied")), pytest.raises(typer.Exit):
+    with patch.object(Path, "read_bytes", side_effect=PermissionError("denied")), pytest.raises(typer.Exit):
         _tor_setup._parse_bridges(bridges, None, False)
 
 
