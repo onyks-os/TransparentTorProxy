@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "transparent-tor-proxy"
-version = "0.4.10"
+version = "0.4.11"
 description = "Transparent Tor Proxy - route all system traffic through Tor"
 readme = "README.md"
 license = {text = "MIT"}
@@ -106,7 +106,7 @@ exclude = [
 packages = ["ttp"]
 
 [tool.bumpversion]
-current_version = "0.4.10"
+current_version = "0.4.11"
 commit = false
 tag = false
 
@@ -138,11 +138,6 @@ filename = "README.md"
 regex = true
 search = "transparent-tor-proxy(?P<sep>[_-]){current_version}(?P<rest>_all\\.deb|-1\\.)"
 replace = "transparent-tor-proxy\\g<sep>{new_version}\\g<rest>"
-
-[[tool.bumpversion.files]]
-filename = "README.md"
-search = "transparent-tor-proxy-{current_version}-1"
-replace = "transparent-tor-proxy-{new_version}-1"
 
 [tool.ruff]
 target-version = "py310"
