@@ -372,6 +372,20 @@ sudo ttp diagnose
 └── docs/                   # Technical documentation, threat models, and ADRs
 ```
 
+## Have you tried TTP?
+
+TTP is maintained in free time, and hearing from people who try it helps
+guide development. Whether it worked well, something was confusing, or you
+decided not to keep using it, a short note is welcome.
+
+Share your experience in [GitHub Discussions](https://github.com/onyks-os/TransparentTorProxy/discussions).
+Even “works on Fedora” or “I couldn't get past installation” is useful.
+Your distro and TTP version help, but there's no need to explain what you
+use it for or share personal details.
+
+For bugs, please use [Issues](https://github.com/onyks-os/TransparentTorProxy/issues);
+for security vulnerabilities, follow [SECURITY.md](SECURITY.md).
+
 ## Contributing
 
 Contributions are welcome, and the areas where help matters most are narrow and

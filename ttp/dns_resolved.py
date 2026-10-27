@@ -14,6 +14,7 @@ import logging
 import subprocess
 from pathlib import Path
 
+from ttp.exceptions import DNSError
 from ttp.paths import resolve
 
 logger = logging.getLogger("ttp")
@@ -22,7 +23,7 @@ RESOLVED_CONF_DIR = Path("/run/systemd/resolved.conf.d")
 RESOLVED_CONF_FILE = RESOLVED_CONF_DIR / "ttp.conf"
 
 
-def is_resolved_active() -> bool:
+def is_resolved_active(*, strict: bool = False) -> bool:
     """Return True if systemd-resolved is active (running)."""
     try:
         res = subprocess.run(
@@ -32,8 +33,15 @@ def is_resolved_active() -> bool:
             check=False,
             timeout=10,
         )
-        return res.stdout.strip() == "active"
-    except Exception:
+        status = res.stdout.strip()
+        if status == "active" and res.returncode == 0:
+            return True
+        if strict and not (status in {"inactive", "failed", "unknown"} and res.returncode in {3, 4}):
+            raise DNSError("Cannot determine whether systemd-resolved is active")
+        return False
+    except Exception as exc:
+        if strict:
+            raise DNSError(f"Cannot inspect systemd-resolved service state: {exc}") from exc
         return False
 
 
@@ -67,6 +75,7 @@ def apply_resolved(dns_port: int, disable_ipv6: bool = False) -> bool:
         "FallbackDNS=\n"
         "Domains=~.\n"
         "DNSOverTLS=no\n"
+        "DNSSEC=no\n"
         "MulticastDNS=no\n"
         "LLMNR=no\n"
         "Cache=no-negative\n"
@@ -74,7 +83,11 @@ def apply_resolved(dns_port: int, disable_ipv6: bool = False) -> bool:
 
     try:
         RESOLVED_CONF_DIR.mkdir(parents=True, exist_ok=True)
+        # resolved reads these as its service user. A root umask of 0027 or
+        # 0077 must not hide either the directory or TTP's public DNS settings.
+        RESOLVED_CONF_DIR.chmod(0o755)
         RESOLVED_CONF_FILE.write_text(config_content, encoding="utf-8")
+        RESOLVED_CONF_FILE.chmod(0o644)
 
         subprocess.run(
             [resolve("systemctl"), "restart", "systemd-resolved"],

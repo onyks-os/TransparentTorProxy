@@ -21,6 +21,7 @@ on:
       - "ttp/commands/**"
       - "ttp/dns.py"
       - "ttp/dns_resolved.py"
+      - "ttp/dns_policy.py"
       - "ttp/tor_service.py"
       - "ttp/tor_config.py"
       - "ttp/watchdog/**"

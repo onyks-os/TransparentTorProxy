@@ -39,6 +39,7 @@ from ttp.commands._common import (
 from ttp.commands._preflight import (
     check_session_state,
     preflight_checks,
+    require_dnssec_compatibility,
     require_watchdog_dependency,
     validate_ports,
 )
@@ -169,6 +170,7 @@ def start_command(
 
     bridge_lines, use_bridges = _parse_bridges(bridge_file, bridge, use_bridges)
     validate_ports(transport_port, dns_port, external_daemon)
+    require_dnssec_compatibility()
     register_signal_handlers()
 
     from ttp import tor_detect

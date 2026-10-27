@@ -97,7 +97,13 @@ def stub_path(binary: str) -> str:
     """
     shim = _shim_root() / binary
     if not shim.exists():
-        shim.write_text("#!/bin/sh\nexit 0\n")
+        # DNSSEC preflight must distinguish an inactive resolver from a broken
+        # service query. Model absence explicitly; empty successful output is
+        # not a real systemctl is-active response.
+        body = "#!/bin/sh\n"
+        if binary == "systemctl":
+            body += 'if [ "$1" = "is-active" ] && [ "$2" = "systemd-resolved" ]; then\n  echo inactive\n  exit 3\nfi\n'
+        shim.write_text(body + "exit 0\n")
         shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return str(shim)
 

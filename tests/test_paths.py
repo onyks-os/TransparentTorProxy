@@ -152,6 +152,8 @@ def test_a_binary_in_a_writable_directory_is_refused(tmp_path: Path) -> None:
     """Write access to the directory is enough to replace the file by rename."""
     directory = tmp_path / "bin"
     directory.mkdir(mode=0o777)
+    # mkdir's mode is masked by umask; make the intended unsafe fixture real.
+    directory.chmod(0o777)
     _plant(directory, "nft").chmod(0o755)
     with (
         patch("ttp.paths.TRUSTED_DIRS", (str(directory),)),

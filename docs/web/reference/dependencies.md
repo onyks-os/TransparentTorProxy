@@ -47,6 +47,7 @@ the session starts.
 |---|---|---|---|
 | **Python** | `>=3.10` | `python3` | Execution interpreter. |
 | **systemd** | Required | `systemd` | Service lifecycle (`ttp-tor.service`) and transient scopes (`systemd-run`). |
+| **busctl** | Required when systemd-resolved is active | `systemd` / `systemd` / `systemd` | Read-only DNSSEC preflight via the system bus; a missing binary refuses startup rather than skipping the policy check. |
 | **nftables** (`nft`) | `>=0.9` | `nftables` | Kernel packet redirection (`inet ttp` table). |
 | **tor** | `>=0.4.7` | `tor` | Tor routing daemon. |
 | **util-linux** | Required | `util-linux` | Kernel VFS bind-mount overlay (`mount --bind`, `umount -l`). |

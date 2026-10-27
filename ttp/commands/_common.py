@@ -33,14 +33,14 @@ logger = logging.getLogger("ttp")
 
 # Exit code for "the session was established, but Tor could not be verified".
 #
-# It has to be distinguishable from both neighbours: 0 means traffic is
-# confirmed to be flowing through Tor, 1 means start gave up and left the host
-# in cleartext. Neither describes a session that is up and holding everything
-# fail-closed while Tor is unreachable - and a caller scripting `ttp start` has
-# to tell those three apart. 3 rather than 2 because Click already spends 2 on
-# usage errors, and a script must not confuse a mistyped flag with a blocked
-# network.
+# Failed verification alone does not prove that Tor carries no traffic or that
+# isolation was verified. Code 1 is a generic failure (including preflight),
+# while Click reserves 2 for usage errors. The broader degraded-state contract
+# remains pending; see docs/interfaces.md and the 0.5.0 roadmap.
 EXIT_UNVERIFIED = 3
+
+# Refused before network changes: an explicit per-link DNSSEC requirement.
+EXIT_DNSSEC_CONFLICT = 4
 
 
 class CLIState:

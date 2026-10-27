@@ -12,6 +12,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep installed Python code and generated DNS configuration accessible under
+  restrictive administrator umasks (`0027`, `0077`), without widening access to
+  TTP's private runtime state. Existing source installations are repaired on reinstall.
+- Temporarily disable inherited global DNSSEC validation while using Tor's
+  DNSPort, restoring the previous configuration at teardown. Explicit per-link
+  `DNSSEC=yes` is preserved and refuses start/restart before network changes,
+  with a visible explanation, documentation link and dedicated exit code `4`.
+  An inconclusive policy inspection returns a separate generic error (`1`).
+- Use `nft delete table` for teardown compatibility with nftables 1.0.6,
+  retaining the existing absent-table handling. The real NSE teardown test
+  also verifies that repeating cleanup succeeds.
+- Use numeric output NAT priority `-100` in the Docker-shaped NSE fixture;
+  nftables 1.0.6 rejects `dstnat` in that hook.
+
+### Tests
+
+- Cover restrictive-umask DNS creation/restoration, installation access,
+  inherited versus explicit DNSSEC policy, inspection failures and preflight
+  refusal before any network mutation, including restart and quiet mode.
+- Verify the policy adapter with real systemd-resolved and systemd-networkd on
+  Debian 13 and Fedora 44 in isolated, network-disabled containers, also in CI.
+- Exercise the systemd-resolved UID restriction with NSE on IPv4 and IPv6,
+  for UDP/TCP DNS and non-DNS traffic under competing NAT and LAN bypass.
+  Positive controls prove observation, kernel traces attribute the drop, and
+  removing the dedicated rule proves the checks detect its absence. Separate
+  cases cover normal local DNS redirection and the disabled-IPv6 killswitch.
+  Tor and DNS resolution themselves are not exercised by these firewall tests.
+
+### Documentation
+
+- Document the approved DNSSEC policy, manual resolution of explicit interface
+  conflicts and the internal systemd state-format compatibility dependency.
+- Separate completed, approved and undecided 0.5.0 roadmap work, with indicative
+  implementation estimates rather than a committed release date.
+- Add a staged diagnostic procedure for hardened hosts, including Quad9,
+  existing firewalls, local DNS proxies, browser DoH, Tor bootstrap and probe
+  failures. Collect evidence before teardown or configuration changes.
+
 ## [0.4.11] - 2026-10-06
 
 A security fix, and less root in what TTP runs. `--bridge-file` let a caller

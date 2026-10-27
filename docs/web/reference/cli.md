@@ -202,12 +202,13 @@ TTP commands exit with standard status codes for scripting and automation:
 | Code | Meaning | Context |
 |:---:|---|---|
 | `0` | **Success** | Command completed successfully, or system already in target state. For `start` and `restart`, the session is active and Tor routing was confirmed. |
-| `1` | **Error / Failure** | Preflight check failure, missing root privileges, or system error. For `start` and `restart`, no session is running and the network is in cleartext. |
+| `1` | **Error / Failure** | Preflight failure, missing root privileges, or system error. A DNSSEC inspection failure leaves existing network state unchanged. |
 | `2` | **Usage error** | Reserved by the CLI framework: unknown option or invalid argument value. |
-| `3` | **Unverified session** | `start` / `restart` only. The session is active and fail-closed, but Tor routing could not be verified. Traffic that is not explicitly bypassed is blocked. |
+| `3` | **Unverified session** | `start` / `restart` only. The session remains installed, but external Tor verification failed. This alone does not establish whether Tor carries traffic or whether isolation was verified. |
+| `4` | **DNSSEC policy conflict** | An interface explicitly requires `DNSSEC=yes`. Start is refused before network changes; restart preserves the existing session. See [DNSSEC policy](../how-to/dnssec.md). |
 
 !!! warning "Scripting Tip"
-    Do not read "non-zero" as "unprotected", or `0` as the only safe outcome.
-    `3` means the kill-switch is holding and nothing is leaking — the session is
-    simply not carrying traffic. `1` is the one that means the host is back on
-    clearnet. Pass `-v` for structured error diagnostics.
+    Do not infer network protection from the exit code alone. In particular,
+    a DNSSEC preflight refusal does not change the existing network state.
+    The broader degraded-state contract is still under definition for 0.5.0;
+    the DNSSEC refusal is the separately approved behavior documented here.

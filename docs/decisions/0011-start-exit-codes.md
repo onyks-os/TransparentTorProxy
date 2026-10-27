@@ -9,6 +9,15 @@ SPDX-License-Identifier: MIT
 
 Accepted (v0.4.9)
 
+**0.5.0 clarification:** the historical rationale below overstates what failed
+external verification proves: Tor can carry traffic while that check fails.
+Likewise, a preflight error does not prove that the host is on clearnet. Code `3`
+is unchanged; the broader degraded-state contract still needs approval. The
+separately approved DNSSEC preflight adds code `4` for an explicit interface
+conflict and runs before network changes, including before restart teardown.
+Use the [current interface reference](../interfaces.md#14-exit-codes) and
+[DNSSEC policy](../web/how-to/dnssec.md) for scripting.
+
 ## Context
 
 `ttp start` builds a session in five ordered steps: detect and start Tor (1), apply the

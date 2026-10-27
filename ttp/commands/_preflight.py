@@ -7,11 +7,24 @@ from __future__ import annotations
 
 import typer
 
-from ttp import state, tor_install
+from ttp import dns_policy, state, tor_install
+from ttp.commands._common import EXIT_DNSSEC_CONFLICT
 from ttp.commands._common import (
     print_error as _print_error,
 )
-from ttp.exceptions import StateError
+from ttp.exceptions import DNSError, DNSSECConflictError, StateError
+
+
+def require_dnssec_compatibility() -> None:
+    """Refuse incompatible or uninspectable policy without changing the network."""
+    try:
+        dns_policy.check_dnssec_policy()
+    except DNSSECConflictError as exc:
+        _print_error("DNSSEC Policy Conflict", str(exc))
+        raise typer.Exit(code=EXIT_DNSSEC_CONFLICT)
+    except DNSError as exc:
+        _print_error("DNSSEC Pre-flight Failed", str(exc))
+        raise typer.Exit(code=1)
 
 
 def require_watchdog_dependency() -> None:

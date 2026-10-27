@@ -73,14 +73,14 @@ def test_apply_rules_failure_triggers_destroy(mock_run, mock_pwd, mock_lock_dir,
     mock_run.side_effect = [
         subprocess.CalledProcessError(1, "nft", stderr="syntax error"),  # inject
         MagicMock(returncode=0),  # destroy: flush (rollback)
-        MagicMock(returncode=0),  # destroy: destroy (rollback)
+        MagicMock(returncode=0),  # destroy: delete (rollback)
     ]
 
     with pytest.raises(FirewallError):
         apply_rules(tor_user="debian-tor")
 
-    # Check that destroy was called
-    assert any("destroy" in str(c) for c in mock_run.call_args_list)
+    # Check that rollback attempted deletion through the trusted binary path.
+    assert any(c.args[0] == [resolve("nft"), "delete", "table", "inet", "ttp"] for c in mock_run.call_args_list)
 
 
 @patch("ttp.firewall.runner.pwd.getpwnam")
@@ -284,15 +284,15 @@ def test_ruleset_custom_ports(mock_ipv6, mock_run_nft, mock_run_string, mock_pwd
 @patch("ttp.firewall.runner.RULES_TEMP_PATH")
 @patch("ttp.firewall.runner.subprocess.run")
 def test_destroy_rules(mock_run, mock_rules_path):
-    """destroy_rules calls 'nft flush' and then 'nft destroy table inet ttp'."""
+    """destroy_rules calls 'nft flush' and then 'nft delete table inet ttp'."""
     mock_run.return_value = MagicMock(returncode=0)
 
     destroy_rules()
 
-    # Verify both flush and destroy are called
+    # Verify both flush and compatible deletion are called
     calls = [c.args[0] for c in mock_run.call_args_list]
     assert [resolve("nft"), "flush", "table", "inet", "ttp"] in calls
-    assert [resolve("nft"), "destroy", "table", "inet", "ttp"] in calls
+    assert [resolve("nft"), "delete", "table", "inet", "ttp"] in calls
     mock_rules_path.unlink.assert_called_once_with(missing_ok=True)
 
 
@@ -945,7 +945,7 @@ def test_destroy_rules_raises_when_the_table_is_still_there(mock_run, _mock_rule
     """
     mock_run.side_effect = [
         MagicMock(returncode=0),  # nft flush table
-        MagicMock(returncode=1, stderr=b"permission denied"),  # nft destroy
+        MagicMock(returncode=1, stderr=b"permission denied"),  # nft delete
         MagicMock(returncode=0),  # nft list table -> still present
     ]
 
@@ -959,7 +959,7 @@ def test_destroy_rules_treats_an_absent_table_as_success(mock_run, _mock_rules_p
     """Tearing down twice is not an error."""
     mock_run.side_effect = [
         MagicMock(returncode=0),  # nft flush table
-        MagicMock(returncode=1, stderr=b"No such file or directory"),  # nft destroy
+        MagicMock(returncode=1, stderr=b"No such file or directory"),  # nft delete
         MagicMock(returncode=1),  # nft list table -> gone
     ]
 

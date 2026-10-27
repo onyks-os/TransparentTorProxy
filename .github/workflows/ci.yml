@@ -227,6 +227,40 @@ jobs:
           sudo -E env "PATH=$PATH" TTP_REQUIRE_NSE=1 \
             python -m pytest tests/test_nse_rules.py -m nse -v
 
+  dnssec-policy:
+    name: DNSSEC policy (${{ matrix.distribution }})
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distribution: Debian 13
+            image: docker.io/library/debian:13-slim
+          - distribution: Fedora 44
+            image: registry.fedoraproject.org/fedora:44
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+      - name: Build the disposable resolver environment
+        env:
+          BASE_IMAGE: ${{ matrix.image }}
+        run: |
+          sudo podman build -f tests/containers/dnssec.Containerfile \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" -t localhost/ttp-dnssec-check .
+      - name: Verify real resolved and networkd policy without external networking
+        run: |
+          sudo podman run --rm --network none --security-opt label=disable \
+            --cap-add NET_ADMIN --cap-add NET_RAW --cap-add NET_BROADCAST \
+            --cap-add BPF --cap-add SYS_ADMIN \
+            --env TTP_TEST_DNSSEC_CONTAINER=1 --volume "$PWD:/src:ro" \
+            localhost/ttp-dnssec-check /opt/v/bin/python -m pytest \
+            -q -p no:cacheprovider -m integration tests/test_dnssec_systemd.py
+
   release-rehearsal:
     # `make packages` is what the release workflow runs to produce the .deb,
     # .rpm, wheel and sdist it then signs and publishes. Two release blockers -

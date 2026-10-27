@@ -67,11 +67,12 @@ Most commands require root privileges (`sudo`). Exceptions are noted in the tabl
 | Code | Meaning                                                                                   |
 | :--- | :---------------------------------------------------------------------------------------- |
 | `0`  | Success. For `start` and `restart`, the session is active *and* Tor routing was confirmed. |
-| `1`  | Generic error, printed to stderr. Includes missing root privileges. For `start` and `restart`, the network has been left in — or restored to — cleartext. |
+| `1`  | Generic error, printed to stderr. Includes missing root privileges and an inconclusive DNSSEC preflight. A preflight refusal does not change the existing network state. |
 | `2`  | Reserved by the CLI framework for usage errors (unknown option, bad argument value).       |
-| `3`  | `start` / `restart` only: the session is active and fail-closed, but Tor routing could not be verified. Traffic that is not explicitly bypassed is **blocked**, not leaking. |
+| `3`  | `start` / `restart` only: the session remains installed, but external Tor verification failed. This alone does not establish whether Tor carries traffic or whether isolation was verified. |
+| `4`  | `start` / `restart`: an explicit per-interface `DNSSEC=yes` conflicts with Tor DNSPort. Refused before network changes; restart preserves any existing session. See [DNSSEC policy](web/how-to/dnssec.md). |
 
-> **Scripting `start` and `restart`:** `0` and `3` both leave a session standing; only `0` means traffic is reaching Tor. `1` means there is no session at all and the host is back on clearnet. Treating any non-zero code as "still protected" is therefore wrong in exactly one direction — see [ADR 0011](decisions/0011-start-exit-codes.md).
+> **Scripting `start` and `restart`:** `0` and `3` both leave a session standing. A DNSSEC preflight refusal (`4`, or `1` if inspection failed) does not establish a new session and does not tear down an existing one. Do not infer protection from a non-zero exit code alone. The broader unverified-session contract remains under review for 0.5.0; see [ADR 0011](decisions/0011-start-exit-codes.md).
 
 ---
 
@@ -141,7 +142,7 @@ TTP creates a dedicated, isolated nftables table that does not interfere with an
 | **Teardown Lockdown**  | `nft insert rule inet ttp filter_out [meta skuid != <tor_uid>] oifname != "lo" drop` (applied at stop start) |
 | **Socket Slaughter**   | `nft insert rule inet ttp filter_out meta l4proto tcp counter reject with tcp reset` and `nft insert rule inet ttp filter_out meta l4proto udp counter reject` (applied before final cleanup) |
 | **Conntrack Flush**    | `conntrack -F` (atomic flush of Netfilter tracked streams)      |
-| **Cleanup method**     | `nft flush table inet ttp` followed by `nft destroy table inet ttp` |
+| **Cleanup method**     | `nft flush table inet ttp` followed by `nft delete table inet ttp`; an absent table is treated as already cleaned up |
 
 **Chains within `inet ttp`:**
 

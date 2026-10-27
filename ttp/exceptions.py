@@ -21,6 +21,10 @@ class DNSError(TTPError):
     """Raised when DNS configuration (mount --bind overlay) fails."""
 
 
+class DNSSECConflictError(DNSError):
+    """An interface requires DNSSEC validation incompatible with Tor DNSPort."""
+
+
 class StateError(TTPError):
     """Raised when session lock or state management fails."""
 

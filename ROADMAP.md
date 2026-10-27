@@ -72,17 +72,33 @@ behavioural CLI tests in place of call-count assertions.
 
 ---
 
-## v0.5.0 — Compatibility & Observability (Q1 2027)
+## v0.5.0 — Compatibility & Observability
 
-**Goal:** Reduce friction for real-world desktop use.
+**Goal:** Make desktop operation reliable and make reported state match the evidence.
 
-| Item | Description |
-| :--- | :---------- |
-| **VPN coexistence** | Detect `tun+`/`wg+` interfaces and generate compatible nftables rules for Tor-over-VPN / VPN-over-Tor. |
-| **Desktop notifications** | Today nothing reaches anyone. `alerts.py` calls `wall`, but terminals are writable only by their owner and the `tty` group, which `ttp-watchdog` is not in; and `notify-send`, but from a system service with no user's session bus. Delivering them means crossing a privilege boundary - a small root helper started through polkit, or a per-user agent listening on the system bus - which needs an ADR before code. Then cover circuit rotation as well as killswitch activation. |
-| **`ttp monitor` (TUI)** | Real-time bandwidth/circuit stats via Rich or Textual. |
-| **Supply chain & reproducibility** | *Done ahead of schedule; ships in 0.4.10.* Published releases are verified from what was published (signatures bound to the tag's workflow, checksums, PyPI bytes) after every release and weekly; the build environment is pinned by version and hash; every artifact has its own SBOM; and builds are reproducible - checked on every change, and every release is rebuilt from its tag and compared. See `docs/verification.md`. |
-| **systemd-resolved drop rule, measured** | [ADR 0009](docs/decisions/0009-systemd-resolved-bypass.md)'s last layer — `meta skuid <resolved> ip daddr != 127.0.0.1 drop` — is what turns a resolved misconfiguration (a per-link DNS server, a VPN pushing `~.`) into a failed lookup instead of a leak. Today it is only checked as a string in the generated ruleset. Add an NSE test that sends a query as resolved's UID and requires it to be seen with the ruleset flushed and dropped with it loaded. |
+The maintainer approves behavior and architecture before implementation. The
+order below is the agreed discussion order; an estimate does not approve an
+undecided feature. Estimates are focused engineering days for one developer,
+including implementation, tests and documentation after contract approval.
+They exclude decision waiting time and are not a release-date commitment.
+
+| Order | Work | Approval / delivery status | Estimated remaining effort |
+| :--- | :--- | :--- | :--- |
+| 1 | **Measured systemd-resolved UID restriction:** IPv4 then IPv6; UDP/TCP DNS and non-DNS with LAN bypass, competing NAT, positive controls, kernel trace attribution and rule-removal mutation. These are firewall tests, not end-to-end DNS/Tor tests. | Approved; implemented for 0.5.0. Numeric Docker fixture priority and nftables 1.0.6-compatible teardown are included. | Complete; release validation below. |
+| 1a | **Hardened-host compatibility:** readable installed code and DNS artifacts under restrictive umasks; temporary inherited-global `DNSSEC=no`; preserve explicit per-link `DNSSEC=yes` and refuse startup before network changes, with documentation and exit code `4`. No new flag. | Approved; implemented for 0.5.0. Runtime behavior was diagnosed on Fedora; automated permission, preflight and resolver tests cover the fix. | Complete; release validation below. |
+| 2 | **Degraded-state contract:** distinguish inconclusive Tor verification, requested versus live watchdog, and killswitch requested/applied/verified. Correct claims of isolation only after defining what evidence supports them. | Definition and approval still required. Earlier assistant proposals about exit codes and watchdog policy are not approved. The DNSSEC refusal code `4` is the specific approved exception. | 2–4 days |
+| 3 | **Delivered desktop notifications:** define recipients, events, delivery evidence and the privilege boundary between the system service and desktop sessions before choosing an implementation. | Definition and architecture approval required. | 3–5 days |
+| 4 | **`ttp monitor`:** present trustworthy session, watchdog and containment information; define which other metrics are useful and actually available. Depends on item 2. | Definition and approval required; no UI toolkit or metric set selected. | 2–4 days |
+| 5 | **VPN compatibility:** first define supported topologies, startup/shutdown order, DNS behavior and what happens when either VPN or Tor fails. Interface names alone do not establish a topology. | Definition and approval required; neither Tor-over-VPN nor VPN-over-Tor is approved yet. | 5–10 days, topology-dependent |
+| Release | **Integration and release validation:** unit/NSE tests, resolver compatibility, VM lifecycle, packaging, documentation and regression review across supported distributions. | Required before publishing 0.5.0. | 2–3 days |
+
+Indicative remaining total: **14–26 focused engineering days** after the pending
+contracts are approved. The VPN scope is the largest uncertainty. NSE changes
+needed to support future scenarios must be scoped separately; these estimates do
+not authorize changes to NSE.
+
+Supply-chain verification and reproducible builds already shipped in 0.4.10;
+they remain release checks rather than unfinished 0.5.0 feature work.
 
 *Deferred until v0.5.0+ unless a contributor picks them up:*
 

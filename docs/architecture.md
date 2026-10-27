@@ -58,6 +58,7 @@ The project is divided into independent Python modules. Each module has a single
 | `firewall/`      | **Firewall**     | Package generating and applying `nftables` rules (`builder`, `runner`, `emergency`). |
 | `dns.py`         | **DNS**          | Manages DNS via Kernel-level `mount --bind` overlay.                             |
 | `dns_resolved.py`| **DNS**          | Manages systemd-resolved DNS redirection and caching drop-in configs.            |
+| `dns_policy.py` | **DNS preflight** | Distinguishes inherited DNSSEC from explicit interface requirements before network changes. |
 | `state.py`       | **State**        | Manages volatile lock file in `/run/ttp` and recovery logic (volatile).          |
 | `ux.py`          | **UX**           | Manages one-time user engagement flags and persistent sentinels (persistent).    |
 | `tor_control.py` | **Control**      | Encapsulates Tor interaction (Stem, Bootstrap, IP Check).                        |
@@ -147,7 +148,7 @@ Generates rules applied atomically via `nft -f` into the dedicated `inet ttp` ta
 **Design principles:**
 
 1. **Stateless Logic**: No system-wide rule backups are performed. All modifications are isolated to the `ttp` table.
-2. **Atomic Cleanup**: Restoration is performed via `nft destroy table inet ttp`, faster and safer than rule-by-rule deletion.
+2. **Table Cleanup**: Restoration flushes `inet ttp`, then removes it with `nft delete table inet ttp` for compatibility with older nftables versions. If deletion reports an error, an existence check distinguishes an already absent table from failed cleanup.
 3. **Multi-Chain Architecture**: A NAT hook (`output`/`prerouting`) handles redirection to Tor ports; a filter hook (`filter_out`) implements the Kill-Switch, rejecting everything that is not explicitly allowed.
 4. **Named Counters**: The DNS and TCP redirects, the DoT, DoH and un-redirected DNS rejects and the catch-all reject each carry a named nftables counter, read back through `firewall.read_counters()`. They answer questions the ruleset's *shape* cannot: whether the redirect a probe depends on actually matched, and whether a rule that should be unreachable ever fired. `ttp status` surfaces the catch-all count, the DNS leak probe reads the redirect counter around its query, and the watchdog treats a DoH, DoT or un-redirected DNS count that has risen since its previous check as an integrity failure (see ADR 0012 for why those rules are unreachable in normal operation). It compares against the previous reading rather than zero because the counters are cumulative: one matched packet would otherwise fail every later check, the re-check after healing included. A counter that cannot be read is reported as *absent*, never as `0`.
 5. **Split Tunneling**: UIDs/GIDs are resolved via Python's `pwd`/`grp` libraries and injected as `meta skuid`/`meta skgid` rules — no shell interpolation.

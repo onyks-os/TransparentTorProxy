@@ -101,6 +101,7 @@ nav:
       - Custom Firewalls (UFW/firewalld): how-to/custom-nftables.md
       - VM & Chaos Testing: how-to/vm-testing.md
       - Applications with Their Own DNS: how-to/apps-with-own-dns.md
+      - DNSSEC Policy: how-to/dnssec.md
   - Explanation:
       - Architecture & Flow: explanation/architecture.md
       - Watchdog FSM: explanation/watchdog-fsm.md

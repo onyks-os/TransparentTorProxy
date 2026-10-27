@@ -252,8 +252,10 @@ def destroy_rules() -> bool:
         check=False,
         timeout=10,
     )
+    # `delete` is supported by older nft versions (including 1.0.6), unlike
+    # `destroy`. The existence check below supplies idempotence when absent.
     result = subprocess.run(
-        [resolve("nft"), "destroy", "table", "inet", "ttp"],
+        [resolve("nft"), "delete", "table", "inet", "ttp"],
         capture_output=True,
         check=False,
         timeout=10,
@@ -279,7 +281,7 @@ def destroy_rules() -> bool:
             return True
         # The table still exists - destroy actually failed
         err_msg = result.stderr.decode().strip() if result.stderr else "unknown error"
-        logger.error(f"nft destroy failed: {err_msg}")
+        logger.error(f"nft delete failed: {err_msg}")
         raise FirewallError(f"Failed to destroy nftables ruleset: {err_msg}")
 
     return True

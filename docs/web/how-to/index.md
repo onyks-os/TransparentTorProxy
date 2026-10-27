@@ -13,3 +13,5 @@ installation — if you do not have one, start with the [Quickstart](../tutorial
   used to exercise the watchdog and killswitch.
 - [Check applications that resolve DNS on their own](apps-with-own-dns.md) — browser DoH,
   per-link resolvers and containers: what happens to each under TTP, and how to check.
+- [Resolve a DNSSEC policy conflict](dnssec.md) — automatic session settings,
+  explicit interface requirements, refusal code `4` and restoration.

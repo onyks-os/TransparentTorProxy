@@ -166,6 +166,9 @@ PEER_V6 = "fd00:1::2"
 #: exempts it, so the fixture and the teardown tests must agree on it.
 TOR_UID = 110
 
+#: Synthetic resolver identity, distinct from Tor and explicit bypass principals.
+RESOLVED_UID = 111
+
 #: Any address outside the veth subnet stands in for "the WAN".
 WAN_V4 = "8.8.8.8"
 WAN_V6 = "2001:4860:4860::8888"
@@ -347,15 +350,22 @@ def icmp_to(host: str) -> Callable[[str], str]:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def ttp_ruleset() -> str:
+def _capture_ttp_ruleset(*, disable_ipv6: bool = False) -> str:
     """TTP's real ruleset, captured from the builder rather than hand-written."""
     with (
         patch("ttp.firewall.runner._run_nft"),
         patch("ttp.firewall.runner._run_nft_string") as mock_run_nft_string,
         patch("ttp.firewall.runner.pwd.getpwnam") as mock_getpwnam,
     ):
-        mock_getpwnam.return_value = MagicMock(pw_uid=TOR_UID)
+
+        def lookup_user(name: str) -> MagicMock:
+            if name == "debian-tor":
+                return MagicMock(pw_uid=TOR_UID)
+            if name in ("systemd-resolve", "systemd-resolved"):
+                return MagicMock(pw_uid=RESOLVED_UID)
+            raise KeyError(name)
+
+        mock_getpwnam.side_effect = lookup_user
         apply_rules(
             tor_user="debian-tor",
             transport_port=9041,
@@ -364,8 +374,22 @@ def ttp_ruleset() -> str:
             lan_bypass=True,
             bypass_uids=[1000],
             bypass_gids=[1000],
+            disable_ipv6=disable_ipv6,
         )
         return mock_run_nft_string.call_args[0][0]
+
+
+@pytest.fixture
+def ttp_ruleset() -> str:
+    """Capture the production generator with separate Tor and resolver identities."""
+    return _capture_ttp_ruleset()
+
+
+@pytest.fixture
+def resolved_ruleset() -> str:
+    """Enable both families explicitly; sandbox capability is checked separately."""
+    with patch("ttp.tor_detect.is_ipv6_supported", return_value=True):
+        return _capture_ttp_ruleset()
 
 
 @pytest.fixture
@@ -849,8 +873,8 @@ COMPETING_RULESETS = {
         }
     }
     """,
-    # Docker's shape: its own nat table with prerouting and output chains, at
-    # the same dstnat priority TTP's redirect uses.
+    # Docker's shape: its own nat table with prerouting and output chains at
+    # the standard dstnat priority (-100), after TTP's output redirect (-150).
     "docker_like": """
     table ip docker_like {
         chain prerouting {
@@ -858,7 +882,9 @@ COMPETING_RULESETS = {
             fib daddr type local counter accept
         }
         chain output {
-            type nat hook output priority dstnat; policy accept;
+            # Use the numeric dstnat priority: older nft rejects the symbolic
+            # name in this hook even though the numeric priority is valid.
+            type nat hook output priority -100; policy accept;
             ip daddr != 127.0.0.0/8 fib daddr type local counter accept
         }
         chain postrouting {
@@ -1015,6 +1041,174 @@ def test_a_foreign_dnat_ahead_of_ttp_cannot_carry_dns_to_a_lan_resolver(ns_sandb
         f"{escaped}. TTP's redirect was pre-empted and filter_out let the "
         f"rewritten query through."
     )
+
+
+# ---------------------------------------------------------------------------
+# systemd-resolved: exercise the UID-specific drop, not another DNS safeguard.
+# No real resolver service or host account is needed: socket ownership is numeric.
+# ---------------------------------------------------------------------------
+
+
+def _resolved_drop_rule(ipv6: bool) -> str:
+    family, loopback = ("ip6", "::1") if ipv6 else ("ip", "127.0.0.1")
+    return f"meta skuid {RESOLVED_UID} {family} daddr != {loopback} drop"
+
+
+def _without_resolved_drop(ruleset: str, ipv6: bool) -> str:
+    """Mutate only the tested family's resolver rule, leaving other defenses intact."""
+    rule = _resolved_drop_rule(ipv6)
+    assert ruleset.count(rule) == 1, f"Expected exactly one resolver rule: {rule}"
+    return ruleset.replace(rule, "")
+
+
+def _resolved_nat(ipv6: bool, port: int) -> str:
+    """A competing NAT binding sends the stimulus to the LAN before TTP's NAT.
+
+    Non-DNS TCP also needs this binding: otherwise TTP would redirect it to
+    TransPort and the resolver's dedicated drop would never be exercised.
+    """
+    family = "ip6" if ipv6 else "ip"
+    target = f"[{HOST_V6}]:{port}" if ipv6 else f"{HOST_V4}:{port}"
+    return f"""
+    table {family} resolved_competing_nat {{
+        chain output {{
+            type nat hook output priority -175; policy accept;
+            meta l4proto {{ tcp, udp }} th dport {port} dnat to {target}
+        }}
+    }}
+    """
+
+
+def _resolved_packets(packets, ipv6: bool, port: int) -> list[str]:  # type: ignore[no-untyped-def]
+    """Select the actual LAN destination, which the WAN classifier excludes."""
+    from scapy.layers.inet import IP, TCP, UDP
+    from scapy.layers.inet6 import IPv6
+
+    layer, target = (IPv6, HOST_V6) if ipv6 else (IP, HOST_V4)
+    return [
+        packet.summary()
+        for packet in packets
+        if packet.haslayer(layer)
+        and packet[layer].dst == target
+        and any(packet.haslayer(proto) and packet[proto].dport == port for proto in (UDP, TCP))
+    ]
+
+
+def _assert_resolved_attribution(ns, loop, stimulus, ipv6: bool) -> None:  # type: ignore[no-untyped-def]
+    ready, state, events = observe_trace(ns, loop, stimulus)
+    assert_trace_usable(ready, state, "resolver UID drop")
+    matched = _matched_rules(events)
+    # nft may render a numeric UID as an account name. Resolve that name in the
+    # same environment as nft; ownership and family still have to match exactly.
+    import pwd
+
+    uid_names = {str(RESOLVED_UID)}
+    with contextlib.suppress(KeyError):
+        uid_names.add(pwd.getpwuid(RESOLVED_UID).pw_name)
+    family, loopback = ("ip6", "::1") if ipv6 else ("ip", "127.0.0.1")
+    assert any(
+        any(f"skuid {uid}" in text or f'skuid "{uid}"' in text for uid in uid_names)
+        and f"{family} daddr != {loopback}" in text
+        and "drop" in text
+        for text in matched
+    ), f"resolver UID drop was not responsible; matched: {matched}"
+
+
+def _check_resolved_containment(ns, loop, ruleset: str, protocol: str, port: int, ipv6: bool) -> None:  # type: ignore[no-untyped-def]
+    if ipv6 and not has_ipv6(ns):
+        pytest.skip("Sandbox has no IPv6 default route")
+    stimulus = (udp_to if protocol == "udp" else tcp_to)(WAN_V6 if ipv6 else WAN_V4, port, uid=RESOLVED_UID)
+    engine = _engine()
+    engine.flush(ns.name)
+    engine.load(_resolved_nat(ipv6, port), ns.name)
+    probe, reports = _recording(stimulus)
+    assert _resolved_packets(observe(ns, loop, probe), ipv6, port), (
+        f"POSITIVE CONTROL FAILED for resolved/{protocol}/{port}: {reports}"
+    )
+
+    engine.load(ruleset, ns.name)
+    observed = observe_with_canary(ns, loop, stimulus)
+    assert canary_seen(observed, HOST_V4, CANARY_PORT), "Resolver capture canary missing"
+    assert not _resolved_packets(observed, ipv6, port), "Resolver traffic escaped to LAN"
+    assert not [p.summary() for p in observed if is_cleartext_leak(p)], "Resolver traffic escaped to WAN"
+    _assert_resolved_attribution(ns, loop, stimulus, ipv6)
+
+    # A containment-only DNS check could still pass via the generic DNS reject.
+    # Attribution MUST fail for that mutant. Non-DNS instead reaches the LAN
+    # bypass and must become observable, proving the dedicated rule is necessary.
+    engine.flush(ns.name)
+    engine.load(_resolved_nat(ipv6, port), ns.name)
+    engine.load(_without_resolved_drop(ruleset, ipv6), ns.name)
+    with pytest.raises(AssertionError, match="resolver UID drop was not responsible"):
+        _assert_resolved_attribution(ns, loop, stimulus, ipv6)
+    if port != 53:
+        assert _resolved_packets(observe(ns, loop, stimulus), ipv6, port), "Non-DNS mutant did not expose LAN traffic"
+
+
+@pytest.mark.parametrize("protocol", ["udp", "tcp"])
+@pytest.mark.parametrize("port", [53, 9998], ids=["dns", "non-dns"])
+def test_resolved_ipv4_uid_drop(ns_sandbox, resolved_ruleset, protocol: str, port: int) -> None:
+    """The dedicated resolver restriction applies even with LAN bypass enabled."""
+    ns, loop = ns_sandbox
+    _check_resolved_containment(ns, loop, resolved_ruleset, protocol, port, False)
+
+
+def _check_resolved_dns_redirect(ns, loop, ruleset: str, protocol: str, ipv6: bool) -> None:  # type: ignore[no-untyped-def]
+    if ipv6 and not has_ipv6(ns):
+        pytest.skip("Sandbox has no IPv6 default route")
+    _engine().load(ruleset, ns.name)
+    stimulus = (udp_to if protocol == "udp" else tcp_to)(WAN_V6 if ipv6 else WAN_V4, 53, uid=RESOLVED_UID)
+    ready, state, events = observe_trace(ns, loop, stimulus)
+    assert_trace_usable(ready, state, "resolver normal DNS")
+    matched = _matched_rules(events)
+    loopback = "::1" if ipv6 else "127.0.0.1"
+    assert any("dnat" in text and loopback in text and "9054" in text for text in matched), matched
+    assert any("accept" in text and f"{'ip6' if ipv6 else 'ip'} daddr" in text for text in matched), matched
+    assert not any("skuid" in text and f"daddr != {loopback}" in text and "drop" in text for text in matched), matched
+
+
+@pytest.mark.parametrize("protocol", ["udp", "tcp"])
+def test_resolved_ipv4_dns_redirect_remains_allowed(ns_sandbox, resolved_ruleset, protocol: str) -> None:
+    """Normal DNS enters local DNSPort; this does not assert Tor resolution."""
+    ns, loop = ns_sandbox
+    _check_resolved_dns_redirect(ns, loop, resolved_ruleset, protocol, False)
+
+
+@pytest.mark.parametrize("protocol", ["udp", "tcp"])
+@pytest.mark.parametrize("port", [53, 9998], ids=["dns", "non-dns"])
+def test_resolved_ipv6_uid_drop(ns_sandbox, resolved_ruleset, protocol: str, port: int) -> None:
+    """With IPv6 enabled, attribute the drop to the resolver, not the v6 kill-switch."""
+    ns, loop = ns_sandbox
+    _check_resolved_containment(ns, loop, resolved_ruleset, protocol, port, True)
+
+
+@pytest.mark.parametrize("protocol", ["udp", "tcp"])
+def test_resolved_ipv6_dns_redirect_remains_allowed(ns_sandbox, resolved_ruleset, protocol: str) -> None:
+    """IPv6 DNS keeps its loopback path when IPv6 is supported."""
+    ns, loop = ns_sandbox
+    _check_resolved_dns_redirect(ns, loop, resolved_ruleset, protocol, True)
+
+
+@pytest.mark.parametrize("protocol", ["udp", "tcp"])
+def test_resolved_ipv6_disabled_uses_family_killswitch(ns_sandbox, protocol: str) -> None:
+    """When IPv6 is disabled, the earlier family-wide drop is the expected defense."""
+    ns, loop = ns_sandbox
+    if not has_ipv6(ns):
+        pytest.skip("Sandbox has no IPv6 default route")
+    stimulus = (udp_to if protocol == "udp" else tcp_to)(HOST_V6, 53, uid=RESOLVED_UID)
+    engine = _engine()
+    engine.flush(ns.name)
+    assert _resolved_packets(observe(ns, loop, stimulus), True, 53), "IPv6 positive control failed"
+    with patch("ttp.tor_detect.is_ipv6_supported", return_value=True):
+        ruleset = _capture_ttp_ruleset(disable_ipv6=True)
+    engine.load(ruleset, ns.name)
+    observed = observe_with_canary(ns, loop, stimulus)
+    assert canary_seen(observed, HOST_V4, CANARY_PORT), "IPv6-disabled capture canary missing"
+    assert not _resolved_packets(observed, True, 53), "Disabled IPv6 escaped"
+    ready, state, events = observe_trace(ns, loop, stimulus)
+    assert_trace_usable(ready, state, "resolver with IPv6 disabled")
+    matched = _matched_rules(events)
+    assert any("meta nfproto ipv6 drop" in text for text in matched), matched
 
 
 # ---------------------------------------------------------------------------
@@ -1194,7 +1388,7 @@ def ttp_nft_inside(ns_name: str) -> Iterator[None]:
     """Send TTP's own ``nft`` invocations into *ns_name* instead of this host.
 
     The teardown path does not build a ruleset string the way ``apply_rules``
-    does - it issues imperative ``nft insert`` and ``nft destroy`` commands - so
+    does - it issues imperative ``nft insert`` and ``nft delete`` commands - so
     it cannot be captured from the builder and handed to the engine. Redirecting
     the subprocess call is what lets these tests exercise the real
     ``apply_teardown_lockdown`` and ``destroy_rules`` rather than a copy of them,
@@ -1302,6 +1496,7 @@ def test_destroying_the_rules_leaves_no_table_and_no_lockdown_behind(ns_sandbox,
     with ttp_nft_inside(ns.name):
         apply_teardown_lockdown(TOR_UID)
         assert destroy_rules() is True, "destroy_rules() reported that the table survived teardown"
+        assert destroy_rules() is True, "Repeated teardown must accept an already absent table"
 
     tables = _exec_in_ns(ns.name, "nft", "list", "tables")
     assert "inet ttp" not in tables.stdout, f"the `inet ttp` table outlived destroy_rules(): {tables.stdout.strip()!r}"

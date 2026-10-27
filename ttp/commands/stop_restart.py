@@ -16,6 +16,7 @@ from ttp.commands._common import (
 from ttp.commands._common import (
     require_root as _require_root,
 )
+from ttp.commands._preflight import require_dnssec_compatibility
 from ttp.commands.lifecycle import do_stop as _do_stop
 from ttp.commands.start import start_command
 
@@ -155,6 +156,8 @@ def restart_command(
     _require_root()
 
     require_systemd()
+    # A policy conflict must not tear down the session that restart would replace.
+    require_dnssec_compatibility()
 
     if state.read_lock() is not None:
         console.print(f"{_PREFIX} Stopping current session...")
