@@ -22,6 +22,22 @@ from ttp.commands._common import EXIT_UNVERIFIED
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def private_runtime(tmp_path, monkeypatch):
+    import os
+
+    from ttp import state
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    monkeypatch.setattr(state, "LOCK_DIR", runtime)
+    monkeypatch.setattr(state, "LOCK_PATH", runtime / "session")
+    monkeypatch.setattr(state, "ensure_runtime_dir", lambda: None)
+    monkeypatch.setattr(state, "_watchdog_uid_or_root", os.getuid)
+    monkeypatch.setattr(state, "_watchdog_gid", os.getgid)
+    monkeypatch.setattr(state.os, "fchown", lambda *args: None)
+
+
 def _mock_cmd_tokens(cmd: object) -> list[str]:
     """Split mocked subprocess.run argv into tokens (avoids substring `in` on raw cmd)."""
     if isinstance(cmd, str):

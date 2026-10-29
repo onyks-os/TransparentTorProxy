@@ -24,6 +24,7 @@ from rich.progress import (
     TextColumn,
 )
 
+from ttp.evidence import Verification, VerificationState, boottime
 from ttp.exceptions import TorError
 
 # A bridge value becomes exactly one physical line of the generated torrc.
@@ -129,7 +130,7 @@ def require_systemd() -> None:
         raise typer.Exit(code=1)
 
 
-def verify_tor(timeout: int = 180) -> tuple[bool, str]:
+def verify_tor(timeout: int = 180, *, verification_timeout: float = 60, lock: dict | None = None) -> Verification:
     """Verify that traffic is routed through Tor, with bootstrap progress UI."""
     from ttp import tor_control
     from ttp.commands._common import _PREFIX, console, print_error
@@ -154,7 +155,7 @@ def verify_tor(timeout: int = 180) -> tuple[bool, str]:
         except (TorError, RuntimeError) as e:
             progress.stop()
             print_error("Bootstrap Error", str(e))
-            return False, "unknown"
+            return Verification(VerificationState.INCONCLUSIVE, "tor.bootstrap_incomplete", observed_at=boottime())
 
     time.sleep(2)
 
@@ -165,7 +166,9 @@ def verify_tor(timeout: int = 180) -> tuple[bool, str]:
         transient=True,
     ) as progress:
         progress.add_task(f"{_PREFIX} Verifying Tor routing...", total=None)
-        return tor_control.verify_tor()
+        from ttp.probe import verify_session
+
+        return verify_session(timeout=verification_timeout, lock=lock)
 
 
 def parse_txt_dig_ipv4(dig_stdout: str) -> str | None:

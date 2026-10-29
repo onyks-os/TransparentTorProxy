@@ -108,4 +108,5 @@ package() {
 
     # Install the license file (required by Arch Linux standards for MIT).
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 assets/ttp.conf.example "$pkgdir/usr/share/doc/$pkgname/ttp.conf.example"
 }

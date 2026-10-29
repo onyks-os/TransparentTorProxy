@@ -128,6 +128,7 @@ cp ttp/resources/polkit/50-ttp-watchdog.rules "$BUILD_DIR/usr/share/polkit-1/rul
 # Create the documentation folder to store the copyright (required by Debian standards)
 mkdir -p "$BUILD_DIR/usr/share/doc/transparent-tor-proxy"
 cp LICENSE "$BUILD_DIR/usr/share/doc/transparent-tor-proxy/copyright"
+cp assets/ttp.conf.example "$BUILD_DIR/usr/share/doc/transparent-tor-proxy/ttp.conf.example"
 
 # Create the 'control' file inside the DEBIAN folder.
 # This is the most important metadata file. It tells apt what this package is,

@@ -39,7 +39,7 @@ def require_watchdog_dependency() -> None:
 
     if not fsm.watchdog_dependency_available():
         _print_error("Watchdog Unavailable", fsm.INSTALL_HINT)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=5)
 
 
 def validate_ports(transport_port: int, dns_port: int, external_daemon: bool) -> None:
@@ -92,6 +92,12 @@ def check_session_state() -> dict | None:
 
     lock = state.read_lock()
     if lock:
+        if lock.get("session_id"):
+            _print_error(
+                "Session Already Present",
+                "A recorded session must be terminated with 'sudo ttp stop' before starting another.",
+            )
+            raise typer.Exit(code=1)
         if state.is_orphan():
             console.print(f"{_PREFIX} [yellow]Orphaned session detected (PID {lock.get('pid')}). Auto-recovering...[/]")
             state.attempt_recovery(firewall.destroy_rules, dns.restore_dns)

@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Required watchdog readiness and useful-progress evidence, frozen configurable
+  deadlines, suspend-aware freshness and an independent systemd termination
+  handler. Emergency mode survives watchdog restarts until explicit stop.
+- Optional desktop notifications with an unprivileged recipient agent,
+  authenticated Unix IPC, bounded D-Bus calls and acceptance receipts. Delivery
+  failure is reported separately and never isolates traffic by itself.
+- `ttp config [--session]`, `ttp status --json`, independent watchdog/notification
+  flags and diagnostic codes 5–9, with all concurrent causes retained. See
+  [session observations](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/web/how-to/session-observations.md) and ADR 0013.
+
 ### Fixed
+
+- Treat unavailable external verification as inconclusive (code 3), with no
+  claim of isolation. A valid negative from a non-exempt probe requests
+  containment; requested, applied and independently verified remain distinct.
+- Replace the entire TTP table atomically, including chain declarations, so
+  emergency repair handles altered hooks/types. No flush-only hash is trusted
+  as an emergency specification.
+- Preserve explicit stop intent after lock removal, including restore-only with
+  corrupt/missing intent. Late observations cannot overwrite another session.
+- `check-leak` no longer labels unavailable DNS observations as detected leaks.
 
 - Keep installed Python code and generated DNS configuration accessible under
   restrictive administrator umasks (`0027`, `0077`), without widening access to
@@ -24,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nftables 1.0.6 rejects `dstnat` in that hook.
 
 ### Tests
+
+- Add isolated real systemd/nftables tests for SIGSTOP/SIGKILL, independent
+  containment, restart latching, tamper repair and explicit stop. Private D-Bus
+  tests cover unprivileged delivery, ordinary and critical expiry, deduplication,
+  replacement, server failure and an ambiguous timeout after receipt.
 
 - Cover restrictive-umask DNS creation/restoration, installation access,
   inherited versus explicit DNSSEC policy, inspection failures and preflight

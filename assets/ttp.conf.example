@@ -1,0 +1,30 @@
+# TTP session settings. Optional administrator-owned /etc/ttp/ttp.conf.
+# Install as root:root, mode 0644. Unknown keys/invalid combinations refuse start.
+# Changes affect NEW sessions only. Values below are the built-in defaults.
+# A CLI --watchdog/--no-watchdog or --notifications/--no-notifications overrides
+# its matching enabled setting. Notifications never require a watchdog.
+
+[watchdog]
+enabled = false
+readiness_timeout = 30
+heartbeat_interval = 5
+service_timeout = 30
+check_interval = 15
+check_timeout = 10
+observation_max_age = 30
+# service_timeout >= 2 * (check_timeout + heartbeat_interval)
+# readiness_timeout >= check_timeout + heartbeat_interval
+# observation_max_age >= check_interval + check_timeout
+
+[verification]
+# Separate from the existing Tor bootstrap timeout; total external probe budget.
+timeout = 60
+
+[notifications]
+enabled = false
+readiness_timeout = 15
+call_timeout = 5
+delivery_timeout = 15
+attempts = 3
+# delivery_timeout >= call_timeout. At most 3 attempts within the total budget;
+# the deadline can expire before all attempts have been made.

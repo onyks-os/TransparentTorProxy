@@ -44,7 +44,6 @@ from ttp.watchdog.alerts import (
     trigger_emergency_killswitch,
 )
 from ttp.watchdog.fsm import WatchdogFSM
-from ttp.watchdog.inotify import run_watchdog_loop
 from ttp.watchdog.integrity import (
     attempt_auto_healing,
     check_system_integrity,
@@ -60,6 +59,7 @@ from ttp.watchdog.service import (
     start_watchdog,
     stop_watchdog,
 )
+from ttp.watchdog.supervisor import run_supervisor
 
 __all__ = [
     "WATCHDOG_SERVICE_NAME",
@@ -71,7 +71,7 @@ __all__ = [
     "check_system_integrity",
     "has_default_route",
     "is_interface_online",
-    "run_watchdog_loop",
+    "run_supervisor",
     "start_watchdog",
     "stop_watchdog",
     "trigger_emergency_killswitch",

@@ -123,7 +123,7 @@ def apply_active_socket_slaughter() -> None:
         _log_teardown_failure("Active socket slaughter", e)
 
 
-def apply_emergency_killswitch() -> None:
+def apply_emergency_killswitch(*, timeout: float = 10) -> None:
     """Apply an emergency network killswitch.
 
     Replaces the 'inet ttp' table with an ultra-restrictive ruleset that drops
@@ -152,8 +152,8 @@ def apply_emergency_killswitch() -> None:
         # Table reset and drop-all ruleset go in as one transaction. Flushing in a
         # separate nft call would briefly leave the table empty, which is an open
         # network at the exact moment integrity has already been lost.
-        _apply_table_atomically(ruleset)
-        logger.warning("Emergency killswitch applied: network traffic isolated.")
+        _apply_table_atomically(ruleset, timeout=timeout)
+        logger.warning("Emergency rules application accepted; kernel verification is still required.")
     except Exception as e:
         logger.error(f"Failed to apply emergency killswitch: {e}")
         if not isinstance(e, FirewallError):

@@ -9,7 +9,6 @@ import typer
 from ttp import dns, firewall, state, tor_install
 from ttp.commands._common import (
     _PREFIX,
-    EXIT_UNVERIFIED,
     cli_state,
     console,
     logger,
@@ -50,7 +49,11 @@ from ttp.commands._tor_setup import (
     setup_managed_tor,
 )
 from ttp.commands.lifecycle import register_signal_handlers
+from ttp.evidence import Diagnostic, ExitCode, Result, VerificationState
 from ttp.exceptions import DNSError, FirewallError, StateError
+from ttp.runtime_records import session_store
+from ttp.session_safety import STOP_ADVICE, emergency_latched, request_emergency
+from ttp.settings import SettingsError, load_settings
 
 __all__ = [
     "_get_uid_from_port",
@@ -102,9 +105,9 @@ def start_command(
         "--no-lan-bypass",
         help="Do not bypass Tor routing for local subnets (RFC 1918 & Link-Local).",
     ),
-    watchdog: bool = typer.Option(
-        False,
-        "--watchdog",
+    watchdog: Optional[bool] = typer.Option(
+        None,
+        "--watchdog/--no-watchdog",
         "-w",
         help="Start the background watchdog daemon to monitor session integrity.",
     ),
@@ -148,10 +151,48 @@ def start_command(
         "--no-ipv6",
         help="Force disable all IPv6 traffic (drops outgoing IPv6 to prevent leaks).",
     ),
+    notifications: Optional[bool] = typer.Option(
+        None,
+        "--notifications/--no-notifications",
+        help="Enable optional desktop notifications for the initiating user.",
+    ),
+    notification_user: Optional[str] = typer.Option(
+        None, "--notification-user", help="Explicit non-root desktop recipient (required for direct root invocation)."
+    ),
 ) -> None:
     """Start the transparent Tor proxy session."""
     _require_root()
     require_systemd()
+
+    try:
+        selected = load_settings().select(watchdog=watchdog, notifications=notifications)
+    except SettingsError as exc:
+        _print_error("Invalid Configuration", str(exc))
+        raise typer.Exit(code=1)
+    watchdog = selected.settings.watchdog.enabled
+    result = Result()
+    target = None
+    if notification_user and not selected.settings.notifications.enabled:
+        _print_error(
+            "Notification Selection", "--notification-user requires --notifications or notifications.enabled=true"
+        )
+        raise typer.Exit(code=2)
+    if selected.settings.notifications.enabled:
+        from ttp.notifications.service import recipient
+
+        try:
+            target = recipient(notification_user)
+        except Exception as exc:
+            _print_error("Notifications Unavailable", str(exc))
+            result = result.add(
+                Diagnostic(
+                    ExitCode.NOTIFICATION_FAILED,
+                    "notifications.recipient_unavailable",
+                    "notifications",
+                    "start",
+                    "Desktop recipient could not be selected",
+                )
+            )
 
     if external_daemon and watchdog:
         _print_error(
@@ -198,6 +239,14 @@ def start_command(
         )
 
     preflight_checks()
+    # Record storage is prepared before changing the network, including on
+    # installations without a dedicated watchdog account.
+    try:
+        state.ensure_runtime_dir()
+        session_store().prepare()
+    except (OSError, StateError) as exc:
+        _print_error("Session Evidence Unavailable", str(exc))
+        raise typer.Exit(code=1)
 
     # --- Step 1: Detect / install Tor ---
     info = {}
@@ -296,6 +345,10 @@ def start_command(
             # Taken now, with the rules and the DNS overlay in place: the table
             # the watchdog must find for the rest of the session (#80).
             table_fingerprint=firewall.table_fingerprint(),
+            watchdog_requested=watchdog,
+            settings=selected.settings.snapshot(),
+            settings_origins=selected.origins,
+            notification_target=target,
             **kwargs_lock,
         )
     except StateError as exc:
@@ -307,45 +360,120 @@ def start_command(
         dns.restore_dns(dns_backup)
         raise typer.Exit(code=1)
 
-    # --- Step 5: Verify Tor is working ---
-    #
-    # Reaching this point means the firewall rules, the DNS overlay and the lock
-    # file are all in place, so a failure here does not leak: everything that is
-    # not explicitly bypassed is held fail-closed against a Tor that is not
-    # answering. The session is therefore left standing rather than torn down -
-    # but it is not a success either, and the exit code has to say so.
-    is_tor, exit_ip = _verify_tor(timeout=bootstrap_timeout)
-    if is_tor:
-        console.print(f"{_PREFIX} [bold green]Session active. Exit IP: {exit_ip}[/]")
-    else:
-        console.print(f"{_PREFIX} [bold yellow]Session active but Tor verification failed.[/]")
-        console.print(
-            f"{_PREFIX} [yellow]Traffic is NOT reaching Tor and is being held fail-closed: "
-            f"everything except explicitly bypassed traffic is blocked. "
-            f"Check the Tor service, or run 'ttp stop' to restore the network.[/]"
-        )
-        from ttp.tor_control import MALFORMED_ANSWER, NO_ANSWER
+    # Supervision is ready before spending the external verification budget.
+    lock = state.read_lock(strict=True)
+    if lock is None:
+        _print_error("Session Tracking Failed", "Session intent disappeared after setup; containment is unconfirmed.")
+        raise typer.Exit(code=int(ExitCode.CONTAINMENT_UNCONFIRMED))
+    if target is not None:
+        from ttp.notifications.service import start_agent
 
-        if exit_ip not in (NO_ANSWER, MALFORMED_ANSWER):
-            console.print(f"{_PREFIX} [yellow]Detected IP: {exit_ip}[/]")
-
+        try:
+            start_agent(lock, target)
+        except Exception as exc:
+            _print_error("Notifications Unavailable", str(exc))
+            result = result.add(
+                Diagnostic(
+                    ExitCode.NOTIFICATION_FAILED,
+                    "notifications.agent_start_failed",
+                    "notifications",
+                    "start",
+                    "Desktop agent did not become ready",
+                )
+            )
+    watchdog_failed = False
     if watchdog:
-        console.print(f"{_PREFIX} Starting session watchdog daemon...")
+        console.print(f"{_PREFIX} Waiting for required watchdog readiness...")
         from ttp import watchdog as wd
 
         try:
             wd.start_watchdog()
-        except Exception as e:
-            _print_error("Watchdog Error", f"Failed to start session watchdog: {e}")
+        except Exception as exc:
+            watchdog_failed = True
+            cause = Diagnostic(
+                ExitCode.WATCHDOG_UNAVAILABLE,
+                "watchdog.start_failed",
+                "watchdog",
+                "start",
+                "Required watchdog did not become ready",
+            )
+            result = Result(result.diagnostics + request_emergency(lock, cause).diagnostics)
+            _print_error("Required Watchdog Unavailable", str(exc))
 
+    if not watchdog_failed:
+        verification = _verify_tor(
+            timeout=bootstrap_timeout, verification_timeout=selected.settings.verification.timeout, lock=lock
+        )
+        from ttp.session_report import record_verification
+
+        result = Result(result.diagnostics + record_verification(lock, verification).diagnostics)
+        if verification.state is VerificationState.NEGATIVE:
+            logger.error("tor.valid_negative: emergency containment requested")
+        elif verification.confirmed:
+            console.print(f"{_PREFIX} Tor routing confirmed at this observation. Exit IP: {verification.ip}")
+        else:
+            _print_error(
+                "Tor Verification Inconclusive",
+                "This result does not prove Tor traffic is absent or that the network is isolated. "
+                "The session remains configured; inspect 'ttp status' and 'ttp check'.",
+            )
+
+    # A watchdog can detect a fault while the external probe is running.
+    try:
+        if emergency_latched(lock):
+            result = Result(
+                result.diagnostics
+                + request_emergency(
+                    lock,
+                    Diagnostic(
+                        ExitCode.ERROR,
+                        "session.emergency_latched",
+                        "session",
+                        "start",
+                        "Emergency remains latched until explicit termination",
+                    ),
+                    repair=True,
+                ).diagnostics
+            )
+    except StateError:
+        result = result.add(
+            Diagnostic(
+                ExitCode.CONTAINMENT_UNCONFIRMED,
+                "session.evidence_invalid",
+                "session",
+                "start",
+                "Cannot inspect emergency evidence",
+            )
+        )
+    if selected.settings.notifications.enabled:
+        from ttp.notifications.service import emit
+
+        event = "started"
+        if result.exit_code == ExitCode.CONTAINMENT_UNCONFIRMED:
+            event = "containment_unconfirmed"
+        elif result.exit_code == ExitCode.EMERGENCY_VERIFIED:
+            event = "emergency_verified"
+        elif any(item.active and item.code == ExitCode.UNVERIFIED for item in result.diagnostics):
+            event = "inconclusive"
+        result = Result(result.diagnostics + emit(lock, event).diagnostics)
+    if result.exit_code in (ExitCode.EMERGENCY_VERIFIED, ExitCode.CONTAINMENT_UNCONFIRMED):
+        message = (
+            "Emergency rules verified in the kernel."
+            if result.exit_code == ExitCode.EMERGENCY_VERIFIED
+            else "CONTAINMENT UNCONFIRMED: isolation could not be established."
+        )
+        _print_error("Session Emergency", f"{message} {STOP_ADVICE}")
+    if result.exit_code:
+        for diagnostic in result.diagnostics:
+            if diagnostic.active:
+                logger.error("%s: %s", diagnostic.reason, diagnostic.message)
+                _print_error(diagnostic.reason, diagnostic.message)
+        raise typer.Exit(code=int(result.exit_code))
+
+    console.print(f"{_PREFIX} [bold green]Session active; selected startup requirements satisfied.[/]")
+    if not watchdog:
+        console.print(f"{_PREFIX} Watchdog not selected: no continuous fault detection or asynchronous fault alerts.")
     console.print(f"{_PREFIX} Use 'ttp stop' to terminate. 'ttp refresh' to change IP.")
-
-    # Raised after the watchdog has been given its chance to start: a session
-    # that is up but unverified is exactly the one that benefits from being
-    # watched.
-    if not is_tor:
-        raise typer.Exit(code=EXIT_UNVERIFIED)
-
     if state.should_show_star_message():
         console.print("\n[dim]Thanks for using TTP! Starring the repo on GitHub helps the project grow.[/]")
         state.mark_star_message_shown()

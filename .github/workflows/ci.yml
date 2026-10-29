@@ -227,6 +227,24 @@ jobs:
           sudo -E env "PATH=$PATH" TTP_REQUIRE_NSE=1 \
             python -m pytest tests/test_nse_rules.py -m nse -v
 
+  session-services:
+    name: Session supervision and desktop protocol (isolated systemd)
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Build disposable service fixture
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+          sudo podman build -f tests/containers/dnssec.Containerfile \
+            --build-arg BASE_IMAGE=docker.io/library/debian:13-slim \
+            -t localhost/ttp-dnssec-debian13:latest .
+          sudo podman build -f tests/containers/notifications.Containerfile \
+            -t localhost/ttp-notifications-check:latest .
+      - name: Verify readiness, lost progress, independent containment and notification receipts
+        run: sudo scripts/check-session-services.sh
+
   dnssec-policy:
     name: DNSSEC policy (${{ matrix.distribution }})
     needs: lint

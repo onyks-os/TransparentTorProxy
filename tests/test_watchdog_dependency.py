@@ -30,6 +30,23 @@ from ttp.commands import lifecycle
 
 runner = CliRunner()
 
+
+@pytest.fixture(autouse=True)
+def private_runtime(tmp_path, monkeypatch):
+    import os
+
+    from ttp import state
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    monkeypatch.setattr(state, "LOCK_DIR", runtime)
+    monkeypatch.setattr(state, "LOCK_PATH", runtime / "session")
+    monkeypatch.setattr(state, "ensure_runtime_dir", lambda: None)
+    monkeypatch.setattr(state, "_watchdog_uid_or_root", os.getuid)
+    monkeypatch.setattr(state, "_watchdog_gid", os.getgid)
+    monkeypatch.setattr(state.os, "fchown", lambda *args: None)
+
+
 # Runs in a fresh interpreter so that no module is already imported. The finder
 # makes `transitions` importable only from the vendor directory, and only once
 # that directory is on sys.path: exactly a host whose distribution has no
@@ -183,24 +200,36 @@ def test_start_with_watchdog_refuses_before_changing_anything_when_it_cannot_run
     ):
         result = runner.invoke(app, ["start", "--watchdog"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 5
     assert "transitions" in result.output
     preflight.assert_not_called()
     apply_rules.assert_not_called()
 
 
 def test_watchdog_start_refuses_when_it_cannot_run():
+    from ttp import state
+    from ttp.runtime_records import session_store
+    from ttp.settings import Settings
+
+    state.LOCK_PATH.write_text(
+        __import__("json").dumps({"pid": 1, "session_id": "test", "settings": Settings().snapshot()})
+    )
     with (
         patch("os.geteuid", return_value=0),
         patch("ttp.cli._setup_logging"),
-        patch("ttp.state.read_lock", return_value={"pid": 1}),
         patch("ttp.watchdog.fsm.watchdog_dependency_available", return_value=False),
+        patch("ttp.firewall.apply_emergency_killswitch") as contain,
         patch("ttp.watchdog.start_watchdog") as start_watchdog,
     ):
         result = runner.invoke(app, ["watchdog", "start"])
 
-    assert result.exit_code == 1
+    # Network setup already exists: missing requested supervision must request
+    # containment, and a mock nft boundary cannot establish kernel isolation.
+    assert result.exit_code == 8, result.output
     assert "transitions" in result.output
+    assert state.read_lock()["watchdog_requested"]
+    assert session_store().read("emergency", "test")["data"]["requested"]
+    contain.assert_called_once()
     start_watchdog.assert_not_called()
 
 

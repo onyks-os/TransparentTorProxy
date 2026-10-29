@@ -27,6 +27,7 @@ from ttp.commands._validation import (
     validate_bridge_line,
     verify_tor,
 )
+from ttp.evidence import Verification, VerificationState
 from ttp.exceptions import TorError
 
 # ---------------------------------------------------------------------------
@@ -173,10 +174,13 @@ def test_a_bare_line_is_preferred_over_an_embedded_match() -> None:
 def test_verify_tor_returns_the_control_port_result() -> None:
     with (
         patch("ttp.tor_control.wait_for_bootstrap") as bootstrap,
-        patch("ttp.tor_control.verify_tor", return_value=(True, "203.0.113.7")),
+        patch(
+            "ttp.probe.verify_session",
+            return_value=Verification(VerificationState.CONFIRMED, "tor.confirmed", "203.0.113.7"),
+        ),
         patch("time.sleep"),
     ):
-        assert verify_tor(timeout=1) == (True, "203.0.113.7")
+        assert verify_tor(timeout=1).confirmed
     bootstrap.assert_called_once()
 
 
@@ -187,12 +191,13 @@ def test_verify_tor_reports_a_bootstrap_failure_without_claiming_an_ip() -> None
     """
     with (
         patch("ttp.tor_control.wait_for_bootstrap", side_effect=TorError("stalled at 25%")),
-        patch("ttp.tor_control.verify_tor") as verify,
+        patch("ttp.probe.verify_session") as verify,
         patch("ttp.commands._common.print_error") as print_error,
         patch("time.sleep"),
     ):
         result = verify_tor(timeout=1)
-    assert result == (False, "unknown")
+    assert result.state is VerificationState.INCONCLUSIVE
+    assert result.ip is None
     assert "Bootstrap Error" in print_error.call_args[0][0]
     verify.assert_not_called()
 
@@ -203,13 +208,16 @@ def test_verify_tor_handles_a_runtime_error_from_the_control_port() -> None:
         patch("ttp.commands._common.print_error"),
         patch("time.sleep"),
     ):
-        assert verify_tor(timeout=1) == (False, "unknown")
+        assert verify_tor(timeout=1).state is VerificationState.INCONCLUSIVE
 
 
 def test_verify_tor_forwards_the_timeout() -> None:
     with (
         patch("ttp.tor_control.wait_for_bootstrap") as bootstrap,
-        patch("ttp.tor_control.verify_tor", return_value=(True, "203.0.113.7")),
+        patch(
+            "ttp.probe.verify_session",
+            return_value=Verification(VerificationState.CONFIRMED, "tor.confirmed", "203.0.113.7"),
+        ),
         patch("time.sleep"),
     ):
         verify_tor(timeout=42)
@@ -227,7 +235,10 @@ def test_verify_tor_feeds_bootstrap_progress_to_the_bar() -> None:
 
     with (
         patch("ttp.tor_control.wait_for_bootstrap", side_effect=bootstrap),
-        patch("ttp.tor_control.verify_tor", return_value=(True, "203.0.113.7")),
+        patch(
+            "ttp.probe.verify_session",
+            return_value=Verification(VerificationState.CONFIRMED, "tor.confirmed", "203.0.113.7"),
+        ),
         patch("time.sleep"),
     ):
         verify_tor(timeout=1)

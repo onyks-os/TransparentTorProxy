@@ -7,10 +7,14 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from ttp import state
+from ttp.evidence import Observation, boottime
 from ttp.exceptions import TorError
 from ttp.paths import resolve
+from ttp.runtime_records import boot_id, session_store
+from ttp.settings import Settings
 
 logger = logging.getLogger("ttp")
 
@@ -18,7 +22,7 @@ WATCHDOG_SERVICE_NAME = "ttp-watchdog"
 WATCHDOG_SERVICE_PATH = Path(f"/run/systemd/system/{WATCHDOG_SERVICE_NAME}.service")
 
 
-def _write_watchdog_service_unit() -> None:
+def _write_watchdog_service_unit(settings: Settings | None = None, session_id: str | None = None) -> None:
     """Write the volatile systemd unit file for the TTP watchdog service."""
     python_bin = sys.executable
     import pwd
@@ -30,9 +34,20 @@ def _write_watchdog_service_unit() -> None:
     except KeyError:
         pass
 
+    timing = (settings or Settings()).watchdog
+    import uuid
+
+    termination_args = f" --session {uuid.UUID(session_id)}" if session_id else ""
     service_lines = [
-        "Type=simple",
+        "Type=notify",
+        "NotifyAccess=main",
+        f"TimeoutStartSec={timing.readiness_timeout:g}",
+        f"WatchdogSec={timing.service_timeout:g}",
+        "WatchdogSignal=SIGKILL",
+        # Lost/corrupt intent uses the bounded 10s emergency fallback.
+        f"TimeoutStopSec={max(4 * timing.check_timeout + 2, 42):g}",
         f"ExecStart={python_bin} -m ttp.cli watchdog run",
+        f"ExecStopPost={python_bin} -m ttp.cli watchdog terminated{termination_args}",
         "Restart=on-failure",
         "RestartSec=3",
         "LimitNOFILE=32768",
@@ -58,7 +73,7 @@ def _write_watchdog_service_unit() -> None:
     # control socket, the journal); reads of /run/ttp, /etc/resolv.conf and
     # /proc; writes only to its own directory. ProtectHome is read-only rather
     # than off-limits because a pipx install puts sys.executable under a home
-    # directory. No PrivateDevices: wall needs the terminals under /dev/pts.
+    # directory. Desktop delivery is delegated to an unprivileged user agent.
     service_lines.extend(
         [
             "ProtectSystem=strict",
@@ -131,71 +146,108 @@ def _unit_state() -> tuple[str, int | None]:
     return fields.get("ActiveState", "unknown").strip(), pid
 
 
-def watchdog_liveness() -> tuple[bool, int | None]:
-    """Re-probe the unit and repair the lock, for every status reader.
+def watchdog_observation() -> dict[str, Any]:
+    """Fresh useful progress from the current systemd invocation, or unknown.
 
-    ``watchdog_active`` was written once at start and never corrected, so it
-    kept reporting ACTIVE after the daemon exited -- which it did on the
-    killswitch and heal-failure paths until #77 made it stay and hold the
-    killswitch, and still does when it crashes or is stopped from outside. The
-    recorded PID went stale on every restart of a healthy daemon too.
+    Status never rewrites root intent from a stale observation or infers useful
+    supervision from a PID alone. An emergency-holding supervisor is operational
+    but the session is not healthy.
     """
-    active_state, pid = _unit_state()
-    if active_state == "unknown":
-        # Cannot probe: never upgrade a recorded value to "active".
-        return False, None
-    live = active_state in ("active", "activating") and pid is not None
+    unknown: dict[str, Any] = {"value": "unknown", "reason": "watchdog.observation_unavailable", "pid": None}
     try:
-        state.update_lock_keys(watchdog_active=live, watchdog_pid=pid if live else None)
-    except Exception:
-        pass
-    return live, pid if live else None
-
-
-def start_watchdog() -> None:
-    """Start the volatile watchdog service daemon and track it in the state lock."""
-    _write_watchdog_service_unit()
-    try:
-        subprocess.run(
-            [resolve("systemctl"), "daemon-reload"],
+        lock = state.read_lock(strict=True)
+        if not lock or not lock.get("watchdog_requested"):
+            return {"value": "not_requested", "reason": "watchdog.not_requested", "pid": None}
+        settings = Settings.from_snapshot(lock.get("settings"))
+        response = subprocess.run(
+            [
+                resolve("systemctl"),
+                "show",
+                WATCHDOG_SERVICE_NAME,
+                "-p",
+                "ActiveState",
+                "-p",
+                "MainPID",
+                "-p",
+                "InvocationID",
+            ],
             capture_output=True,
             text=True,
             check=True,
-            timeout=10,
+            timeout=settings.watchdog.check_timeout,
         )
+        fields = dict(line.split("=", 1) for line in response.stdout.splitlines() if "=" in line)
+        if fields.get("ActiveState") != "active":
+            return {**unknown, "value": "unavailable", "reason": "watchdog.unit_not_active"}
+        pid = int(fields.get("MainPID", "0"))
+        instance_id = fields.get("InvocationID", "")
+        record = session_store().read("watchdog", lock["session_id"])
+        if pid <= 0 or record is None:
+            return unknown
+        data = record["data"]
+        progress = Observation(
+            str(data.get("value", "unknown")),
+            record["session_id"],
+            record["boot_id"],
+            str(data.get("instance_id", "")),
+            record["written_at"],
+        )
+        identity = dict(
+            session_id=lock["session_id"],
+            boot_id=boot_id(),
+            instance_id=instance_id,
+            now=boottime(),
+            max_age=settings.watchdog.observation_max_age,
+        )
+        if not progress.is_current(**identity):
+            return {**unknown, "reason": "watchdog.progress_stale"}
+        observed_at = data.get("observed_at")
+        if not isinstance(observed_at, (int, float)) or isinstance(observed_at, bool):
+            return {**unknown, "pid": pid, "reason": str(data.get("reason", "watchdog.evaluation_pending"))}
+        observation = Observation(
+            progress.value, progress.session_id, progress.boot_id, progress.instance_id, observed_at
+        )
+        if not observation.is_current(**identity):
+            return {**unknown, "reason": "watchdog.integrity_stale", "pid": pid}
+        return {**data, "pid": pid, "instance_id": instance_id, "progress_at": record["written_at"]}
+    except Exception:
+        return unknown
+
+
+def watchdog_liveness() -> tuple[bool, int | None]:
+    observation = watchdog_observation()
+    live = observation["value"] in ("healthy", "emergency")
+    return live, observation.get("pid") if live else None
+
+
+def start_watchdog() -> None:
+    """Require READY plus current progress, then inspect the latched outcome."""
+    from ttp.session_safety import emergency_latched
+
+    lock = state.read_lock(strict=True)
+    if not lock:
+        raise TorError("No session to supervise")
+    settings = Settings.from_snapshot(lock.get("settings"))
+    session_store().prepare()
+    state.update_lock_keys(watchdog_requested=True)
+    _write_watchdog_service_unit(settings, lock["session_id"])
+    try:
+        subprocess.run([resolve("systemctl"), "daemon-reload"], capture_output=True, text=True, check=True, timeout=10)
         subprocess.run(
             [resolve("systemctl"), "start", WATCHDOG_SERVICE_NAME],
             capture_output=True,
             text=True,
             check=True,
-            timeout=10,
+            timeout=settings.watchdog.readiness_timeout,
         )
-
-        # Retrieve the PID of the watchdog process
-        res = subprocess.run(
-            [resolve("systemctl"), "show", WATCHDOG_SERVICE_NAME, "-p", "MainPID"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
-        parts = res.stdout.strip().split("=")
-        watchdog_pid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() and int(parts[1]) > 0 else None
-
-        # `systemctl start` on a Type=simple unit returns as soon as the main
-        # process is forked, so it proves nothing about the daemon staying up.
-        # Confirm the unit is really active before recording it as such,
-        # otherwise `ttp status` reports a watchdog that never ran.
-        active_state, watchdog_pid = _unit_state()
-        if active_state != "active" or watchdog_pid is None:
-            state.update_lock_keys(watchdog_active=False, watchdog_pid=None)
-            raise TorError(f"Watchdog service did not stay active (state: {active_state}, MainPID: {watchdog_pid}).")
-
-        state.update_lock_keys(watchdog_active=True, watchdog_pid=watchdog_pid)
-        logger.info("TTP watchdog service started (PID: %s).", watchdog_pid)
-    except Exception as e:
-        logger.error("Failed to start TTP watchdog service: %s", e)
-        raise TorError(f"Failed to start watchdog service: {e}") from e
+        observed = watchdog_observation()
+        if observed["value"] != "healthy" or emergency_latched(lock):
+            raise TorError(f"Required supervisor is not ready and healthy ({observed['reason']})")
+        state.update_lock_keys(watchdog_active=True, watchdog_pid=observed["pid"])
+        logger.info("TTP watchdog ready (PID: %s).", observed["pid"])
+    except Exception as exc:
+        logger.error("Required watchdog unavailable: %s", exc)
+        raise TorError(f"Required watchdog unavailable: {exc}") from exc
 
 
 def stop_watchdog() -> None:

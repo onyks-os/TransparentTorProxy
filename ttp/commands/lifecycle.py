@@ -26,6 +26,12 @@ def do_stop() -> None:
     if lock is None:
         return
 
+    if lock.get("session_id"):
+        from ttp.session_safety import STOP_ADVICE, mark_stopping
+
+        console.print(f"{_PREFIX} {STOP_ADVICE}")
+        mark_stopping(lock)
+
     is_external = lock.get("external_daemon", False)
 
     if not is_external:
@@ -121,10 +127,32 @@ def do_stop() -> None:
         # this same try/finally shape all along.
         state.delete_lock()
     console.print(f"{_PREFIX} [bold red]Session terminated. Traffic in cleartext.[/]")
+    from ttp.commands._common import print_error
+    from ttp.notifications.service import finish_notifications
+
+    result = finish_notifications(lock)
+    if result.exit_code:
+        import typer
+
+        for diagnostic in result.diagnostics:
+            print_error(diagnostic.reason, diagnostic.message)
+        raise typer.Exit(code=int(result.exit_code))
 
 
 def signal_handler(signum: int, frame) -> None:
     """Handle SIGINT/SIGTERM - clean up and exit."""
+    lock = state.read_lock()
+    if lock and lock.get("session_id"):
+        from ttp.commands._common import print_error
+        from ttp.session_safety import STOP_ADVICE, emergency_latched
+
+        try:
+            latched = emergency_latched(lock)
+        except Exception:
+            latched = True
+        if latched:
+            print_error("Session Retained", STOP_ADVICE)
+            sys.exit(8)
     console.print(f"\n{_PREFIX} Signal received, restoring network...")
     do_stop()
     sys.exit(0)

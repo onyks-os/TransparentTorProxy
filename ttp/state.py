@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
+import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -155,6 +157,11 @@ def write_lock(
     no_ipv6: bool = False,
     tor_uid: int | None = None,
     table_fingerprint: str | None = None,
+    session_id: str | None = None,
+    watchdog_requested: bool = False,
+    settings: dict[str, Any] | None = None,
+    settings_origins: dict[str, str] | None = None,
+    notification_target: dict[str, Any] | None = None,
 ) -> None:
     """Write the session lock file with the current state.
 
@@ -196,6 +203,12 @@ def write_lock(
     """
     try:
         data = {
+            "session_id": session_id or str(uuid.uuid4()),
+            "phase": "running",
+            "watchdog_requested": watchdog_requested,
+            "settings": settings,
+            "settings_origins": settings_origins,
+            "notification_target": notification_target,
             "pid": pid if pid is not None else os.getpid(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "dns_backup": dns_backup,
@@ -217,13 +230,15 @@ def write_lock(
             "table_fingerprint": table_fingerprint,
         }
         _write_lock_file(data)
+        # Only a newly published session can supersede restore-all intent.
+        (LOCK_DIR / "stopping.json").unlink(missing_ok=True)
     except OSError as e:
         raise StateError(f"Failed to write session lock file: {e}")
 
 
-def _write_lock_file(data: dict[str, Any]) -> None:
+def _write_lock_file(data: dict[str, Any], *, path: Path | None = None) -> None:
     ensure_runtime_dir()
-    fd = os.open(LOCK_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+    fd, temporary = tempfile.mkstemp(prefix=".session-", dir=LOCK_DIR)
     try:
         # The watchdog reads this file to learn the session it is monitoring;
         # it never writes it. Group-read for ttp-watchdog, nothing for others.
@@ -233,15 +248,16 @@ def _write_lock_file(data: dict[str, Any]) -> None:
             os.fchmod(fd, 0o640)
         else:
             os.fchmod(fd, 0o600)
-        with open(fd, "w", encoding="utf-8") as f:
+        with open(fd, "w", encoding="utf-8", closefd=False) as f:
             json.dump(data, f, indent=2)
             f.write("\n")
-    except Exception as e:
+        os.replace(temporary, path or LOCK_PATH)
+    finally:
+        os.close(fd)
         try:
-            os.close(fd)
-        except OSError:
+            os.unlink(temporary)
+        except FileNotFoundError:
             pass
-        raise e
 
 
 def update_lock_keys(**kwargs: Any) -> None:
@@ -259,22 +275,43 @@ def update_lock_keys(**kwargs: Any) -> None:
         raise StateError(f"Failed to update session lock file: {e}")
 
 
-def read_lock() -> dict[str, Any] | None:
+def read_lock(*, strict: bool = False) -> dict[str, Any] | None:
     """Read and return the lock data, or ``None`` if no lock exists."""
-    if not LOCK_PATH.exists():
-        return None
     try:
         data = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             return data
+        if strict:
+            raise StateError("Session lock is not an object")
         return None
-    except (json.JSONDecodeError, OSError):
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, OSError) as exc:
+        if strict:
+            raise StateError("Cannot read the session intent") from exc
         return None
 
 
 def delete_lock() -> None:
     """Remove the lock file if it exists."""
     LOCK_PATH.unlink(missing_ok=True)
+
+
+def write_stop_marker(session_id: str) -> None:
+    """Root-owned intent retained after deleting the session lock during stop."""
+    _write_lock_file({"session_id": session_id}, path=LOCK_DIR / "stopping.json")
+
+
+def stop_was_requested(session_id: str) -> bool:
+    try:
+        payload = json.loads((LOCK_DIR / "stopping.json").read_text())
+        if not isinstance(payload, dict) or not isinstance(payload.get("session_id"), str):
+            raise StateError("Invalid explicit-stop marker")
+        return payload["session_id"] in (session_id, "*")
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError) as exc:
+        raise StateError("Explicit-stop intent is unreadable") from exc
 
 
 # argv tokens that identify a genuine ttp process. The installed console

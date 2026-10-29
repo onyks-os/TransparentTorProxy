@@ -34,18 +34,20 @@ from ttp.watchdog import alerts, fsm
 
 
 def test_a_killswitch_that_fails_to_apply_is_still_announced():
-    """The broadcast is the operator's only signal that the network is in an
-    undefined state; a firewall error must not swallow it."""
-    with (
-        patch.object(alerts.firewall, "apply_emergency_killswitch", side_effect=FirewallError("nft died")),
-        patch.object(alerts, "resolve_optional", side_effect=lambda name: f"/usr/bin/{name}"),
-        patch.object(alerts.subprocess, "run") as run,
-        patch.object(alerts.logger, "critical") as critical,
-    ):
-        alerts.trigger_emergency_killswitch("firewall", "table vanished")
+    """Containment failure evidence survives the alert adapter unchanged."""
+    from ttp.evidence import Diagnostic, ExitCode, Result
 
-    assert any("Failed to apply firewall emergency killswitch" in str(c) for c in critical.call_args_list)
-    assert run.call_args_list[0].args[0][0] == "/usr/bin/wall"
+    expected = Result().add(
+        Diagnostic(
+            ExitCode.CONTAINMENT_UNCONFIRMED, "firewall.apply_failed", "firewall", "contain", "Isolation unconfirmed"
+        )
+    )
+    with (
+        patch.object(alerts.state, "read_lock", return_value={"session_id": "s"}),
+        patch.object(alerts, "request_emergency", return_value=expected),
+    ):
+        result = alerts.trigger_emergency_killswitch("firewall", "table vanished")
+    assert result == expected and result.exit_code == 8
 
 
 # ---------------------------------------------------------------------------
@@ -226,10 +228,10 @@ def test_a_crashed_watchdog_loop_exits_non_zero_so_systemd_restarts_it():
 
     with (
         patch.object(watchdog_cmd, "_require_root_or_watchdog_user"),
-        patch("ttp.watchdog.run_watchdog_loop", side_effect=RuntimeError("select() blew up")),
+        patch("ttp.watchdog.supervisor.run_supervisor", side_effect=RuntimeError("select() blew up")),
         pytest.raises(typer.Exit) as exited,
     ):
-        watchdog_cmd.watchdog_run(interval=15)
+        watchdog_cmd.watchdog_run()
     assert exited.value.exit_code == 1
 
 

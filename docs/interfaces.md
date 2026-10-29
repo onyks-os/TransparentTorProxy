@@ -32,17 +32,17 @@ Most commands require root privileges (`sudo`). Exceptions are noted in the tabl
 | Command               | Requires Root | Description                                                                                                                                                  |
 | :-------------------- | :-----------: | :----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ttp start`           |       ✅       | Activates the transparent Tor proxy: installs Tor if missing, applies nftables rules, mounts DNS overlay, waits for Tor bootstrap, and verifies the exit IP. |
-| `ttp stop`            |       ✅       | Zero-leak teardown: stops watchdog, resolves Tor UID, applies teardown lockdown, sends `SHUTDOWN` to Tor, stops Tor service, applies active socket slaughter (TCP RST & reject), waits 1.5s, flushes connection tracking via `conntrack -F`, removes nftables rules, unmounts DNS overlay, and deletes the session lock. |
+| `ttp stop`            |       ✅       | Zero-leak teardown: stops watchdog, resolves Tor UID, applies teardown lockdown, sends `SHUTDOWN` to Tor, stops Tor service, applies active socket slaughter (TCP RST & reject), waits 300ms, flushes connection tracking via `conntrack -F`, removes nftables rules, unmounts DNS overlay, and deletes the session lock. |
 | `ttp restart`         |       ✅       | Shortcut for `ttp stop` followed by `ttp start`. Accepts all `start` options.                                                                                |
 | `ttp refresh`         |       ✅       | Requests a new Tor circuit via `NEWNYM` signal. All active streams are rotated for a new exit IP.                                                            |
-| `ttp status`          |       ❌       | Displays current session state from the lock file: status, exit IP, cleartext packets blocked this session, session start time, and PID. The blocked count is read from the `cleartext_rejected` nftables counter and is omitted entirely when it cannot be read, rather than shown as `0`. |
-| `ttp check`           |       ❌       | Live network check: verifies the real-world Tor routing state, current IP, `IsTor` flag, and latency to `torproject.org`.                                    |
-| `ttp check-leak`      |       ❌       | Runs DNS and IP leak detection tests. Use `-v`/`--verbose` for raw output.                                                                                   |
+| `ttp status [--json]` | Recommended | Read-only evidence with session health separated from command success; no HTTP probe. Root is needed to read private session evidence. |
+| `ttp check` | ✅ | Bounded non-exempt Tor verification; valid negative requests containment, inconclusive returns 3. |
+| `ttp check-leak` | ✅ | Shared typed Tor check plus optional informational DNS observations; not a proof covering all applications. |
 | `ttp logs`            |       ✅       | Streams real-time content from the volatile log at `/run/ttp/ttp.log`.                                                                                       |
 | `ttp diagnose`        |       ✅       | Collects full system diagnostics: OS info, Tor service status, active torrc, nftables ruleset, and DNS state.                                                |
 | `ttp uninstall`       |       ✅       | Removes TTP system-wide (only applicable to source installs via `scripts/install.sh`).                                                                       |
 | `ttp watchdog start`  |       ✅       | Manually starts the background session integrity watchdog as a volatile systemd service.                                                                     |
-| `ttp watchdog stop`   |       ✅       | Manually stops the watchdog service.                                                                                                                         |
+| `ttp watchdog stop` | ✅ | Refuses while the active session requires supervision; use explicit `ttp stop`. |
 | `ttp watchdog status` |       ❌       | Shows the current state of the watchdog daemon (active/inactive, PID).                                                                                       |
 | `ttp watchdog run`    |       ✅       | **Internal command.** Runs the continuous integrity monitoring loop (invoked by the watchdog service unit).                                                  |
 
@@ -55,24 +55,45 @@ Most commands require root privileges (`sudo`). Exceptions are noted in the tabl
 | `--allow-root`        | flag  | off         | Exempt root (`uid 0`) processes from Tor routing (allows direct internet for system updates). |
 | `--no-lan-bypass`     | flag  | off         | Disable LAN bypass: all RFC 1918 and link-local traffic is also routed through Tor.           |
 | `--no-ipv6`           | flag  | off         | Force disable all IPv6 traffic (drops outgoing IPv6 to prevent leaks).                        |
-| `--watchdog`, `-w`    | flag  | off         | Start the background session integrity watchdog daemon after activation.                      |
+| `--watchdog/--no-watchdog`, `-w` | flag | config (off) | Require useful-progress supervision and startup readiness. |
 | `--bypass-user`       | `str` | —           | Comma-separated list of system users whose traffic bypasses Tor (split tunneling).            |
 | `--bypass-group`      | `str` | —           | Comma-separated list of system groups whose traffic bypasses Tor (split tunneling).           |
 | `--use-bridges`       | flag  | off         | Enable Tor bridges support.                                                                   |
 | `--bridge-file`       | `str` | —           | Path to a file containing Tor bridge lines.                                                   |
 | `--bridge`            | `str` | —           | Individual Tor bridge line (can be specified multiple times).                                 |
 
-### 1.4 Exit Codes
+### 1.4 Configuration and exit codes
 
-| Code | Meaning                                                                                   |
-| :--- | :---------------------------------------------------------------------------------------- |
-| `0`  | Success. For `start` and `restart`, the session is active *and* Tor routing was confirmed. |
-| `1`  | Generic error, printed to stderr. Includes missing root privileges and an inconclusive DNSSEC preflight. A preflight refusal does not change the existing network state. |
-| `2`  | Reserved by the CLI framework for usage errors (unknown option, bad argument value).       |
-| `3`  | `start` / `restart` only: the session remains installed, but external Tor verification failed. This alone does not establish whether Tor carries traffic or whether isolation was verified. |
-| `4`  | `start` / `restart`: an explicit per-interface `DNSSEC=yes` conflicts with Tor DNSPort. Refused before network changes; restart preserves any existing session. See [DNSSEC policy](web/how-to/dnssec.md). |
+`ttp config` prints validated administrator values and origins; `ttp config
+--session` prints the frozen session snapshot. `/etc/ttp/ttp.conf` is optional,
+root-owned and rejects unknown keys. See the [configuration example](../assets/ttp.conf.example).
 
-> **Scripting `start` and `restart`:** `0` and `3` both leave a session standing. A DNSSEC preflight refusal (`4`, or `1` if inspection failed) does not establish a new session and does not tear down an existing one. Do not infer protection from a non-zero exit code alone. The broader unverified-session contract remains under review for 0.5.0; see [ADR 0011](decisions/0011-start-exit-codes.md).
+`--notifications/--no-notifications` is independent of watchdog selection;
+`--notification-user USER` selects the recipient for direct-root invocations.
+Desktop dependencies are needed only when notifications are selected.
+
+| Code | Meaning |
+| ---: | --- |
+| 0 | Command requirements satisfied; status success is not session health |
+| 1 | Configuration or operation failure |
+| 2 | CLI usage error |
+| 3 | Inconclusive external Tor verification; session preserved |
+| 4 | Explicit DNSSEC conflict; refused before network changes |
+| 5 | Requested watchdog unavailable |
+| 6 | Valid negative Tor verification |
+| 7 | Emergency rules independently verified |
+| 8 | Required containment unconfirmed |
+| 9 | Notification selection, readiness or delivery failure |
+
+All contributing causes remain available. Principal session-result precedence is
+`8 > 7 > 6 > 5 > 1 > 9 > 3 > 0`. A nonzero code alone does not establish whether
+protection is present. Codes 2/4 are preflight refusals. See
+[ADR 0013](decisions/0013-session-evidence-and-notifications.md) and the
+[operator guide](web/how-to/session-observations.md).
+
+The internal `watchdog terminated --session UUID` command is exclusively the
+independent systemd termination hook. It authenticates root/the watchdog account
+and rechecks session identity and explicit stop intent before containment.
 
 ---
 

@@ -57,7 +57,7 @@ def test_apply_rules_is_a_single_atomic_transaction(mock_run, mock_pwd, mock_loc
 
     # The script itself carries the reset, ahead of the table definition.
     script = mock_run.call_args.kwargs["input"]
-    reset_pos = script.index("flush table inet ttp")
+    reset_pos = script.index("delete table inet ttp")
     assert script.index("add table inet ttp") < reset_pos
     assert reset_pos < script.index("table inet ttp {")
 
@@ -696,7 +696,7 @@ class TestEmergencyTeardown:
 
         script = mock_run.call_args.kwargs["input"]
         assert "add table inet ttp" in script
-        assert script.index("flush table inet ttp") < script.index("table inet ttp {")
+        assert script.index("delete table inet ttp") < script.index("table inet ttp {")
         # And the resulting table really is the drop-all one.
         assert "policy drop" in script
 

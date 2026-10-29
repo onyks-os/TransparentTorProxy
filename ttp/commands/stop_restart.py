@@ -32,6 +32,17 @@ def stop_command(
     _require_root()
 
     if restore_only:
+        from ttp.runtime_records import session_store
+        from ttp.session_safety import STOP_ADVICE
+
+        console.print(f"{_PREFIX} {STOP_ADVICE}")
+        # Explicit restoration also works after lost/corrupt session intent.
+        # Persist it before stopping services, including their ExecStopPost.
+        state.ensure_runtime_dir()
+        store = session_store()
+        store.prepare()
+        with store.transition():
+            state.write_stop_marker("*")
         console.print(f"{_PREFIX} Forcing network restoration (restore-only)...")
 
         # Stop watchdog first. The import is inside the try: restoration must not
@@ -62,6 +73,14 @@ def stop_command(
 
         state.delete_lock()
         console.print(f"{_PREFIX} [bold red]Network restored. Traffic in cleartext.[/]")
+        if lock:
+            from ttp.commands._common import print_error
+            from ttp.notifications.service import finish_notifications
+
+            result = finish_notifications(lock)
+            for diagnostic in result.diagnostics:
+                print_error(diagnostic.reason, diagnostic.message)
+            raise typer.Exit(code=int(result.exit_code))
         raise typer.Exit(code=0)
 
     if state.read_lock() is None:
@@ -105,9 +124,9 @@ def restart_command(
         "--no-lan-bypass",
         help="Do not bypass Tor routing for local subnets (RFC 1918 & Link-Local).",
     ),
-    watchdog: bool = typer.Option(
-        False,
-        "--watchdog",
+    watchdog: Optional[bool] = typer.Option(
+        None,
+        "--watchdog/--no-watchdog",
         "-w",
         help="Start the background watchdog daemon to monitor session integrity.",
     ),
@@ -151,6 +170,8 @@ def restart_command(
         "--no-ipv6",
         help="Force disable all IPv6 traffic (drops outgoing IPv6 to prevent leaks).",
     ),
+    notifications: Optional[bool] = typer.Option(None, "--notifications/--no-notifications"),
+    notification_user: Optional[str] = typer.Option(None, "--notification-user"),
 ) -> None:
     """Restart the transparent Tor proxy session."""
     _require_root()
@@ -158,6 +179,21 @@ def restart_command(
     require_systemd()
     # A policy conflict must not tear down the session that restart would replace.
     require_dnssec_compatibility()
+
+    from ttp.commands._common import print_error
+    from ttp.exceptions import StateError
+    from ttp.session_safety import STOP_ADVICE, emergency_latched
+    from ttp.settings import SettingsError, load_settings
+
+    try:
+        load_settings().select(watchdog=watchdog, notifications=notifications)
+        lock = state.read_lock(strict=True)
+        if lock and lock.get("session_id") and emergency_latched(lock):
+            print_error("Emergency Latched", STOP_ADVICE)
+            raise typer.Exit(code=7)
+    except (SettingsError, StateError) as exc:
+        print_error("Restart Refused", str(exc))
+        raise typer.Exit(code=1)
 
     if state.read_lock() is not None:
         console.print(f"{_PREFIX} Stopping current session...")
@@ -186,4 +222,6 @@ def restart_command(
         external_daemon=external_daemon,
         tor_uid=tor_uid,
         no_ipv6=no_ipv6,
+        notifications=notifications,
+        notification_user=notification_user,
     )

@@ -31,3 +31,4 @@ Each ADR is formatted using the Markdown standard and named using a sequential I
 10. [0010-watchdog-finite-state-machine.md](0010-watchdog-finite-state-machine.md) — Watchdog FSM (Finite State Machine) using the transitions library.
 11. [0011-start-exit-codes.md](0011-start-exit-codes.md) — Distinct exit code for a session that is active but whose Tor routing could not be verified.
 12. [0012-doh-dot-and-browser-leaks-are-out-of-scope.md](0012-doh-dot-and-browser-leaks-are-out-of-scope.md) — The structural guarantee, not a resolver blocklist, is what protects against DoH/DoT; browser-level WebRTC leaks are not packets and are out of scope.
+13. [0013-session-evidence-and-notifications.md](0013-session-evidence-and-notifications.md) — Approved session evidence, required supervision, emergency retention and optional desktop delivery contract (implementation in progress).

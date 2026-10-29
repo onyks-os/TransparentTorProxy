@@ -245,3 +245,18 @@ watchdog stayed active, Quad9 configuration method, active firewall/VPN tooling,
 and which of the three section-D probes failed. Include only the relevant redacted
 journal excerpt. This is sufficient to choose a focused next check; a complete
 host configuration dump is not required.
+
+## 6. Read the session evidence before changing protections
+
+On the 0.5.0 development version, capture `sudo ttp status --json`,
+`sudo ttp config --session` and
+`sudo journalctl -b -u ttp-watchdog.service -u ttp-notify.service`.
+See [session observations](../how-to/session-observations.md) for reason identifiers
+and exit codes. A failed external check is inconclusive; code 7 means the expected
+emergency rules were verified, whereas code 8 means containment is unconfirmed.
+Keep the diagnostics for every concurrent cause, including notification failures.
+
+Close sensitive applications before explicit stop: they may reconnect outside
+Tor when protection is removed. Do not disable firewalld, SELinux or DNSSEC
+blindly; the evidence and the [DNSSEC policy](../how-to/dnssec.md) guide the next
+step. No result here diagnoses every failure as a host-hardening problem.

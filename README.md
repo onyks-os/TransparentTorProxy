@@ -52,6 +52,14 @@ No per-application setup needed - just `sudo ttp start` and **every connection**
 > [!WARNING]
 > **If you are a whistleblower or are engaging in high-risk activities, DO NOT use TTP.** Instead, use officially audited and reliable tools like [TailsOS](https://tails.net/) or the [Tor Browser](https://www.torproject.org/) directly. The authors and contributors of TTP assume no responsibility for your safety or the consequences of using this software.
 
+<!-- -->
+
+> **0.5.0 development:** required watchdog readiness, typed session evidence and
+> optional desktop notifications are implemented on the development branch.
+> Read the [operator guide](docs/web/how-to/session-observations.md) for independent
+> `--watchdog` / `--notifications` selection, configurable deadlines, exit codes
+> and explicit emergency termination. These changes are not in released 0.4.11.
+
 ## Why TTP?
 
 Legacy transparent proxy scripts (TorGhost, Anonsurf) overwrite configuration

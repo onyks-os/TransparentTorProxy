@@ -9,6 +9,35 @@
 
 ---
 
+## 0.5.0 supervision and delivery update (unreleased)
+
+[ADR 0013](decisions/0013-session-evidence-and-notifications.md) replaces cached
+watchdog flags and best-effort terminal broadcasts with evidence and explicit
+requirements. `Type=notify` readiness follows initial evaluation; systemd detects
+lost progress and an independent handler attempts containment. Kernel JSON is
+checked against the expected emergency rules, not an observed ruleset hash.
+Atomic table replacement removes altered declarations as well as rules.
+
+Records are private, atomic, bounded and session-specific. Their timestamps use
+CLOCK_BOOTTIME and include boot/service identity. Root stop intent survives lock
+removal; a restarted supervisor cannot clear an emergency. DNS/TLS/HTTP failure
+is inconclusive, while a validated negative from a non-exempt probe requests
+isolation. An application failure never proves the killswitch is present.
+
+The optional notification agent runs as the recipient without capabilities,
+uses authenticated Unix IPC and sends fixed event descriptions without IPs,
+bridge lines or browsing destinations. The desktop server's acceptance ID proves
+neither display nor human attention. No agent operation changes network policy.
+A missing notification alone does not isolate; CLI/journal retain diagnostics.
+There is no promise of notification without a running producer and delivery
+channel, nor continuous integrity monitoring when no watchdog was selected.
+
+Disposable-container tests cover real systemd/nftables failure and restart paths
+and private D-Bus delivery. They do not replace VM lifecycle/capture tests or
+prove every desktop environment renders notifications. Timing budgets bound
+attempts; process scheduling and kernel/service failures prevent absolute
+zero-latency guarantees. A privileged administrator can remove all protection.
+
 ## Table of Contents
 
 1. [Security Objectives](#1-security-objectives)

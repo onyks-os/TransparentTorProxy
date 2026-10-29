@@ -102,6 +102,7 @@ nav:
       - VM & Chaos Testing: how-to/vm-testing.md
       - Applications with Their Own DNS: how-to/apps-with-own-dns.md
       - DNSSEC Policy: how-to/dnssec.md
+      - Supervision and Notifications: how-to/session-observations.md
   - Explanation:
       - Architecture & Flow: explanation/architecture.md
       - Watchdog FSM: explanation/watchdog-fsm.md

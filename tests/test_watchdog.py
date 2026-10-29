@@ -15,7 +15,8 @@ import pytest
 
 from ttp import watchdog as wd
 from ttp.exceptions import TorError
-from ttp.paths import resolve, resolve_optional
+from ttp.paths import resolve
+from ttp.settings import Settings
 from ttp.watchdog import service
 
 
@@ -26,6 +27,13 @@ def temp_watchdog_path(tmp_path: Path):
     with (
         patch("ttp.watchdog.service.WATCHDOG_SERVICE_PATH", temp_file),
         patch("ttp.watchdog.WATCHDOG_SERVICE_PATH", temp_file),
+        patch(
+            "ttp.state.read_lock",
+            return_value={"session_id": "12345678-1234-1234-1234-123456789abc", "settings": Settings().snapshot()},
+        ),
+        patch("ttp.watchdog.service.session_store"),
+        patch("ttp.state._write_lock_file"),
+        patch("ttp.session_safety.emergency_latched", return_value=False),
     ):
         yield temp_file
 
@@ -85,10 +93,12 @@ def test_start_watchdog_success(mock_update, mock_run, temp_watchdog_path):
     """start_watchdog writes the unit, starts it, confirms it is up, records it."""
     mock_run.return_value = MagicMock(stdout="ActiveState=active\nMainPID=12345\n", returncode=0)
 
-    wd.start_watchdog()
+    with patch("ttp.watchdog.service.watchdog_observation", return_value={"value": "healthy", "pid": 12345}):
+        wd.start_watchdog()
 
     assert temp_watchdog_path.exists()
-    mock_update.assert_called_once_with(watchdog_active=True, watchdog_pid=12345)
+    mock_update.assert_any_call(watchdog_requested=True)
+    mock_update.assert_any_call(watchdog_active=True, watchdog_pid=12345)
 
 
 @patch("subprocess.run")
@@ -102,16 +112,16 @@ def test_start_watchdog_does_not_record_a_unit_that_did_not_stay_up(mock_update,
     """
     mock_run.return_value = MagicMock(stdout="ActiveState=failed\nMainPID=0\n", returncode=0)
 
-    with pytest.raises(TorError, match="did not stay active"):
+    with pytest.raises(TorError, match="not ready and healthy"):
         wd.start_watchdog()
 
-    mock_update.assert_called_once_with(watchdog_active=False, watchdog_pid=None)
+    mock_update.assert_called_once_with(watchdog_requested=True)
 
 
 @patch("subprocess.run", side_effect=Exception("systemd error"))
 def test_start_watchdog_failure(mock_run, temp_watchdog_path):
     """start_watchdog raises TorError if any systemctl call fails."""
-    with pytest.raises(TorError, match="Failed to start watchdog service"):
+    with pytest.raises(TorError, match="Required watchdog unavailable"):
         wd.start_watchdog()
 
 
@@ -285,130 +295,30 @@ def test_attempt_auto_healing_tor(mock_run, mock_read):
 
 
 # 6. trigger_emergency_killswitch
-@patch("ttp.firewall.apply_emergency_killswitch")
-@patch("subprocess.run")
-@patch(
-    "ttp.watchdog.alerts.resolve_optional",
-    side_effect=lambda b: {"wall": "/usr/bin/wall", "notify-send": "/usr/bin/notify-send"}.get(b),
-)
-def test_trigger_emergency_killswitch(mock_resolve, mock_run, mock_apply_ks):
-    """trigger_emergency_killswitch isolates the network, broadcasts, and notifies."""
-    wd.trigger_emergency_killswitch("firewall", "nftables table deleted")
-
-    mock_apply_ks.assert_called_once()
-    # resolve_optional is stubbed so this asserts the killswitch's own logic
-    # rather than which notification tools this particular host happens to ship;
-    # a CI runner without `wall` used to make this fail for no useful reason.
-    assert mock_run.call_count == 2
-    calls = [call[0][0] for call in mock_run.call_args_list]
-    assert any("/usr/bin/wall" in cmd for cmd in calls)
-    assert any("/usr/bin/notify-send" in cmd for cmd in calls)
+def test_trigger_emergency_killswitch():
+    """The alert adapter delegates to the verified coordinator, without broadcasts."""
+    with (
+        patch("ttp.watchdog.alerts.state.read_lock", return_value={"session_id": "s"}),
+        patch("ttp.watchdog.alerts.request_emergency") as contain,
+        patch("subprocess.run") as run,
+    ):
+        wd.trigger_emergency_killswitch("firewall", "nftables table deleted")
+    assert contain.call_args.args[1].component == "firewall"
+    run.assert_not_called()
 
 
-@patch("ttp.firewall.apply_emergency_killswitch")
-@patch("subprocess.run")
-@patch("ttp.watchdog.alerts.resolve_optional", return_value=None)
-def test_killswitch_still_isolates_without_notification_tools(mock_resolve, mock_run, mock_apply_ks):
-    """
-    The network must be isolated even on a host with no `wall` and no
-    `notify-send`. Telling the user is desirable; cutting the traffic is the
-    point, and it must not be conditional on a nicety being installed.
-    """
-    wd.trigger_emergency_killswitch("dns", "overlay unmounted")
-
-    mock_apply_ks.assert_called_once()
-    assert mock_run.call_count == 0
+def test_killswitch_still_isolates_without_notification_tools():
+    """Containment delegation has no dependency on GUI executables."""
+    with (
+        patch("ttp.watchdog.alerts.state.read_lock", return_value={"session_id": "s"}),
+        patch("ttp.watchdog.alerts.request_emergency") as contain,
+        patch("shutil.which", side_effect=AssertionError("GUI lookup forbidden")),
+    ):
+        wd.trigger_emergency_killswitch("dns", "overlay unmounted")
+    contain.assert_called_once()
 
 
-# 7. run_watchdog_loop
-@patch("ttp.state.read_lock", return_value=None)
-@patch("time.sleep")
-def test_run_watchdog_loop_no_lock(mock_sleep, mock_read):
-    """run_watchdog_loop terminates immediately if no active session lock is found."""
-    # Should exit loop immediately
-    wd.run_watchdog_loop(interval_seconds=1)
-    mock_sleep.assert_called_once_with(2)  # Startup stabilization sleep
-
-
-@patch("ttp.state.read_lock")
-@patch("ttp.watchdog.inotify.check_system_integrity")
-@patch("ttp.watchdog.fsm.attempt_auto_healing", return_value=True)
-@patch("ttp.watchdog.inotify.is_interface_online", return_value=True)
-@patch("ttp.watchdog.inotify.has_default_route", return_value=True)
-@patch("time.sleep")
-def test_run_watchdog_loop_first_strike_healed(
-    mock_sleep, mock_has_route, mock_online, mock_heal, mock_check, mock_read
-):
-    """run_watchdog_loop detects failure, heals successfully, and continues loop."""
-    # Simulate a loop that runs once then exits because lock is removed
-    mock_read.side_effect = [
-        {"pid": 123},  # First check: active
-        None,  # Second check: exit loop
-    ]
-    # First check: failed on firewall
-    # Second check (after healing): healthy (None, None)
-    mock_check.side_effect = [
-        ("firewall", "rules missing"),
-        (None, None),
-    ]
-
-    wd.run_watchdog_loop(interval_seconds=1)
-
-    mock_heal.assert_called_once_with("firewall")
-    # Verify stabilizing delay (3s) and normal delay (1s) were invoked
-    sleep_calls = [call[0][0] for call in mock_sleep.call_args_list]
-    assert 3 in sleep_calls
-
-
-@patch("ttp.watchdog.inotify.hold_killswitch")
-@patch("ttp.state.read_lock", side_effect=[{"pid": 123}, {"pid": 123}, None])
-@patch("ttp.watchdog.inotify.check_system_integrity")
-@patch("ttp.watchdog.fsm.attempt_auto_healing", return_value=True)
-@patch("ttp.watchdog.inotify.is_interface_online", return_value=True)
-@patch("ttp.watchdog.inotify.has_default_route", return_value=True)
-@patch("ttp.watchdog.fsm.trigger_emergency_killswitch")
-@patch("time.sleep")
-def test_run_watchdog_loop_second_strike_killswitch(
-    mock_sleep, mock_ks, mock_has_route, mock_online, mock_heal, mock_check, mock_read, mock_hold
-):
-    """A heal that runs but does not hold triggers the killswitch, which is then held until the session ends (#77)."""
-    # First check: failed on tor
-    # Second check (after healing): still failed on tor
-    mock_check.side_effect = [
-        ("tor", "service dead"),
-        ("tor", "service dead"),
-    ]
-
-    wd.run_watchdog_loop(interval_seconds=1)
-
-    mock_heal.assert_called_once_with("tor")
-    mock_ks.assert_called_once_with("tor", "service dead")
-    mock_hold.assert_called_once_with(None)
-
-
-@patch("ttp.watchdog.inotify.hold_killswitch")
-@patch("ttp.state.read_lock", side_effect=[{"pid": 123}, {"pid": 123}, None])
-@patch("ttp.watchdog.inotify.check_system_integrity")
-@patch("ttp.watchdog.fsm.attempt_auto_healing", return_value=False)
-@patch("ttp.watchdog.inotify.is_interface_online", return_value=True)
-@patch("ttp.watchdog.inotify.has_default_route", return_value=True)
-@patch("ttp.watchdog.fsm.trigger_emergency_killswitch")
-@patch("time.sleep")
-def test_run_watchdog_loop_healing_command_fails_immediate_killswitch(
-    mock_sleep, mock_ks, mock_has_route, mock_online, mock_heal, mock_check, mock_read, mock_hold
-):
-    """run_watchdog_loop triggers emergency killswitch immediately if the healing command itself fails."""
-    # Only one integrity check: healing fails immediately, no re-check should occur
-    mock_check.return_value = ("firewall", "nftables apply error")
-
-    wd.run_watchdog_loop(interval_seconds=1)
-
-    mock_heal.assert_called_once_with("firewall")
-    # Killswitch triggered without waiting for a second check
-    mock_ks.assert_called_once_with("firewall", "nftables apply error")
-    # Only one integrity check should have happened (no re-check after failed healing)
-    assert mock_check.call_count == 1
-    mock_hold.assert_called_once_with(None)
+# Runtime loop behavior is covered by test_supervision_contract.py.
 
 
 # 8. Diagnostic helper tests and loop suspension
@@ -470,30 +380,6 @@ def test_has_default_route_false(mock_exists):
     )
     with patch("builtins.open", mock_open(read_data=mock_content)):
         assert wd.has_default_route() is False
-
-
-@patch("ttp.state.read_lock")
-@patch("ttp.watchdog.inotify.is_interface_online")
-@patch("ttp.watchdog.inotify.has_default_route")
-@patch("time.sleep")
-@patch("ttp.watchdog.inotify.check_system_integrity")
-def test_run_watchdog_loop_suspends_and_resumes(mock_check, mock_sleep, mock_has_route, mock_online, mock_read):
-    """run_watchdog_loop enters suspended state when network is offline, and resumes once online."""
-    mock_read.side_effect = [
-        {"interface": "eth0"},  # First iteration start
-        {"interface": "eth0"},  # Inside recovery loop check
-        None,  # Exit recovery loop / main loop exit
-    ]
-
-    mock_online.side_effect = [False, True]
-    mock_has_route.return_value = True
-
-    wd.run_watchdog_loop(interval_seconds=1)
-
-    assert mock_online.call_count == 2
-    mock_check.assert_not_called()
-    sleep_calls = [call[0][0] for call in mock_sleep.call_args_list]
-    assert 10 in sleep_calls
 
 
 @patch("ttp.dns.RESOLV_CONF", new="/etc/resolv.conf")
@@ -575,31 +461,15 @@ def test_sanitize_alert_text():
     assert sanitized == "Error! Test"
 
 
-@patch("ttp.firewall.apply_emergency_killswitch")
-@patch("subprocess.run")
-@patch("shutil.which", return_value="notify-send")
-def test_trigger_emergency_killswitch_sanitization(mock_which, mock_run, mock_killswitch):
-    """trigger_emergency_killswitch sanitizes failed_component and err_msg before using them in shell commands."""
-    wd.trigger_emergency_killswitch(failed_component="dns\x1b[31m", err_msg="unmounted\r\n")
-
-    # Verify firewall killswitch called
-    mock_killswitch.assert_called_once()
-
-    # Verify subprocess.run calls (wall and notify-send)
-    assert mock_run.call_count == 2
-
-    # Check wall command arguments: first call
-    wall_args = mock_run.call_args_list[0][0][0]
-    assert "dns" in wall_args[1]
-    assert "\x1b[31m" not in wall_args[1]
-    assert "unmounted" in wall_args[1]
-    assert "\r\n" not in wall_args[1]
-
-    # Check notify-send command arguments: second call
-    notify_args = mock_run.call_args_list[1][0][0]
-    assert notify_args[0] == resolve_optional("notify-send")
-    assert "dns" in notify_args[2]
-    assert "\x1b[31m" not in notify_args[2]
+def test_trigger_emergency_killswitch_sanitization(caplog):
+    """Untrusted component details cannot inject terminal control sequences."""
+    with (
+        patch("ttp.watchdog.alerts.state.read_lock", return_value={"session_id": "s"}),
+        patch("ttp.watchdog.alerts.request_emergency") as contain,
+    ):
+        wd.trigger_emergency_killswitch("dns\x1b[31m", "unmounted\r\n")
+    assert contain.call_args.args[1].component == "dns"
+    assert "\x1b" not in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -1027,9 +897,9 @@ def test_watchdog_run_is_allowed_as_the_watchdog_account() -> None:
     with (
         patch("ttp.commands._validation.os.geteuid", return_value=964),
         patch("pwd.getpwnam", return_value=MagicMock(pw_uid=964)),
-        patch("ttp.watchdog.run_watchdog_loop") as loop,
+        patch("ttp.watchdog.supervisor.run_supervisor") as loop,
     ):
-        result = CliRunner().invoke(app, ["watchdog", "run", "--interval", "10"])
+        result = CliRunner().invoke(app, ["watchdog", "run"])
 
     assert result.exit_code == 0, result.output
     loop.assert_called_once()
@@ -1048,7 +918,7 @@ def test_watchdog_run_still_refuses_an_unrelated_unprivileged_user() -> None:
     with (
         patch("ttp.commands._validation.os.geteuid", return_value=1000),
         patch("pwd.getpwnam", return_value=MagicMock(pw_uid=964)),
-        patch("ttp.watchdog.run_watchdog_loop") as loop,
+        patch("ttp.watchdog.supervisor.run_supervisor") as loop,
     ):
         result = CliRunner().invoke(app, ["watchdog", "run"])
 
@@ -1140,7 +1010,7 @@ def test_unit_state_treats_mainpid_zero_as_no_pid() -> None:
 def test_watchdog_liveness_never_upgrades_a_recorded_value_when_it_cannot_probe() -> None:
     """An unprobeable unit is reported inactive, not "whatever the lock said"."""
     with (
-        patch("ttp.watchdog.service._unit_state", return_value=("unknown", None)),
+        patch("ttp.watchdog.service.watchdog_observation", return_value={"value": "unknown"}),
         patch("ttp.state.update_lock_keys") as update,
     ):
         assert service.watchdog_liveness() == (False, None)
@@ -1151,29 +1021,29 @@ def test_watchdog_liveness_never_upgrades_a_recorded_value_when_it_cannot_probe(
 def test_watchdog_liveness_repairs_a_stale_lock() -> None:
     """A dead unit rewrites the lock, so the next reader sees the truth."""
     with (
-        patch("ttp.watchdog.service._unit_state", return_value=("inactive", None)),
+        patch("ttp.watchdog.service.watchdog_observation", return_value={"value": "unavailable"}),
         patch("ttp.state.update_lock_keys") as update,
     ):
         assert service.watchdog_liveness() == (False, None)
 
-    update.assert_called_once_with(watchdog_active=False, watchdog_pid=None)
+    update.assert_not_called()
 
 
 def test_watchdog_liveness_refreshes_the_pid_after_a_systemd_restart() -> None:
     """Only start wrote watchdog_pid, so a restarted daemon showed a stale PID."""
     with (
-        patch("ttp.watchdog.service._unit_state", return_value=("active", 5555)),
+        patch("ttp.watchdog.service.watchdog_observation", return_value={"value": "healthy", "pid": 5555}),
         patch("ttp.state.update_lock_keys") as update,
     ):
         assert service.watchdog_liveness() == (True, 5555)
 
-    update.assert_called_once_with(watchdog_active=True, watchdog_pid=5555)
+    update.assert_not_called()
 
 
 def test_watchdog_liveness_survives_a_lock_that_cannot_be_written() -> None:
     """Repairing the lock is best effort; reporting the truth is not."""
     with (
-        patch("ttp.watchdog.service._unit_state", return_value=("active", 42)),
+        patch("ttp.watchdog.service.watchdog_observation", return_value={"value": "healthy", "pid": 42}),
         patch("ttp.state.update_lock_keys", side_effect=RuntimeError("no lock")),
     ):
         assert service.watchdog_liveness() == (True, 42)

@@ -98,7 +98,7 @@ When started in Bring Your Own Daemon (BYOD) mode, TTP delegates Tor lifecycle m
 ### 2.2 Execution Flow - `stop` / crash
 
 > [!NOTE]  
-> **Normal:** `ttp stop` -> stops the watchdog service (if active) -> resolves Tor UID -> applies **Teardown Lockdown** (injects temporary drop rule at the top of the firewall output filter chain) -> graceful Tor `SHUTDOWN` (skipped in BYOD mode) -> stops the Tor service (skipped in BYOD mode) -> applies **Active Socket Slaughter** (injects counter reject and TCP Reset rules at the top of the output chain) -> waits for a 1.5-second micro-delay (allowing pending local connections to abort) -> flushes Netfilter connection tracking table via `conntrack -F` -> restores firewall/DNS (flushing and deleting `inet ttp` table) -> deletes lock. This zero-leak sequence prevents any cleartext traffic from escaping while the proxy is shutting down.
+> **Normal:** `ttp stop` -> publishes explicit stopping intent -> stops the watchdog service (if active) -> resolves Tor UID -> applies **Teardown Lockdown** (injects temporary drop rule at the top of the firewall output filter chain) -> graceful Tor `SHUTDOWN` (skipped in BYOD mode) -> stops the Tor service (skipped in BYOD mode) -> applies **Active Socket Slaughter** (injects counter reject and TCP Reset rules at the top of the output chain) -> waits for a 300ms micro-delay (allowing pending local connections to abort) -> flushes Netfilter connection tracking table via `conntrack -F` -> restores firewall/DNS (flushing and deleting `inet ttp` table) -> deletes lock. This zero-leak sequence prevents any cleartext traffic from escaping while the proxy is shutting down.
 >
 > [!TIP]
 > **Emergency Restore:** `ttp stop --restore-only` bypasses session checks and forces network cleanup. Useful if TTP crashed and the lock file was lost.
@@ -227,33 +227,52 @@ Pure data gathering module, decoupled from UI.
 
 ### 3.9 `watchdog/` Package
 
-Implements continuous, proactive session monitoring and auto-healing features to ensure absolute traffic security. Organized as a formal Finite State Machine (FSM):
+The approved [session contract](decisions/0013-session-evidence-and-notifications.md)
+separates root-owned intent from observations and the persistent emergency latch.
 
-* **`fsm.py` (Watchdog FSM)**: Houses the `WatchdogFSM` class which defines the state machine graph using the `transitions` library. It contains FSM state variables and executes transition triggers (`initialize`, `disconnect`, `reconnect`, `integrity_fail`, `heal_success`, `heal_fail`, `tamper`, `shutdown`) and their corresponding callback handlers.
-* **`service.py` (Volatile Service Daemon)**: Configures and writes a dynamic systemd service unit (`/run/systemd/system/ttp-watchdog.service`) that runs the command `ttp watchdog run`, as `ttp-watchdog` with only `CAP_NET_ADMIN` and `NoNewPrivileges=yes`. It `Wants=` rather than `Requires=` `ttp-tor.service`, because `Requires=` propagates a stop: stopping Tor would stop the watchdog meant to restart it. Because it resides in `/run/`, it evaporates on system reboot.
-* **`inotify.py` (Continuous Monitoring Loop)**: Runs the event-driven monitoring loop: `select()` on a netlink socket subscribed to nftables events (`NFNLGRP_NFTABLES`) and a ctypes-based inotify watch on `/etc/resolv.conf` (both realpath and symlink, `IN_DONT_FOLLOW`), with a 15-second heartbeat. Every wake-up runs the integrity check, so a changed table reaches the killswitch in tens of milliseconds. Once the FSM is in `killswitch`, the loop holds it: every 2 seconds it compares the table with the listing taken after applying it, and re-applies it if it was removed or altered, until the lock is gone.
-* **`integrity.py` (Integrity Check)**: Checks the DNS overlay and resolved drop-in, compares the live `inet ttp` table with the fingerprint recorded at start (`nft -s list table`), checks bypass rules and the DoT/DoH/un-redirected-DNS reject counters, and queries Tor's control socket. Only Tor is auto-healed (`systemctl restart ttp-tor`); a DNS or firewall failure goes straight to the killswitch.
-* **`alerts.py` (Alerts & Killswitch)**: Implements the emergency fail-closed killswitch and announces it through `wall` and `notify-send` - neither of which, as things stand, reaches anyone from the `ttp-watchdog` account. Terminals are `0620 <user>:tty` and the account is not in `tty` (nor is `wall` setgid on Debian 13, and `NoNewPrivileges` would void it anyway); `notify-send` has no user's session bus from a system service. The killswitch itself is unaffected, and logged to the journal. Announcements that arrive are a v0.5.0 item (ROADMAP). Sanitizes messages to prevent terminal escape injections.
-
-#### Watchdog FSM State Transitions
-
-The FSM models the watchdog lifecycle deterministically to prevent race conditions during recovery or network disconnect events:
+* **`supervisor.py`** owns the runtime loop. It establishes netlink/inotify
+  subscriptions, completes an initial bounded local evaluation, then sends
+  `READY=1`. Heartbeats come from useful loop progress, not a background timer.
+  Events invalidate observations immediately; local checks continue offline.
+* **`fsm.py`** provides event-resource initialization and shutdown; the old FSM
+  recovery callbacks remain internal compatibility helpers, not the runtime
+  session policy. `inotify.py` only decodes watch-loss events.
+* **`service.py`** creates a volatile `Type=notify` service with `WatchdogSec`,
+  bounded restarts and an independent `ExecStopPost` containment handler. The
+  watchdog account retains only `CAP_NET_ADMIN`. A stopped/hung process is killed
+  without waiting for an abort core dump before the termination handler runs.
+* **`integrity.py`** checks the DNS overlay, resolved service, normal ruleset
+  fingerprint/counters and Tor control interface (or unit fallback). Only Tor
+  can be healed, with bounded stages and a fresh evaluation afterward.
+* **`session_safety.py`** serializes containment with explicit root stop intent,
+  latches before application, and verifies expected kernel JSON rules. Restart
+  cannot clear the latch. A stale process cannot re-arm a replacement session.
+* **`runtime_records.py`** publishes bounded atomic records in the private
+  watchdog directory, keyed by session, with boot identity and BOOTTIME age.
+  Root intent and the retained stop marker are never watchdog-writable.
+* **`notifications/`** delivers fixed private event descriptions through an
+  unprivileged user's agent and D-Bus server. Unix peer credentials authenticate
+  publishers and recipient. Delivery records distinguish acceptance from human
+  reading. Notification failure alone cannot invoke containment.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> stopped
-    stopped --> healthy : initialize()
-    healthy --> suspended : disconnect()
-    suspended --> healthy : reconnect()
-    healthy --> healing : integrity_fail()
-    healing --> healthy : heal_success()
-    healing --> killswitch : heal_fail()
-    healthy --> killswitch : tamper()
-    healthy --> stopped : shutdown()
-    suspended --> stopped : shutdown()
-    healing --> stopped : shutdown()
-    killswitch --> stopped : shutdown()
+    [*] --> initializing
+    initializing --> observed : subscriptions and initial evaluation
+    observed --> unknown : event or expired evidence
+    unknown --> observed : bounded evaluation succeeds
+    initializing --> emergency : required capability fails
+    observed --> emergency : integrity failure or valid negative
+    unknown --> emergency : evaluation fails
+    emergency --> emergency : verify or repair, including after restart
+    emergency --> stopping : explicit stop intent
+    observed --> stopping : explicit stop intent
+    stopping --> [*]
 ```
+
+Read-only status reports evidence without changing intent or running HTTP probes.
+External verification has its own total budget after bootstrap. The guide covers
+[configuration, exit codes and delivery limits](web/how-to/session-observations.md).
 
 ### 3.10 `selinux.py`
 

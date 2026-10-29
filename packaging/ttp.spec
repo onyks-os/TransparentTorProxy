@@ -140,6 +140,7 @@ fi
 
 %files
 %license LICENSE
+%doc assets/ttp.conf.example
 %{_bindir}/ttp
 %{python3_sitelib}/ttp/
 %{python3_sitelib}/transparent_tor_proxy-*.dist-info/

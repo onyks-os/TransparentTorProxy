@@ -15,15 +15,19 @@ wrong the test agreed with it.
 
 from __future__ import annotations
 
+import os
 import types
 from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
 
+from ttp import state
 from ttp.cli import app
 from ttp.commands._common import EXIT_UNVERIFIED
+from ttp.evidence import Verification, VerificationState
 from ttp.exceptions import DNSError, FirewallError, StateError, TorError
+from ttp.runtime_records import RecordStore
 
 runner = CliRunner()
 
@@ -46,7 +50,11 @@ def _mock_logging():
 @pytest.fixture(autouse=True)
 def _mock_tmpfs_preflight():
     """start() calls check_tmpfs_space(); mock so CLI tests stay hermetic."""
-    with patch("ttp.state.check_tmpfs_space"):
+    with (
+        patch("ttp.state.check_tmpfs_space"),
+        patch("ttp.commands.start.require_systemd"),
+        patch("ttp.commands.start._is_port_in_use", return_value=False),
+    ):
         yield
 
 
@@ -58,10 +66,25 @@ def _mock_root_euid():
 
 
 @pytest.fixture
-def mock_base_start():
+def mock_base_start(tmp_path, monkeypatch):
     """Standard preflight/tor mocks for happy-path ttp start commands."""
+    directory = tmp_path / "runtime"
+    directory.mkdir()
+    store = RecordStore(directory / "watchdog", os.getuid(), os.getgid())
+    monkeypatch.setattr(state, "ensure_runtime_dir", lambda: None)
+    monkeypatch.setattr("ttp.commands.start.session_store", lambda: store)
+    monkeypatch.setattr("ttp.session_safety.session_store", lambda: store)
+    monkeypatch.setattr("ttp.session_report.session_store", lambda: store)
+
+    def recorded(*args, **kwargs):
+        call = getattr(state.write_lock, "call_args", None)
+        return {"session_id": "test-session", "phase": "running", **call.kwargs} if call else None
+
     with (
-        patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4")),
+        patch(
+            "ttp.commands.start._verify_tor",
+            return_value=Verification(VerificationState.CONFIRMED, "tor.confirmed", "1.2.3.4"),
+        ),
         patch("ttp.dns.apply_dns", return_value={"interface": "eth0"}),
         patch("ttp.dns.detect_active_interface", return_value="eth0"),
         patch(
@@ -75,7 +98,7 @@ def mock_base_start():
             },
         ),
         patch("ttp.tor_install.setup_selinux_if_needed"),
-        patch("ttp.state.read_lock", return_value=None),
+        patch("ttp.state.read_lock", side_effect=recorded),
         patch("ttp.state.is_orphan", return_value=False),
     ):
         yield
@@ -97,7 +120,7 @@ def test_start_happy_path(
 ):
     """start with all systems go -> session active, ruleset generated, lock written."""
     result = runner.invoke(app, ["start"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "Session active" in result.output
 
     # Assert produced artifact: generated nftables script
@@ -145,8 +168,13 @@ def test_start_orphan_recovery(
     mock_base_start,
 ):
     """start with orphaned session (PID dead) -> auto-recovers and continues."""
+    mock_read.side_effect = lambda **kwargs: (
+        {"session_id": "test-session", "phase": "running", **mock_write.call_args.kwargs}
+        if mock_write.called
+        else {"pid": 1234}
+    )
     result = runner.invoke(app, ["start"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "recovering" in result.output.lower()
     assert mock_recovery.call_count == 1
     assert mock_nft_str.call_count == 1
@@ -181,7 +209,7 @@ def test_start_with_interface_flag(
 ):
     """start --interface wlan0 -> uses wlan0 instead of auto-detect."""
     result = runner.invoke(app, ["start", "--interface", "wlan0"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert mock_apply_dns.call_args.args[0] == "wlan0"
     assert mock_apply_dns.call_args.kwargs["dns_port"] == 9054
     assert mock_write.call_args.kwargs["interface"] == "wlan0"
@@ -192,7 +220,10 @@ def test_start_with_interface_flag(
 
 @patch("ttp.state.delete_lock")
 @patch("ttp.firewall.destroy_rules")
-@patch("ttp.commands.start._verify_tor", return_value=(False, "1.2.3.4"))
+@patch(
+    "ttp.commands.start._verify_tor",
+    return_value=Verification(VerificationState.INCONCLUSIVE, "probe.timeout", "1.2.3.4"),
+)
 @patch("ttp.firewall.runner._run_nft_string")
 @patch("ttp.firewall.runner._run_nft")
 @patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
@@ -218,8 +249,9 @@ def test_start_tor_verification_fails(
     """
     result = runner.invoke(app, ["start"])
     assert result.exit_code == EXIT_UNVERIFIED
-    assert "verification failed" in result.output
-    assert "held fail-closed" in result.output
+    assert "Tor Verification Inconclusive" in result.output
+    assert "does not prove" in result.output
+    assert "held fail-closed" not in result.output
     assert mock_verify.call_count == 1
 
     # The session survives: rules produced, lock written, nothing torn down.
@@ -231,7 +263,7 @@ def test_start_tor_verification_fails(
 
 
 @patch("ttp.watchdog.start_watchdog")
-@patch("ttp.commands.start._verify_tor", return_value=(False, "unknown"))
+@patch("ttp.commands.start._verify_tor", return_value=Verification(VerificationState.INCONCLUSIVE, "probe.timeout"))
 @patch("ttp.firewall.runner._run_nft_string")
 @patch("ttp.firewall.runner._run_nft")
 @patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
@@ -540,7 +572,7 @@ def test_start_records_an_unresolvable_tor_user_as_a_null_uid(
     """
     result = runner.invoke(app, ["start"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert mock_write.call_count == 1
     assert mock_write.call_args.kwargs["tor_uid"] is None
 
@@ -560,23 +592,12 @@ def test_start_survives_a_watchdog_that_cannot_start(
     mock_watchdog,
     mock_base_start,
 ):
-    """A watchdog that fails to launch is reported, not rolled back.
-
-    This is deliberate rather than an oversight, and worth stating: the
-    watchdog *monitors* a session, it does not create the protection. The
-    ruleset, the DNS overlay and the lock are all in place by the time it is
-    launched, and Tor is verified, so the host is genuinely protected - just
-    unwatched. Tearing all of that down would replace a protected-but-unmonitored
-    host with a cleartext one, which is strictly worse.
-
-    The operator still has to be told, because `--watchdog` was asked for and
-    did not happen, so the failure is surfaced as an error panel. Exit code 0
-    reflects the session's state, not the flag's.
-    """
+    """A required missing watchdog fails loudly, attempts isolation and keeps the session."""
     result = runner.invoke(app, ["start", "--watchdog"])
 
-    assert result.exit_code == 0
-    assert "Watchdog Error" in result.output
+    assert result.exit_code == 8, result.output
+    assert "Required Watchdog Unavailable" in result.output
+    assert "CONTAINMENT UNCONFIRMED" in result.output
     assert mock_watchdog.call_count == 1
 
     # The session itself is untouched.
@@ -587,7 +608,9 @@ def test_start_survives_a_watchdog_that_cannot_start(
 # uninstall
 
 
-@patch("ttp.commands.start._verify_tor", return_value=(True, "1.2.3.4"))
+@patch(
+    "ttp.commands.start._verify_tor", return_value=Verification(VerificationState.CONFIRMED, "tor.confirmed", "1.2.3.4")
+)
 @patch("ttp.firewall.runner._run_nft_string")
 @patch("ttp.firewall.runner._run_nft")
 @patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
@@ -601,7 +624,7 @@ def test_start_with_bootstrap_timeout(
     mock_base_start,
 ):
     result = runner.invoke(app, ["start", "--bootstrap-timeout", "300"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert mock_verify.call_args.kwargs["timeout"] == 300
 
 
@@ -641,7 +664,7 @@ def test_start_custom_ports_success(
 ):
     """start with custom valid ports -> propagates them down into ruleset and lock."""
     result = runner.invoke(app, ["start", "--transport-port", "9080", "--dns-port", "9090"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "Session active" in result.output
 
     # Assert ruleset artifact contains custom ports
@@ -716,7 +739,7 @@ def test_start_with_allow_root_and_no_lan_bypass(
 ):
     """start with --allow-root and --no-lan-bypass flags -> ruleset contains root bypass & no LAN bypass."""
     result = runner.invoke(app, ["start", "--allow-root", "--no-lan-bypass"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     ruleset = mock_nft_str.call_args[0][0]
     assert "meta skuid 0 accept" in ruleset
     assert mock_write.call_args.kwargs["allow_root"] is True
@@ -748,7 +771,7 @@ def test_start_with_bypass_user_and_group(
     mock_grp_nam.return_value = MagicMock(gr_gid=2001)
 
     result = runner.invoke(app, ["start", "--bypass-user", "user1,user2", "--bypass-group", "group1"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "Session active" in result.output
 
     # Assert ruleset artifact includes bypass user/group UIDs
@@ -799,7 +822,7 @@ def test_start_with_bridges_direct(
             "snowflake 192.0.2.2:4321 601234567890ABCDEF",
         ],
     )
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "Session active" in result.output
 
     # check ensure_tor_ready arguments
@@ -844,7 +867,7 @@ def test_start_with_bridge_file(
     )
 
     result = runner.invoke(app, ["start", "--bridge-file", str(bridge_file)])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "Session active" in result.output
 
     kwargs_ensure = mock_ensure.call_args.kwargs
@@ -913,7 +936,7 @@ def test_start_external_daemon_happy_path_manual_uid(
     mock_pwnam.return_value = mock_user
 
     result = runner.invoke(app, ["start", "--external-daemon", "--tor-uid", "debian-tor"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "Tor daemon detected operating under UID: 101" in result.output
 
     assert mock_ensure.call_count == 0
@@ -949,7 +972,7 @@ def test_start_external_daemon_happy_path_auto_uid(
     mock_pwuid.return_value = mock_user
 
     result = runner.invoke(app, ["start", "--external-daemon"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "Tor daemon detected operating under UID: 105" in result.output
 
     assert mock_get_uid.call_args[0][0] == 9041
@@ -980,7 +1003,7 @@ def test_start_external_daemon_happy_path_fallback_user(
     mock_pwnam.return_value = mock_user
 
     result = runner.invoke(app, ["start", "--external-daemon"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "Tor daemon detected operating under UID: 110" in result.output
 
     mock_pwnam.assert_any_call("tor")
@@ -1024,7 +1047,7 @@ def test_start_no_ipv6_unsupported(
 ):
     """Verify superfluous warning is printed when IPv6 is unsupported and --no-ipv6 is passed."""
     result = runner.invoke(app, ["start", "--no-ipv6"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "superfluous" in result.output
 
     ruleset = mock_nft_str.call_args[0][0]
@@ -1047,7 +1070,7 @@ def test_start_no_ipv6_supported(
 ):
     """Verify info message is printed when IPv6 is supported and --no-ipv6 is passed."""
     result = runner.invoke(app, ["start", "--no-ipv6"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "IPv6 traffic will be dropped" in result.output
 
     ruleset = mock_nft_str.call_args[0][0]
@@ -1306,5 +1329,84 @@ def test_start_records_the_fingerprint_of_the_table_it_applied(
 ):
     """#80: without it the watchdog could only check chain names, and a flushed table passed."""
     result = runner.invoke(app, ["start"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert mock_write.call_args.kwargs["table_fingerprint"] == "f" * 64
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "settings",
+        "recipient_without_enable",
+        "recipient_missing",
+        "agent_failed",
+        "accepted",
+        "inconclusive",
+        "negative",
+        "unknown_containment",
+    ],
+)
+@patch("ttp.firewall.apply_rules")
+@patch("ttp.state.write_lock")
+def test_start_notification_and_degraded_outcomes(mock_write, mock_firewall, mock_base_start, monkeypatch, scenario):
+    from unittest.mock import Mock
+
+    from ttp.commands import start
+    from ttp.evidence import Diagnostic, ExitCode, Result
+    from ttp.notifications import service
+    from ttp.settings import SettingsError
+
+    recipient = Mock(return_value={"uid": 1000, "gid": 1000, "login_session": "2"})
+    agent = Mock()
+    emission = Mock(return_value=Result())
+    monkeypatch.setattr(service, "recipient", recipient)
+    monkeypatch.setattr(service, "start_agent", agent)
+    monkeypatch.setattr(service, "emit", emission)
+    args = ["--quiet", "start", "--notifications"]
+    expected = 0
+    if scenario == "settings":
+        monkeypatch.setattr(start, "load_settings", Mock(side_effect=SettingsError("bad config")))
+        expected = 1
+    elif scenario == "recipient_without_enable":
+        args = ["start", "--notification-user", "alice"]
+        expected = 2
+    elif scenario == "recipient_missing":
+        recipient.side_effect = service.NotificationError("No graphical session")
+        expected = 9
+    elif scenario == "agent_failed":
+        agent.side_effect = service.NotificationError("Agent not ready")
+        expected = 9
+    elif scenario == "inconclusive":
+        monkeypatch.setattr(
+            start, "_verify_tor", lambda **kwargs: Verification(VerificationState.INCONCLUSIVE, "probe.timeout")
+        )
+        expected = 3
+    elif scenario == "negative":
+        monkeypatch.setattr(
+            start, "_verify_tor", lambda **kwargs: Verification(VerificationState.NEGATIVE, "tor.negative")
+        )
+        monkeypatch.setattr(
+            "ttp.session_report.request_emergency",
+            lambda *args: Result().add(
+                Diagnostic(ExitCode.EMERGENCY_VERIFIED, "verified", "firewall", "contain", "Verified")
+            ),
+        )
+        expected = 7
+    elif scenario == "unknown_containment":
+        monkeypatch.setattr(start, "emergency_latched", Mock(side_effect=StateError("record corrupt")))
+        expected = 8
+    result = runner.invoke(app, args)
+    assert result.exit_code == expected, (result.output, result.exception)
+    if scenario in ("settings", "recipient_without_enable"):
+        mock_firewall.assert_not_called()
+    else:
+        assert mock_write.call_args.kwargs["settings"]["notifications"]["enabled"]
+        expected_event = {
+            "inconclusive": "inconclusive",
+            "negative": "emergency_verified",
+            "unknown_containment": "containment_unconfirmed",
+        }.get(scenario, "started")
+        assert emission.call_args.args[1] == expected_event
+    if scenario == "recipient_missing":
+        agent.assert_not_called()
+        assert "notifications.recipient_unavailable" in result.output

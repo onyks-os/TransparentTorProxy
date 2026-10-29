@@ -19,15 +19,18 @@ logger = logging.getLogger("ttp")
 # Path to the temporary ruleset file for better debugging (line numbers)
 RULES_TEMP_PATH = LOCK_DIR / "ttp.rules"
 
-# Prepended to every full-table replacement. Keeping the create+flush in the same
+# Prepended to every full-table replacement. Keeping the create+delete in the same
 # nft script as the ruleset makes the swap a single kernel transaction: nft -f
 # either commits the whole thing or nothing. Issuing them as separate `nft`
 # invocations leaves a window where the table exists but is empty - no redirect
 # and no drop - during which traffic egresses in cleartext.
-_TABLE_RESET_PREAMBLE = "add table inet ttp\nflush table inet ttp\n"
+# `add` is idempotent; `delete` removes stale chain declarations as well as
+# rules. A flush alone cannot repair a changed hook/type, or a dormant table.
+# All three operations are one transaction, including when initially absent.
+_TABLE_RESET_PREAMBLE = "add table inet ttp\ndelete table inet ttp\n"
 
 
-def _apply_table_atomically(ruleset: str) -> None:
+def _apply_table_atomically(ruleset: str, *, timeout: float = 10) -> None:
     """Replace the entire ``inet ttp`` table in one atomic nft transaction.
 
     Args:
@@ -36,7 +39,7 @@ def _apply_table_atomically(ruleset: str) -> None:
     Raises:
         FirewallError: If the transaction fails; the previous table is left intact.
     """
-    _run_nft_string(_TABLE_RESET_PREAMBLE + ruleset.strip() + "\n")
+    _run_nft_string(_TABLE_RESET_PREAMBLE + ruleset.strip() + "\n", timeout=timeout)
 
 
 def _run_nft(args: list[str]) -> None:
@@ -128,7 +131,7 @@ def table_fingerprint() -> str | None:
     return hashlib.sha256(res.stdout.encode()).hexdigest()
 
 
-def _run_nft_string(ruleset: str) -> None:
+def _run_nft_string(ruleset: str, *, timeout: float = 10) -> None:
     """Inject a complex ruleset string directly into nft via stdin.
 
     The ruleset is piped to ``nft -f -`` rather than staged in a file under
@@ -152,7 +155,7 @@ def _run_nft_string(ruleset: str) -> None:
             capture_output=True,
             text=True,
             check=True,
-            timeout=10,
+            timeout=timeout,
         )
     except (OSError, subprocess.CalledProcessError) as e:
         error_msg = str(e)
