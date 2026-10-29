@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 import typer
 
 from ttp import state
@@ -129,7 +131,7 @@ def watchdog_run() -> None:
 
 
 @watchdog_app.command(name="terminated", hidden=True)
-def watchdog_terminated(session: str | None = typer.Option(None, "--session")) -> None:
+def watchdog_terminated(session: Optional[str] = typer.Option(None, "--session")) -> None:
     """Independent systemd termination hook; never called by the dying loop."""
     _require_root_or_watchdog_user()
     result = supervision_terminated(session)

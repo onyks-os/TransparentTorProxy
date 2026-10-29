@@ -44,8 +44,19 @@ def private_session(tmp_path, monkeypatch):
 
 
 def test_config_distinguishes_admin_values_from_frozen_session(monkeypatch):
+    from ttp import settings
     from ttp.settings import CONFIG_PATH
 
+    # Emulate only the owner at the settings boundary, even on non-root CI.
+    real_fstat = os.fstat
+
+    def root_owned(fd):
+        metadata = list(real_fstat(fd))
+        metadata[4] = 0
+        return os.stat_result(metadata)
+
+    monkeypatch.setattr(settings, "os", SimpleNamespace(**vars(os)))
+    monkeypatch.setattr(settings.os, "fstat", root_owned)
     CONFIG_PATH.write_text("[watchdog]\ncheck_interval=12\n")
     current = runner.invoke(app, ["config"])
     assert current.exit_code == 0, current.output

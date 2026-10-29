@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve CLI compatibility with the oldest supported Typer version and isolate
+  configuration ownership fixtures from pytest capture and the runner user.
+
 - Treat unavailable external verification as inconclusive (code 3), with no
   claim of isolation. A valid negative from a non-exempt probe requests
   containment; requested, applied and independently verified remain distinct.

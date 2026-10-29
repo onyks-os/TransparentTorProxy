@@ -20,6 +20,8 @@ def config_file(tmp_path, monkeypatch):
     path = tmp_path / "ttp.conf"
     path.write_text("")
     path.chmod(0o644)
+    # Keep the OS mock private: pytest also uses os.fstat for capture.
+    monkeypatch.setattr(settings, "os", SimpleNamespace(**vars(os)))
     real_fstat = os.fstat
 
     def root_owned(fd):
