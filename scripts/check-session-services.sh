@@ -16,7 +16,7 @@ cleanup() {
     podman rm -f "$name" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
-podman run -d --name "$name" --network none --systemd=always \
+podman run -d --name "$name" --network none --systemd=always --ulimit core=-1:-1 \
     --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt label=disable \
     --tmpfs /tmp -v "$repo:/src:ro" "$image" /usr/lib/systemd/systemd >/dev/null
 # Early exec processes can be killed by systemd during boot. Wait for the
@@ -27,6 +27,10 @@ for _ in {1..60}; do
     case "$boot_state" in
         running|degraded) ready=true; break ;;
     esac
+    if [ "$(podman inspect "$name" --format '{{.State.Running}}')" != true ]; then
+        echo "Container exited before systemd became ready" >&2
+        exit 1
+    fi
     sleep 1
 done
 if [ "$ready" != true ]; then

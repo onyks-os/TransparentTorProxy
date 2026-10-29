@@ -28,7 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Run Fedora integration against pinned Fedora 44: the old Fedora 41 Tor cannot
   negotiate protocols required by the public network. Wait for systemd boot in
-  the offline session fixture and preserve container diagnostics on failure.
+  the offline session fixture, provide its required core limit explicitly, and
+  preserve container diagnostics on failure.
 
 - Preserve CLI compatibility with the oldest supported Typer version and isolate
   configuration ownership fixtures from pytest capture and the runner user.
