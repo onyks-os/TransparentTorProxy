@@ -6,11 +6,33 @@ set -euo pipefail
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 image=${TTP_SESSION_IMAGE:-localhost/ttp-notifications-check:latest}
 name="ttp-session-check-$$"
-cleanup() { podman rm -f "$name" >/dev/null 2>&1 || true; }
+cleanup() {
+    result=$?
+    if [ "$result" -ne 0 ]; then
+        podman logs "$name" >&2 || true
+        podman inspect "$name" --format '{{json .State}}' >&2 || true
+        podman exec "$name" journalctl -b --no-pager -n 100 >&2 || true
+    fi
+    podman rm -f "$name" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT INT TERM
 podman run -d --name "$name" --network none --systemd=always \
     --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt label=disable \
     --tmpfs /tmp -v "$repo:/src:ro" "$image" /usr/lib/systemd/systemd >/dev/null
+# Early exec processes can be killed by systemd during boot. Wait for the
+# manager to finish starting before launching the destructive fixture.
+ready=false
+for _ in {1..60}; do
+    boot_state=$(podman exec "$name" systemctl is-system-running 2>/dev/null || true)
+    case "$boot_state" in
+        running|degraded) ready=true; break ;;
+    esac
+    sleep 1
+done
+if [ "$ready" != true ]; then
+    echo "Container systemd did not finish booting within 60 seconds" >&2
+    exit 1
+fi
 podman exec "$name" sh -c '
     set -eu
     install_dir=$(/opt/v/bin/python -c "import sysconfig; print(sysconfig.get_path(\"purelib\"))")
