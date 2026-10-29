@@ -18,7 +18,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 podman run -d --name "$name" --network none --systemd=always --ulimit core=-1:-1 \
     --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt label=disable \
-    --tmpfs /tmp -v "$repo:/src:ro" "$image" /usr/lib/systemd/systemd >/dev/null
+    --tmpfs /tmp -v "$repo:/src:ro" "$image" /usr/lib/systemd/systemd --log-target=console --log-level=debug >/dev/null
 # Early exec processes can be killed by systemd during boot. Wait for the
 # manager to finish starting before launching the destructive fixture.
 ready=false
