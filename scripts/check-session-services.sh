@@ -16,7 +16,8 @@ cleanup() {
     podman rm -f "$name" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
-podman run -d --name "$name" --network none --systemd=always --ulimit core=-1:-1 \
+# systemd logs to /dev/console; allocate it so early boot errors are captured.
+podman run -dt --name "$name" --network none --systemd=always --ulimit core=-1:-1 \
     --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt label=disable \
     --tmpfs /tmp -v "$repo:/src:ro" "$image" /usr/lib/systemd/systemd --log-target=console --log-level=debug >/dev/null
 # Early exec processes can be killed by systemd during boot. Wait for the
