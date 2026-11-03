@@ -16,9 +16,17 @@ cleanup() {
     podman rm -f "$name" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
+# The default AppArmor container profile denies systemd's MS_SLAVE remount
+# when sandboxing generators. Relax that profile only for this disposable
+# offline fixture; retain seccomp, namespaces and the explicit capability set.
+security_args=(--security-opt label=disable)
+if [ -r /sys/module/apparmor/parameters/enabled ] && \
+    [ "$(cat /sys/module/apparmor/parameters/enabled)" = Y ]; then
+    security_args+=(--security-opt apparmor=unconfined)
+fi
 # systemd logs to /dev/console; allocate it so early boot errors are captured.
 podman run -dt --name "$name" --network none --systemd=always --ulimit core=-1:-1 \
-    --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt label=disable \
+    --cap-add NET_ADMIN --cap-add SYS_ADMIN "${security_args[@]}" \
     --tmpfs /tmp -v "$repo:/src:ro" "$image" /usr/lib/systemd/systemd --log-target=console --log-level=debug >/dev/null
 # Early exec processes can be killed by systemd during boot. Wait for the
 # manager to finish starting before launching the destructive fixture.

@@ -130,7 +130,10 @@ termination handler cannot re-arm protection afterward.
 ## Reproduce the service tests safely
 
 The CI `session-services` job builds the Debian 13 fixture and runs
-`scripts/check-session-services.sh`. It creates disposable Podman containers
+`scripts/check-session-services.sh`. On AppArmor hosts, this fixture uses an
+unconfined AppArmor profile for systemd generator mount setup; seccomp and the
+explicit capability set remain enabled. Its allocated console captures early
+boot errors. It creates disposable Podman containers
 with no external network, read-only source mounts and separate network
 namespaces. The repository and host firewall/resolver are not modified.
 The fixture needs `NET_ADMIN` and `SYS_ADMIN` inside the container for nftables,

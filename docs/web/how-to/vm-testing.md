@@ -12,7 +12,7 @@ Execute automated integration test suites across containerized Linux environment
 # Run the Debian 13 integration test suite
 make integration-debian
 
-# Run the Fedora 41 integration test suite
+# Run the Fedora 44 integration test suite
 make integration-fedora
 
 # Run the Arch Linux integration test suite
