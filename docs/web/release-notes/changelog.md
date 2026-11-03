@@ -21,6 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resolve integration STUN targets before enabling TTP, separating the UDP
+  containment probe from exit-dependent AAAA resolution. Missing targets still
+  fail loudly rather than being reported as containment.
+
+- Allow systemd generator mount setup in the disposable offline CI container on
+  AppArmor hosts, and attach its console so early boot failures are visible.
+
+- Run Fedora integration against pinned Fedora 44: the old Fedora 41 Tor cannot
+  negotiate protocols required by the public network. Wait for systemd boot in
+  the offline session fixture, provide its required core limit explicitly, and
+  preserve container diagnostics on failure.
+
+- Preserve CLI compatibility with the oldest supported Typer version and isolate
+  configuration ownership fixtures from pytest capture and the runner user.
+
 - Treat unavailable external verification as inconclusive (code 3), with no
   claim of isolation. A valid negative from a non-exempt probe requests
   containment; requested, applied and independently verified remain distinct.
