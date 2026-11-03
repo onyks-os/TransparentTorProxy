@@ -41,8 +41,7 @@ jobs:
 
       - name: Install documentation toolchain
         run: |
-          python -m pip install --upgrade pip
-          pip install mkdocs mkdocs-material "mkdocstrings[python]"
+          bash scripts/install_locked.sh python docs
 
       # mkdocs.yml points site_dir at a sibling checkout of the site repository,
       # which does not exist on a runner; --site-dir overrides it. --strict keeps

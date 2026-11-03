@@ -1,0 +1,28 @@
+name: ClusterFuzzLite
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '15 3 * * 0'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fuzz:
+    name: Production parser fuzzing
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: python
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: address
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 120
+          mode: ${{ github.event_name == 'pull_request' && 'code-change' || 'batch' }}
+          sanitizer: address

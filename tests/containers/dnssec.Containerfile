@@ -8,8 +8,10 @@ RUN if command -v dnf >/dev/null; then \
         python3 python3-venv dbus iproute2 systemd systemd-resolved; \
     fi
 RUN test -x /usr/lib/systemd/systemd-networkd && python3 -m venv /opt/v
-COPY pyproject.toml README.md /build/
+COPY pyproject.toml README.md LICENSE /build/
+COPY requirements /build/requirements
+COPY scripts/install_locked.sh /build/scripts/install_locked.sh
 COPY ttp /build/ttp
 COPY assets /build/assets
-RUN /opt/v/bin/pip install /build pytest
+RUN bash /build/scripts/install_locked.sh /opt/v/bin/python ci /build
 WORKDIR /src

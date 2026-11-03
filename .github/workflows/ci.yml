@@ -26,8 +26,7 @@ jobs:
       # typer/rich/transitions importable to resolve their types.
       - name: Install Linting Tools
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          bash scripts/install_locked.sh python ci
 
       # `make lint` runs ShellCheck and markdownlint when they are on PATH and
       # prints "skipping" when they are not. On a bare runner they were never
@@ -68,8 +67,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          bash scripts/install_locked.sh python ci
 
       - name: Run unit tests
         run: make test
@@ -100,9 +98,7 @@ jobs:
 
       - name: Install the oldest supported runtime dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r packaging/oldest-supported.pins pytest hypothesis "cyclonedx-python-lib[json-validation]"
-          pip install --no-deps -e .
+          bash scripts/install_locked.sh python oldest
           pip list
 
       - name: Run unit tests
@@ -130,8 +126,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y rpm
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          bash scripts/install_locked.sh python ci
 
       - name: Build twice and compare
         run: scripts/check-reproducible.sh "$RUNNER_TEMP/repro"
@@ -215,8 +210,7 @@ jobs:
 
       - name: Install TTP with the NSE extra
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev,nse]"
+          bash scripts/install_locked.sh python ci
 
       # TTP_REQUIRE_NSE=1 turns a missing, shadowed or too-old NSE into a hard
       # error instead of a skip. Without it this job could pass by running
@@ -307,8 +301,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          bash scripts/install_locked.sh python ci
 
       - name: Build every release artifact
         run: make packages
@@ -334,7 +327,7 @@ jobs:
 
       - name: Check the distributions are publishable
         run: |
-          pip install --upgrade twine
+          python -m twine --version
           twine check packaging/*.whl packaging/*.tar.gz
 
       # Each SBOM must be valid CycloneDX, not merely present: a malformed one
@@ -357,3 +350,16 @@ jobs:
 
       - name: Build and install the PKGBUILD on Arch
         run: packaging/smoke_test.sh arch
+
+  unit-tests-latest:
+    name: Unit Tests (latest available dependencies)
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12"
+      # Deliberately resolve newest versions here; locked jobs test reviewed bytes.
+      - run: python -m pip install -e ".[dev,nse]"
+      - run: python -m pytest -q

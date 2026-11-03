@@ -16,6 +16,6 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install pip-audit
-        run: pip install pip-audit
+        run: bash scripts/install_locked.sh python ci
       - name: Scan dependencies
         run: pip-audit

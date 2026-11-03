@@ -1,0 +1,1 @@
+{"watchdog": {"enabled": false, "readiness_timeout": 30, "heartbeat_interval": 5, "service_timeout": 30, "check_interval": 15, "check_timeout": 10, "observation_max_age": 30}, "verification": {"timeout": 60}, "notifications": {"enabled": false, "readiness_timeout": 15, "call_timeout": 5, "delivery_timeout": 15, "attempts": 3}}

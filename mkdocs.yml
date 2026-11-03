@@ -103,6 +103,7 @@ nav:
       - Applications with Their Own DNS: how-to/apps-with-own-dns.md
       - DNSSEC Policy: how-to/dnssec.md
       - Supervision and Notifications: how-to/session-observations.md
+      - Security and Quality Findings: how-to/security-quality.md
   - Explanation:
       - Architecture & Flow: explanation/architecture.md
       - Watchdog FSM: explanation/watchdog-fsm.md

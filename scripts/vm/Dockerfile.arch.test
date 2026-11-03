@@ -28,7 +28,7 @@ COPY . /app
 WORKDIR /app
 
 # Install TTP with dev dependencies, NSE, and pyroute2 (netlink route setup without /sys mount)
-RUN pip install -e ".[dev,nse]"
+RUN bash scripts/install_locked.sh /venv/bin/python ci
 
 STOPSIGNAL SIGRTMIN+3
 
