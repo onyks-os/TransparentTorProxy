@@ -71,6 +71,12 @@ echo "==> Caching container's unproxied public IPs (IPv4/IPv6)..."
 docker exec "$CID" sh -c "curl -s --connect-timeout 5 https://api.ipify.org > /tmp/real_public_ip.txt"
 docker exec "$CID" sh -c "curl -s -6 --connect-timeout 5 https://ipv6.icanhazip.com > /tmp/real_public_ipv6.txt || touch /tmp/real_public_ipv6.txt"
 
+echo "==> Resolving STUN probe targets before enabling TTP..."
+if ! docker exec "$CID" /venv/bin/python -m tests.leak.test_udp_egress_leak /tmp/ttp-stun-targets.json; then
+    docker rm -f "$CID"
+    exit 1
+fi
+
 echo "==> Running integration tests inside container..."
 set +e
 docker exec "$CID" /venv/bin/pytest /app/tests/test_integration.py /app/tests/test_nse_rules.py -m "integration or nse" -v -s
@@ -105,7 +111,7 @@ if [ $TEST_EXIT -eq 0 ]; then
         set +e
         REAL_IP=$(docker exec "$CID" cat /tmp/real_public_ip.txt)
         REAL_IPV6=$(docker exec "$CID" cat /tmp/real_public_ipv6.txt)
-        docker exec -e REAL_PUBLIC_IP="$REAL_IP" -e REAL_PUBLIC_IPV6="$REAL_IPV6" "$CID" /venv/bin/pytest /app/tests/leak/ -v -s
+        docker exec -e TTP_STUN_TARGETS=/tmp/ttp-stun-targets.json -e REAL_PUBLIC_IP="$REAL_IP" -e REAL_PUBLIC_IPV6="$REAL_IPV6" "$CID" /venv/bin/pytest /app/tests/leak/ -v -s
         TEST_EXIT=$?
         set -e
         

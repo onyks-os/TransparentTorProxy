@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resolve integration STUN targets before enabling TTP, separating the UDP
+  containment probe from exit-dependent AAAA resolution. Missing targets still
+  fail loudly rather than being reported as containment.
+
 - Allow systemd generator mount setup in the disposable offline CI container on
   AppArmor hosts, and attach its console so early boot failures are visible.
 

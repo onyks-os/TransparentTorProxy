@@ -22,6 +22,11 @@ make integration-arch
 make integration-all
 ```
 
+The runner resolves IPv4 and IPv6 STUN targets before enabling TTP and passes
+the numeric addresses to the UDP containment probes. This avoids depending on
+the selected Tor exit to resolve AAAA records during a firewall test. Missing
+targets fail the setup; an inconclusive probe never counts as containment.
+
 The same three run in CI on every push and pull request. A container shares the host's kernel and has no real boot, so these cannot show lifecycle behaviour; section 3 covers that.
 
 ---

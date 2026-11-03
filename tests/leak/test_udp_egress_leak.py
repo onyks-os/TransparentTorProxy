@@ -32,8 +32,11 @@ reason its verdict mapping is ``ESCAPED -> LEAK`` rather than the DNS probe's
 
 from __future__ import annotations
 
+import json
+import os
 import socket
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
@@ -60,11 +63,18 @@ def _probe(family: int, hosts: Sequence[str], port: int, probe_name: str) -> Obs
     outcome = Outcome.NOT_ATTEMPTED
     detail = ""
 
+    # CI resolves targets before TTP starts, so this UDP test does not depend
+    # on the selected exit providing AAAA answers through Tor DNSPort.
+    cached = os.environ.get("TTP_STUN_TARGETS")
+    if cached:
+        hosts = json.loads(Path(cached).read_text()).get(str(family), [])
+
     addr = None
     failures: list[str] = []
     for host in hosts:
         try:
-            addr = socket.getaddrinfo(host, port, family, socket.SOCK_DGRAM)[0][4]
+            flags = socket.AI_NUMERICHOST if cached else 0
+            addr = socket.getaddrinfo(host, port, family, socket.SOCK_DGRAM, 0, flags)[0][4]
             break
         except socket.gaierror as exc:
             failures.append(f"{host}: {exc!r}")
@@ -122,3 +132,26 @@ def test_arbitrary_udp_to_wan_is_rejected_over_ipv6():
         pytest.skip("IPv6 loopback not supported by the environment.")
 
     assert_contained(_probe(socket.AF_INET6, _STUN_HOSTS, 19302, "udp_wan_egress_ipv6"))
+
+
+def prepare_targets(path: Path) -> None:
+    """Record real STUN addresses before applying the session under test."""
+    targets = {}
+    for family in (socket.AF_INET, socket.AF_INET6):
+        addresses = []
+        for host in _STUN_HOSTS:
+            try:
+                answers = socket.getaddrinfo(host, 19302, family, socket.SOCK_DGRAM)
+            except socket.gaierror:
+                continue
+            addresses.extend(answer[4][0] for answer in answers)
+        if not addresses:
+            raise RuntimeError(f"Cannot prepare STUN targets for family {family}")
+        targets[str(family)] = list(dict.fromkeys(addresses))
+    path.write_text(json.dumps(targets))
+
+
+if __name__ == "__main__":
+    import sys
+
+    prepare_targets(Path(sys.argv[1]))

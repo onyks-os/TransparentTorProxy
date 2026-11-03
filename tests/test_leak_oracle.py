@@ -377,7 +377,7 @@ def test_the_udp_probe_moves_on_when_one_stun_host_has_no_record() -> None:
     INCONCLUSIVE and the build failed for a reason with nothing to do with UDP.
     """
 
-    def resolve(host, port, family, socktype):  # type: ignore[no-untyped-def]
+    def resolve(host, port, family, socktype, *args):  # type: ignore[no-untyped-def]
         # Anything but the second host fails, so a probe that passed the whole
         # sequence to getaddrinfo instead of one name at a time fails too.
         if host != "works.example":
@@ -471,3 +471,49 @@ def test_a_counter_that_went_backwards_is_not_a_delta():
     from tests.leak.oracle import redirect_delta
 
     assert redirect_delta(42, 0) is None
+
+
+def test_udp_cached_ipv6_target_does_not_need_tor_dns(tmp_path, monkeypatch):
+    path = tmp_path / "targets.json"
+    address = "2001:db8::123"
+    path.write_text(json.dumps({str(socket.AF_INET6): [address]}))
+    monkeypatch.setenv("TTP_STUN_TARGETS", str(path))
+    sock = MagicMock()
+    sock.recvfrom.return_value = (b"stun reply", (address, 19302))
+    with (
+        patch("tests.leak.test_udp_egress_leak.session_is_active", return_value=True),
+        patch("socket.getaddrinfo", return_value=[(10, 2, 17, "", (address, 19302, 0, 0))]) as lookup,
+        patch("socket.socket", return_value=sock),
+    ):
+        observation = udp_probe(socket.AF_INET6, _STUN_HOSTS, 19302, "cached_ipv6")
+    lookup.assert_called_once_with(address, 19302, socket.AF_INET6, socket.SOCK_DGRAM, 0, socket.AI_NUMERICHOST)
+    assert observation.outcome is Outcome.ESCAPED
+    assert verdict_for(observation)[0] is Verdict.LEAK
+
+
+def test_udp_missing_cached_family_is_inconclusive(tmp_path, monkeypatch):
+    path = tmp_path / "targets.json"
+    path.write_text("{}")
+    monkeypatch.setenv("TTP_STUN_TARGETS", str(path))
+    with patch("tests.leak.test_udp_egress_leak.session_is_active", return_value=True):
+        observation = udp_probe(socket.AF_INET6, _STUN_HOSTS, 19302, "missing_ipv6")
+    assert verdict_for(observation)[0] is Verdict.INCONCLUSIVE
+
+
+def test_prepare_stun_targets_records_both_families_and_refuses_missing_records(tmp_path):
+    from tests.leak.test_udp_egress_leak import prepare_targets
+
+    path = tmp_path / "targets.json"
+
+    def resolve(host, port, family, kind, *args):
+        address = "192.0.2.1" if family == socket.AF_INET else "2001:db8::1"
+        return [(family, kind, 17, "", (address, port))]
+
+    with patch("socket.getaddrinfo", side_effect=resolve):
+        prepare_targets(path)
+    assert json.loads(path.read_text()) == {str(socket.AF_INET): ["192.0.2.1"], str(socket.AF_INET6): ["2001:db8::1"]}
+    path.unlink()
+    with patch("socket.getaddrinfo", side_effect=socket.gaierror("no records")):
+        with pytest.raises(RuntimeError, match="Cannot prepare"):
+            prepare_targets(path)
+    assert not path.exists()
