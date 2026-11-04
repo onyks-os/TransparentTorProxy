@@ -22,7 +22,7 @@ click==8.1.6 \
     --hash=sha256:48ee849951919527a045bfe3bf7baa8a959c423134e1a5b98c05c20ba75a1cbd \
     --hash=sha256:fa244bb30b3b5ee2cae3da8f55c9e5e0c0e86093306301fb418eb9dc40fbded5
     # via
-    #   -r requirements/../packaging/oldest-supported.pins
+    #   -r requirements/oldest.in
     #   typer
 colorama==0.4.6 ; os_name == 'nt' or sys_platform == 'win32' \
     --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \
@@ -347,7 +347,7 @@ rfc3987-syntax==1.1.0 \
 rich==13.7.1 \
     --hash=sha256:4edbae314f59eb482f54e9e30bf00d33350aaa94f4bfcd4e9e3110e64d0d7222 \
     --hash=sha256:9be308cb1fe2f1f57d67ce99e95af38a1e2bc71ad9813b0e247cf7ffbcc3a432
-    # via -r requirements/../packaging/oldest-supported.pins
+    # via -r requirements/oldest.in
 rpds-py==0.30.0 ; python_full_version < '3.11' \
     --hash=sha256:07ae8a593e1c3c6b82ca3292efbe73c30b61332fd612e05abee07c79359f292f \
     --hash=sha256:0a59119fc6e3f460315fe9d08149f8102aa322299deaa5cab5b40092345c2136 \
@@ -607,7 +607,7 @@ six==1.16.0 \
     --hash=sha256:1e61c37477a1626458e36f7b1d82aa5c9b094fa4802892072e49de9c60c4c926 \
     --hash=sha256:8abb2f1d86890a2dfb989f9a77cfcfd3e47c2a354b01111771326f8aa26e0254
     # via
-    #   -r requirements/../packaging/oldest-supported.pins
+    #   -r requirements/oldest.in
     #   python-dateutil
     #   rfc3339-validator
     #   transitions
@@ -619,7 +619,7 @@ sortedcontainers==2.4.0 \
     #   hypothesis
 stem==1.8.2 \
     --hash=sha256:83fb19ffd4c9f82207c006051480389f80af221a7e4783000aedec4e384eb582
-    # via -r requirements/../packaging/oldest-supported.pins
+    # via -r requirements/oldest.in
 tomli==2.5.0 ; python_full_version < '3.11' \
     --hash=sha256:069435bd5480429b98c5e5afb02ab21c219b6f0064680671c6dc0d46817346ea \
     --hash=sha256:0dc598040da8d42cf20f0be588ed7004f46db12a0ac6c32e03a59dccedaaadcd \
@@ -697,7 +697,7 @@ tomlkit==0.15.2 \
 transitions==0.9.0 \
     --hash=sha256:2f54d11bdb225779d7e729011e93a9fb717668ce3dc65f8d4f5a5d7ba2f48e10 \
     --hash=sha256:5687ee8c6a3200830e44f988d16b0045f53293f7a873002d7bff70852331a078
-    # via -r requirements/../packaging/oldest-supported.pins
+    # via -r requirements/oldest.in
 trove-classifiers==2026.9.21.13 \
     --hash=sha256:0a9ebc8d4e2f3e8a22848c5258033035bec17a3012ac3fea16dbaa764489eb71 \
     --hash=sha256:8b1ff4f9c191b1040b71c37f1e445ab99732911e3cd91de52838453a854d7a17
@@ -705,7 +705,7 @@ trove-classifiers==2026.9.21.13 \
 typer==0.9.0 \
     --hash=sha256:50922fd79aea2f4751a8e0408ff10d2662bd0c8bbfa84755a699f3bada2978b2 \
     --hash=sha256:5d96d986a21493606a358cae4461bd8cdf83cbf33a5aa950ae629ca3b51467ee
-    # via -r requirements/../packaging/oldest-supported.pins
+    # via -r requirements/oldest.in
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
     --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5

@@ -92,3 +92,41 @@ def test_pip_refuses_artifact_with_unreviewed_bytes(tmp_path):
     mutated = subprocess.run([*command, "-d", str(tmp_path / "bad")], capture_output=True, text=True)
     assert mutated.returncode != 0
     assert "HASHES" in mutated.stderr and expected in mutated.stderr
+
+
+def test_audit_includes_inactive_marker_variants(tmp_path):
+    import runpy
+
+    batches = runpy.run_path(str(ROOT / "scripts/audit_dependency_locks.py"))["batches"]
+    lock = tmp_path / "lock.txt"
+    lock.write_text(
+        'filelock==4.1.0 ; python_version < "3.11" \\\n --hash=sha256:abc\nfilelock==4.2.7 ; python_version >= "3.11"\n'
+    )
+    groups = batches([lock])
+    assert {pin for group in groups for pin in group} == {"filelock==4.1.0", "filelock==4.2.7"}
+    assert len(groups) == 2
+
+
+def test_audit_tool_does_not_install_a_vulnerable_python310_fallback():
+    from packaging.markers import default_environment
+    from packaging.version import Version
+
+    pins = [Requirement(line.removesuffix("\\").strip()) for line in entries("ci") if not line.startswith("--hash=")]
+    for minor in ("3.10", "3.12"):
+        environment = {**default_environment(), "python_version": minor, "python_full_version": f"{minor}.99"}
+        active = [pin for pin in pins if pin.marker is None or pin.marker.evaluate(environment)]
+        if minor == "3.10":
+            assert not {pin.name.lower() for pin in active} & {"filelock", "pip-audit"}
+        else:
+            assert any(pin.name.lower() == "pip-audit" for pin in active)
+        for pin in active:
+            if pin.name.lower() == "filelock":
+                assert Version(next(iter(pin.specifier)).version) >= Version("4.2.1")
+
+
+def test_oldest_input_keeps_compatibility_pins_without_external_includes():
+    source = (ROOT / "requirements/oldest.in").read_text()
+    assert not any(line.startswith("-r") for line in source.splitlines())
+    for line in (ROOT / "packaging/oldest-supported.pins").read_text().splitlines():
+        if line and not line.startswith("#"):
+            assert line in source.splitlines()

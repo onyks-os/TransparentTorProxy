@@ -107,7 +107,7 @@ bump-my-version==1.8.1 \
     --hash=sha256:6457f2a1b964df60ff7d532e61d41422f19dbf936c9752bdff25d79f63768069 \
     --hash=sha256:b85397a51d5fa6bfa338fe7672de5c02268b455584be17cb455568b71c6eb0af
     # via transparent-tor-proxy (pyproject.toml)
-cachecontrol==0.14.4 \
+cachecontrol==0.14.4 ; python_full_version >= '3.11' \
     --hash=sha256:b7ac014ff72ee199b5f8af1de29d60239954f223e948196fa3d84adaffc71d2b \
     --hash=sha256:e6220afafa4c22a47dd0badb319f84475d79108100d04e26e8542ef7d3ab05a1
     # via pip-audit
@@ -731,14 +731,12 @@ exceptiongroup==1.3.1 ; python_full_version < '3.11' \
     #   anyio
     #   hypothesis
     #   pytest
-filelock==4.1.0 ; python_full_version < '3.11' \
-    --hash=sha256:2ce9818e3e2d8f284c1a964414447ef148d42a5fd5e2a477a7118e574b293ec1 \
-    --hash=sha256:ad7f724afef953e731b1cc39bcd3a09166d72ed7fcdf29e6e88b1c3235c6715d
-    # via cachecontrol
 filelock==4.2.7 ; python_full_version >= '3.11' \
     --hash=sha256:31f6f7e3a8b6f0bd89114d30c5d5218ea1cfb63e5c4aa695b7559314a209bc7f \
     --hash=sha256:d08972bbca2b8767ee552aff877b091dd111ffb1d22de7de885766ea7d719d5e
-    # via cachecontrol
+    # via
+    #   -r requirements/ci-tools.in
+    #   cachecontrol
 fqdn==1.6.0 \
     --hash=sha256:6c793c312ccfa29981e1135b3ef5e1277ebe639731a6b0f7350d90e96e63f0b4 \
     --hash=sha256:e39bf62e2a9481aa2cb780554fdfd944dd8ee5f230eb831684d539cbafed8de2
@@ -964,9 +962,7 @@ importlib-metadata==9.0.1 ; (python_full_version < '3.10.2' and platform_machine
 importlib-metadata==10.1.0 ; python_full_version == '3.11.*' and platform_machine != 'ppc64le' and platform_machine != 's390x' \
     --hash=sha256:82b04047fa09792c1a8cfeddfe08bec79e4b13c29c8469b0d3949860f61017e8 \
     --hash=sha256:cf45ce66a929c64e994185a809c04840d0501db17e663810d993d0f4829265c7
-    # via
-    #   build
-    #   keyring
+    # via keyring
 iniconfig==2.3.1 \
     --hash=sha256:67f4b9c50da0dedf52af349e7749a80a9057a5031199791b906c3bb3ae878960 \
     --hash=sha256:9121e2c1fdb355232495be3194c8dfe87ccc2d5dee45947b78e68f499790d7a7
@@ -1180,7 +1176,7 @@ more-itertools==11.2.1 ; python_full_version >= '3.11' and platform_machine != '
     # via
     #   jaraco-classes
     #   jaraco-functools
-msgpack==1.2.4 \
+msgpack==1.2.4 ; python_full_version >= '3.11' \
     --hash=sha256:0221748c30ace75fde0dec8c470abe65fb5374cd4f37adb9db6aca7a3c362c0a \
     --hash=sha256:0626ea840cce866237c4da08439e9faa9cf79e6e4c62358978ee055961e8cff2 \
     --hash=sha256:06a0657a4110d563255006b7cb7147432f67827144e429c2cdb1c967548d1817 \
@@ -1391,21 +1387,17 @@ pip==26.3 \
     # via
     #   -r requirements/tools.in
     #   pip-api
-pip-api==0.0.35 \
+pip-api==0.0.35 ; python_full_version >= '3.11' \
     --hash=sha256:14dea05d7b3b68f4c7582213e3ae8932bbba8e1f754bf06b95263d5fa6ab4363 \
     --hash=sha256:66990d0da25378555cbb538db79384bab92d4617c6350dfd7a2126ba2a3a9894
     # via pip-audit
-pip-audit==2.10.1 \
+pip-audit==2.10.1 ; python_full_version >= '3.11' \
     --hash=sha256:1eb4565d19ebe5d48996f4b770b4d2b32887e12cb12cfa637f1a064011b55ffc \
     --hash=sha256:99ef3f600a317c1945f1e89e227ef26e1c2d618429b8bd3fa6f4f7c440c4611a
     # via -r requirements/ci-tools.in
-pip-requirements-parser==32.0.1 \
+pip-requirements-parser==32.0.1 ; python_full_version >= '3.11' \
     --hash=sha256:4659bc2a667783e7a15d190f6fccf8b2486685b6dba4c19c3876314769c57526 \
     --hash=sha256:b4fa3a7a0be38243123cf9d1f3518da10c51bdb165a2b2985566247f9155a7d3
-    # via pip-audit
-platformdirs==4.12.4 ; python_full_version < '3.11' \
-    --hash=sha256:63743c02414e755de4e31b8f68125c1407495b86c5a006e203c01ff8b9924250 \
-    --hash=sha256:78bfb9db2a8471ed7eebe3c3c932da413911042994e699b384fbb4493fa872d7
     # via pip-audit
 platformdirs==4.14.3 ; python_full_version >= '3.11' \
     --hash=sha256:021add1ab113483edbcd4694f5fbb2d688b893ea30d35e1155bb371cf4be0be8 \
@@ -1599,7 +1591,7 @@ pygments==2.21.0 \
     #   pytest
     #   readme-renderer
     #   rich
-pyparsing==3.3.3 \
+pyparsing==3.3.3 ; python_full_version >= '3.11' \
     --hash=sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36 \
     --hash=sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4
     # via pip-requirements-parser
@@ -2070,7 +2062,7 @@ tomli==2.5.0 \
     #   mypy
     #   pip-audit
     #   pytest
-tomli-w==1.2.0 \
+tomli-w==1.2.0 ; python_full_version >= '3.11' \
     --hash=sha256:188306098d013b691fcadc011abd66727d3c414c571bb01b1a174ba8c983cf90 \
     --hash=sha256:2dd14fac5a47c27be9cd4c976af5a12d87fb1f0b4512f81d69cce3b35ae25021
     # via pip-audit
