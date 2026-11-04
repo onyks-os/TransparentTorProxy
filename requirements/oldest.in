@@ -1,0 +1,4 @@
+-r ../packaging/oldest-supported.pins
+pytest
+hypothesis
+cyclonedx-python-lib[json-validation]

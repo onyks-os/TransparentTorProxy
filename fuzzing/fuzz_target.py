@@ -1,134 +1,51 @@
 # Copyright (c) 2026 onyks-os
 # SPDX-License-Identifier: MIT
+"""Generate adversarial inputs for actual TTP parsers, sharing Atheris properties."""
 
-"""Fuzz testing harness for TTP using Hypothesis (property-based testing).
-
-This module provides fuzz targets for critical parsing and detection
-functions in TTP. It exercises code paths that process untrusted or
-variable input data without requiring root privileges or network access.
-
-Usage:
-    pytest fuzzing/fuzz_target.py -v
-"""
-
-import json
-import re
-
-from hypothesis import HealthCheck, given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
-# 1. JSON lock file parsing (state.py)
+from fuzzing.parsers import exercise_bytes, exercise_text, exercise_value
+from ttp.settings import Settings
+
+json_values = st.recursive(
+    st.none() | st.booleans() | st.integers() | st.floats(allow_nan=False) | st.text(max_size=100),
+    lambda children: st.lists(children, max_size=8) | st.dictionaries(st.text(max_size=40), children, max_size=8),
+    max_leaves=30,
+)
 
 
-@given(data=st.binary())
-@settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])
-def test_fuzz_json_lock_parsing(data: bytes) -> None:
-    """Fuzz the JSON lock file parsing logic.
-
-    Simulates malformed or adversarial lock file contents to ensure
-    that ``json.loads`` and downstream key access never crash.
-    """
-    try:
-        text = data.decode("utf-8", errors="ignore")
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            _ = parsed.get("pid")
-            _ = parsed.get("dns_backup")
-            _ = parsed.get("transport_port", 9041)
-            _ = parsed.get("dns_port", 9054)
-            _ = parsed.get("allow_root", False)
-            _ = parsed.get("lan_bypass", True)
-            _ = parsed.get("watchdog_active", False)
-            _ = parsed.get("watchdog_pid")
-            _ = parsed.get("interface")
-            _ = parsed.get("bypass_users", [])
-            _ = parsed.get("bypass_groups", [])
-            _ = parsed.get("use_bridges", False)
-            _ = parsed.get("bridge_file")
-            _ = parsed.get("bridges", [])
-    except (json.JSONDecodeError, ValueError, TypeError, UnicodeDecodeError):
-        pass
+@given(st.binary(max_size=16384))
+def test_untrusted_serialized_input(data):
+    exercise_bytes(data)
 
 
-# 2. Tor version regex (tor_detect.py)
+@given(st.text(max_size=2000))
+def test_bridge_and_dns_output(text):
+    exercise_text(text)
 
 
-@given(data=st.text(min_size=0, max_size=500))
-@settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])
-def test_fuzz_tor_version_regex(data: str) -> None:
-    """Fuzz the Tor version regex extraction against arbitrary strings
-    to detect ReDoS or unexpected matches."""
-    try:
-        match = re.search(r"Tor version ([\d]+(?:\.[\d]+)*)", data)
-        if match:
-            _ = match.group(1)
-    except (re.error, ValueError):
-        pass
+@given(json_values)
+def test_structured_replies_and_snapshots(value):
+    exercise_value(value)
 
 
-# 3. Torrc configuration validation regexes (tor_detect.py)
+@given(st.sampled_from(tuple(Settings().snapshot())), json_values)
+def test_snapshot_section_mutations(section, value):
+    snapshot = Settings().snapshot()
+    snapshot[section] = value
+    exercise_value(snapshot)
 
 
-@given(data=st.text(min_size=0, max_size=1000))
-@settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])
-def test_fuzz_torrc_config_regex(data: str) -> None:
-    """Fuzz the torrc configuration validation regexes."""
-    try:
-        transport_port = 9041
-        dns_port = 9054
-        _ = bool(re.search(rf"^\s*TransPort\s+{transport_port}\b", data, re.MULTILINE))
-        _ = bool(re.search(rf"^\s*DNSPort\s+{dns_port}\b", data, re.MULTILINE))
-        _ = bool(re.search(r"^\s*ControlSocket\s+", data, re.MULTILINE))
-    except (re.error, ValueError):
-        pass
+@given(st.data(), json_values)
+def test_snapshot_field_mutations(data, value):
+    snapshot = Settings().snapshot()
+    section = data.draw(st.sampled_from(tuple(snapshot)))
+    field = data.draw(st.sampled_from(tuple(snapshot[section])))
+    snapshot[section][field] = value
+    exercise_value(snapshot)
 
 
-# 4. OS family detection (tor_detect.py)
-
-
-@given(data=st.text(min_size=0, max_size=500))
-@settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])
-def test_fuzz_os_release_detection(data: str) -> None:
-    """Fuzz the OS family detection string matching."""
-    try:
-        text = data.lower()
-        _ = any(x in text for x in ["fedora", "rhel", "centos", "rocky", "almalinux"])
-    except (ValueError, UnicodeDecodeError):
-        pass
-
-
-# 5. /proc/mounts line parsing (dns.py)
-
-
-@given(data=st.text(min_size=0, max_size=2000))
-@settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])
-def test_fuzz_proc_mounts_parsing(data: str) -> None:
-    """Fuzz the /proc/mounts line parsing logic."""
-    try:
-        target = "/etc/resolv.conf"
-        for line in data.splitlines():
-            parts = line.split()
-            if len(parts) >= 2 and parts[1] == target:
-                break
-    except (ValueError, UnicodeDecodeError):
-        pass
-
-
-# 6. SELinux policy version parsing (selinux.py)
-
-
-@given(data=st.text(min_size=0, max_size=500))
-@settings(max_examples=5000, suppress_health_check=[HealthCheck.too_slow])
-def test_fuzz_selinux_policy_version_parsing(data: str) -> None:
-    """Fuzz the parser that reads the policy revision out of a `.te` source.
-
-    This used to fuzz `re.search(r"ttp_tor_policy\s+1\.2\b", data)` against
-    `semodule -l` output - a regex that no longer exists, because the command
-    prints no version (#50). The surviving parse is over the `.te` file:
-    whatever it holds, the result must be a version string or nothing, never
-    an exception on the `ttp start` path.
-    """
-    from ttp.selinux import _MODULE_DECLARATION
-
-    match = _MODULE_DECLARATION.search(data)
-    assert match is None or match.group(1)
+@given(st.fixed_dictionaries({}, optional={key: json_values for key in ("IP", "ip", "ip_addr", "IsTor")}))
+def test_external_result_fields(value):
+    exercise_value(value)

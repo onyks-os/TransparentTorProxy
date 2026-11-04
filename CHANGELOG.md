@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Reviewed Python dependency locks with artifact hashes for source installation,
+  CI and documentation, plus a separate newest-dependency compatibility job.
+- Production parser properties shared by Hypothesis and ClusterFuzzLite/Atheris.
+  Main now requires PRs; the administrator bypass is restricted to PRs, with no
+  mandatory independent reviewer for the single-maintainer workflow.
+
 - Required watchdog readiness and useful-progress evidence, frozen configurable
   deadlines, suspend-aware freshness and an independent systemd termination
   handler. Emergency mode survives watchdog restarts until explicit stop.

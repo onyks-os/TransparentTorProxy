@@ -1,0 +1,7 @@
+# Tools needed before installing trusted local source without build isolation.
+pip
+hatchling>=1.27
+setuptools
+wheel
+build
+installer

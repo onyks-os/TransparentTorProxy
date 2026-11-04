@@ -50,6 +50,10 @@ cp -r ttp /opt/ttp/
 cp -r assets /opt/ttp/
 cp pyproject.toml /opt/ttp/
 cp README.md /opt/ttp/
+cp LICENSE /opt/ttp/
+mkdir -p /opt/ttp/requirements /opt/ttp/scripts
+cp requirements/tools.txt requirements/runtime.txt /opt/ttp/requirements/
+cp scripts/install_locked.sh /opt/ttp/scripts/
 
 # 2. Dependency Management
 # We use a virtual environment to avoid polluting system packages and bypass PEP 668.
@@ -60,8 +64,7 @@ if ! python3 -m venv /opt/ttp/venv >/dev/null 2>&1; then
     exit 1
 fi
 
-/opt/ttp/venv/bin/pip install --upgrade pip >/dev/null 2>&1
-/opt/ttp/venv/bin/pip install /opt/ttp/ >/dev/null 2>&1
+bash /opt/ttp/scripts/install_locked.sh /opt/ttp/venv/bin/python runtime /opt/ttp
 
 if ! ttp_install_permissions /opt/ttp; then
     echo "Error: could not make the installed Python environment accessible to TTP's verification user."

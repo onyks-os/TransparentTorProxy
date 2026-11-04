@@ -24,12 +24,11 @@ jobs:
 
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -e ".[dev]"
+        bash scripts/install_locked.sh python ci
 
     - name: Run Hypothesis fuzz tests
       run: |
-        pytest fuzzing/fuzz_target.py -v
+        python -m pytest fuzzing/fuzz_target.py -v
 
   success-check:
     name: Dynamic Analysis Gate
