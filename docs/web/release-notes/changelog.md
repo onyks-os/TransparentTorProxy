@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Declare Python 3.12 as the minimum in the Debian, RPM and Arch package
+  dependencies, and check it before source installation changes system files.
 - Raise the minimum supported Python version to 3.12 for the upcoming 0.5.0
   release. Python 3.10 and 3.11 remain supported by the published 0.4.11
   artifacts, but are no longer in the development CI matrix or dependency locks.

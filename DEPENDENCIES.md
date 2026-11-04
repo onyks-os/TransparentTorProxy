@@ -55,6 +55,9 @@ Because TTP performs low-level routing and networking modifications, it relies o
 | **tor**                            | Required    | The Tor network routing daemon. (TTP checks binary presence and displays distro installation guidance if missing). |
 | **util-linux** (`mount`, `umount`) | Required    | Performing stateless bind-mounting overlays on `/etc/resolv.conf` to prevent DNS leaks.                    |
 
+The `.deb`, `.rpm` and Arch package metadata all declare the Python 3.12 minimum;
+the source installer checks it before changing the installed files.
+
 ### 1.3 Optional & Dynamic Dependencies
 
 Depending on your distribution's configuration and active features, additional dependencies may be required:

@@ -46,7 +46,7 @@ license=('MIT')
 # Runtime dependencies. Pacman will ensure these are installed before TTP runs.
 # Notice how Arch package names differ slightly from Debian (e.g., 'python-typer' instead of 'python3-typer').
 # python-six is for the bundled transitions below.
-depends=('python' 'python-typer' 'python-rich' 'python-stem' 'python-six' 'nftables' 'tor')
+depends=('python>=3.12' 'python-typer' 'python-rich' 'python-stem' 'python-six' 'nftables' 'tor')
 
 # Build dependencies. These are only needed temporarily while creating the package.
 # python-hatchling is the build backend; with --no-isolation it must be installed.
