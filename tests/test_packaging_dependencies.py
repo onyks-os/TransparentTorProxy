@@ -74,6 +74,16 @@ def _arch_depends() -> set[str]:
     return set(re.findall(r"'([^']+)'", m.group(1)))
 
 
+def test_native_packages_require_project_python_minimum():
+    minimum = re.search(r'^requires-python = ">=([0-9.]+)"$', PYPROJECT, re.MULTILINE)
+    assert minimum, "expected one minimum Python version in pyproject.toml"
+    version = minimum.group(1)
+    assert _deb_depends()["python3"] == version
+    assert re.search(rf"^Requires:\s+python3 >= {re.escape(version)}$", SPEC, re.MULTILINE)
+    assert re.search(rf"^BuildRequires:\s+python3-devel >= {re.escape(version)}$", SPEC, re.MULTILINE)
+    assert f"python>={version}" in _arch_depends()
+
+
 @pytest.mark.parametrize("name", sorted(_runtime_dependencies()))
 def test_the_deb_depends_on_every_runtime_dependency(name):
     assert f"python3-{name}" in _deb_depends(), (

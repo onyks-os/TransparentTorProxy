@@ -35,11 +35,11 @@ Source0:        %{name}-%{version}.tar.gz
 Source1:        @@TRANSITIONS_WHEEL@@
 
 BuildArch:      noarch
-BuildRequires:  python3-devel
+BuildRequires:  python3-devel >= 3.12
 BuildRequires:  python3-build
 BuildRequires:  unzip
 BuildRequires:  checkpolicy
-Requires:       python3
+Requires:       python3 >= 3.12
 Requires:       python3-typer
 Requires:       python3-rich
 Requires:       python3-stem

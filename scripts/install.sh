@@ -32,6 +32,11 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 12))' 2>/dev/null; then
+    echo "Error: Python 3.12 or newer is required." >&2
+    exit 1
+fi
+
 # Only this installer and its children use this mask; the administrator's
 # shell and TTP's runtime keep their own policy. Existing venvs are repaired
 # explicitly below as well.

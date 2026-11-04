@@ -82,7 +82,7 @@ CI installs every package in a clean container before a release is signed
 === "Debian / Ubuntu (.deb)"
 
     ```text
-    Depends: python3, python3-typer, python3-rich (>= 13.7.1), python3-stem,
+    Depends: python3 (>= 3.12), python3-typer, python3-rich (>= 13.7.1), python3-stem,
              python3-transitions (>= 0.9.0), nftables, tor
     ```
 
@@ -91,7 +91,7 @@ CI installs every package in a clean container before a release is signed
 === "Fedora (.rpm)"
 
     ```text
-    Requires: python3, python3-typer, python3-rich, python3-stem, python3-six,
+    Requires: python3 >= 3.12, python3-typer, python3-rich, python3-stem, python3-six,
               nftables, tor, policycoreutils
     Provides: bundled(python3dist(transitions)) = 0.9.3
     ```
@@ -103,7 +103,7 @@ CI installs every package in a clean container before a release is signed
 === "Arch Linux (PKGBUILD)"
 
     ```text
-    depends=('python' 'python-typer' 'python-rich' 'python-stem' 'python-six' 'nftables' 'tor')
+    depends=('python>=3.12' 'python-typer' 'python-rich' 'python-stem' 'python-six' 'nftables' 'tor')
     ```
 
     `transitions` is only in the AUR, so the PKGBUILD bundles it the same way as the
