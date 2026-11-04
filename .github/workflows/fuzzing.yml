@@ -28,7 +28,7 @@ jobs:
 
     - name: Run Hypothesis fuzz tests
       run: |
-        pytest fuzzing/fuzz_target.py -v
+        python -m pytest fuzzing/fuzz_target.py -v
 
   success-check:
     name: Dynamic Analysis Gate
