@@ -109,7 +109,7 @@ def test_audit_tool_has_a_patched_filelock_on_supported_python():
     from packaging.version import Version
 
     pins = [Requirement(line.removesuffix("\\").strip()) for line in entries("ci") if not line.startswith("--hash=")]
-    for minor in ("3.12", "3.13", "3.14"):
+    for minor in ("3.12", "3.13", "3.14", "3.15"):
         environment = {**default_environment(), "python_version": minor, "python_full_version": f"{minor}.99"}
         active = [pin for pin in pins if pin.marker is None or pin.marker.evaluate(environment)]
         assert any(pin.name.lower() == "pip-audit" for pin in active)

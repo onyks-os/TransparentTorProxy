@@ -57,6 +57,10 @@ Because TTP performs low-level routing and networking modifications, it relies o
 
 The `.deb`, `.rpm` and Arch package metadata all declare the Python 3.12 minimum;
 the source installer checks it before changing the installed files.
+Release builds require `rpm-build` for both Fedora 44 and Fedora 45 RPMs. The
+Fedora 45 signing stage installs `rpm-sign` and `gnupg2` in a disposable Fedora
+container; its private key is generated there and discarded. Consumers need
+`rpmkeys` (from `rpm`) to import and verify the published public key.
 
 ### 1.3 Optional & Dynamic Dependencies
 

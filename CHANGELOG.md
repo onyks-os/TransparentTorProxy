@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Build a separate Fedora 45 RPM with its Python 3.15 ABI, sign it with a fresh
+  OpenPGP key for each release, and publish the public key and Sigstore bundles.
+  Keep the Fedora 44 RPM and its existing Sigstore distribution path.
+- Rehearse Fedora 45 signature verification and installation in CI, and check
+  published signed package contents against an unsigned rebuild of the tag.
 - Reviewed Python dependency locks with artifact hashes for source installation,
   CI and documentation, plus a separate newest-dependency compatibility job.
 - Production parser properties shared by Hypothesis and ClusterFuzzLite/Atheris.

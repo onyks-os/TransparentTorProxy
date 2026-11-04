@@ -9,12 +9,13 @@
 #   0. Build and verify Python Wheel/Sdist metadata (via build/twine)
 #   1. Clean old artifacts from packaging/ and dist/
 #   2. Build a .deb package  (Debian/Ubuntu)  via packaging/build_deb.sh
-#   3. Build an .rpm package (Fedora/RHEL)    via packaging/build_rpm.sh
+#   3. Build Fedora 44 and 45 .rpm packages via packaging/build_rpm.sh
 #   4. Generate SHA256 checksums of all produced packages
 #
 # The resulting files are placed inside packaging/:
 #   - ttp_<version>_all.deb
-#   - ttp-<version>-1.<dist>.noarch.rpm
+#   - transparent-tor-proxy-<version>-1.fc44.noarch.rpm
+#   - transparent-tor-proxy-<version>-1.fc45.noarch.rpm (unsigned until CI signs it)
 #   - SHA256SUMS.txt
 #
 # Usage:
@@ -82,7 +83,7 @@ echo ""
 # Step 1: clean old packaging artifacts
 echo "[1/5] Cleaning old system artifacts..."
 rm -rf "$(pwd)/.build_tmp"
-rm -f "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.whl "$RELEASE_DIR"/*.cdx.json "$RELEASE_DIR"/SHA256SUMS.txt "$RELEASE_DIR"/SHA256SUMS.txt.asc
+rm -f "$RELEASE_DIR"/*.deb "$RELEASE_DIR"/*.rpm "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.whl "$RELEASE_DIR"/*.cdx.json "$RELEASE_DIR"/*-fc45-rpm-key.asc "$RELEASE_DIR"/SHA256SUMS.txt "$RELEASE_DIR"/SHA256SUMS.txt.asc
 echo "      Done."
 echo ""
 
@@ -96,15 +97,17 @@ else
 fi
 echo ""
 
-# Step 3: build .rpm
-echo "[3/5] Building RPM package (.rpm)..."
+# Step 3: build separate RPMs for each Fedora Python ABI
+echo "[3/5] Building Fedora 44 and 45 RPM packages (.rpm)..."
 if command -v rpmbuild >/dev/null 2>&1; then
-    if bash "$RELEASE_DIR/build_rpm.sh"; then
-        echo "      [OK] .rpm built successfully."
-    else
-        echo "      [FAILED] .rpm build failed!"
-        exit 1
-    fi
+    for fedora_release in 44 45; do
+        if RPM_TARGET_RELEASE="$fedora_release" bash "$RELEASE_DIR/build_rpm.sh"; then
+            echo "      [OK] Fedora $fedora_release .rpm built successfully."
+        else
+            echo "      [FAILED] Fedora $fedora_release .rpm build failed!"
+            exit 1
+        fi
+    done
 else
     echo "      [!] rpmbuild not found, skipping .rpm"
 fi
@@ -178,6 +181,7 @@ cat "$RELEASE_DIR/SHA256SUMS.txt" 2>/dev/null || echo "N/A"
 echo ""
 echo "Next steps:"
 echo "  1. Test .deb on Ubuntu VM: scp -P 2224 packaging/transparent-tor-proxy_*.deb ubuntu@localhost:~/"
-echo "  2. Test .rpm on Fedora VM: scp -P 2225 packaging/transparent-tor-proxy-*.rpm fedora@localhost:~/"
-echo "  3. Create GitHub Release v${VERSION} and upload assets."
+echo "  2. Sign the Fedora 45 .rpm: packaging/sign_fedora45_rpm.sh"
+echo "  3. Test each RPM on its matching Fedora release."
+echo "  4. Create GitHub Release v${VERSION} and upload assets."
 echo "============================================"

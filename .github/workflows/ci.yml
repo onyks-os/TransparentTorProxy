@@ -306,6 +306,9 @@ jobs:
       - name: Build every release artifact
         run: make packages
 
+      - name: Sign the Fedora 45 RPM with a release key
+        run: packaging/sign_fedora45_rpm.sh
+
       # release.sh skips the .rpm when rpmbuild is absent and still exits 0, so
       # a missing build tool would otherwise produce a silently incomplete
       # release. Same assertion the release workflow makes, run earlier.
@@ -322,6 +325,9 @@ jobs:
             fi
           done
           [ "$missing" -eq 0 ] || exit 1
+          test "$(compgen -G 'packaging/*.fc44.noarch.rpm' | wc -l)" -eq 1
+          test "$(compgen -G 'packaging/*.fc45.noarch.rpm' | wc -l)" -eq 1
+          compgen -G 'packaging/*-fc45-rpm-key.asc' > /dev/null
           ls -la packaging/
         shell: bash
 
@@ -346,7 +352,12 @@ jobs:
         run: packaging/smoke_test.sh packaging/*.deb docker.io/library/ubuntu:24.04
 
       - name: Install the .rpm on Fedora 44
-        run: packaging/smoke_test.sh packaging/*.rpm registry.fedoraproject.org/fedora:44
+        run: packaging/smoke_test.sh packaging/*.fc44.noarch.rpm
+
+      - name: Verify and install the signed .rpm on Fedora 45
+        run: |
+          TTP_RPM_PUBLIC_KEY="$(compgen -G 'packaging/*-fc45-rpm-key.asc')" \
+            packaging/smoke_test.sh packaging/*.fc45.noarch.rpm
 
       - name: Build and install the PKGBUILD on Arch
         run: packaging/smoke_test.sh arch

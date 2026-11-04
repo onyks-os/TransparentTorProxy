@@ -96,7 +96,9 @@ CI installs every package in a clean container before a release is signed
     Provides: bundled(python3dist(transitions)) = 0.9.3
     ```
 
-    Built on, and tested on, Fedora 44 (Python 3.14). Fedora does not package
+    Separate RPMs are built for Fedora 44 (Python 3.14) and Fedora 45 (Python
+    3.15). The Fedora 45 RPM carries an inline OpenPGP signature; its public
+    key is published with the release and verified through Sigstore. Fedora does not package
     `transitions`, so the .rpm bundles it in `/usr/lib/transparent-tor-proxy/vendor`,
     which TTP uses only when the system has no `transitions` of its own.
 

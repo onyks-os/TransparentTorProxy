@@ -124,6 +124,11 @@ Download the `.deb` or `.rpm` for the version you want from the [latest release]
 * **Fedora 44**: `sudo dnf install ./transparent-tor-proxy-0.4.11-1.fc44.noarch.rpm`
 * **Arch Linux**: build from the repository with `cd packaging && makepkg -si`
 
+Starting with the next release, Fedora 45 will have its own `.fc45.noarch.rpm`
+with an OpenPGP signature embedded in the RPM. Its release assets include the
+public key (`*-fc45-rpm-key.asc`) and a Sigstore bundle for both the key and RPM.
+See the [verification guide](docs/verification.md) before importing the key.
+
 For instructions on how to verify the integrity and authenticity of the release assets, see the [Release Verification Guide](docs/verification.md).
 
 ---

@@ -66,6 +66,9 @@ jobs:
       - name: Build release packages
         run: make packages
 
+      - name: Sign the Fedora 45 RPM with a release key
+        run: packaging/sign_fedora45_rpm.sh
+
       # release.sh skips the .rpm when rpmbuild is absent and still exits 0, so a
       # missing build tool would otherwise publish a silently incomplete release.
       - name: Verify all release artifacts were produced
@@ -82,6 +85,9 @@ jobs:
             fi
           done
           [ "$missing" -eq 0 ] || exit 1
+          test "$(compgen -G 'packaging/*.fc44.noarch.rpm' | wc -l)" -eq 1
+          test "$(compgen -G 'packaging/*.fc45.noarch.rpm' | wc -l)" -eq 1
+          compgen -G 'packaging/*-fc45-rpm-key.asc' > /dev/null
           ls -la packaging/
         shell: bash
 
@@ -96,7 +102,9 @@ jobs:
         run: |
           packaging/smoke_test.sh packaging/*.deb docker.io/library/debian:13
           packaging/smoke_test.sh packaging/*.deb docker.io/library/ubuntu:24.04
-          packaging/smoke_test.sh packaging/*.rpm registry.fedoraproject.org/fedora:44
+          packaging/smoke_test.sh packaging/*.fc44.noarch.rpm
+          TTP_RPM_PUBLIC_KEY="$(compgen -G 'packaging/*-fc45-rpm-key.asc')" \
+            packaging/smoke_test.sh packaging/*.fc45.noarch.rpm
 
       - name: Sign packages with Sigstore
         uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9 # v3.5.0
@@ -104,6 +112,7 @@ jobs:
           inputs: |
             packaging/*.deb
             packaging/*.rpm
+            packaging/*-fc45-rpm-key.asc
             packaging/*.whl
             packaging/*.tar.gz
             packaging/SHA256SUMS.txt
@@ -145,6 +154,7 @@ jobs:
           files: |
             packaging/*.deb
             packaging/*.rpm
+            packaging/*-fc45-rpm-key.asc
             packaging/*.whl
             packaging/*.tar.gz
             packaging/SHA256SUMS.txt
