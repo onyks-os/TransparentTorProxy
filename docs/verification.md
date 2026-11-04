@@ -22,6 +22,14 @@ wheel and sdist. The same script runs in CI after every release and weekly
 (`.github/workflows/verify-release.yml`), together with an install of the
 published `.deb` and `.rpm` in clean containers.
 
+From the next release, there are two Fedora RPMs. The Fedora 44 RPM keeps its
+existing Sigstore bundle. The Fedora 45 RPM also has an OpenPGP signature inside
+the RPM. CI generates a new key for each release, publishes its public half as
+`transparent-tor-proxy-<version>-fc45-rpm-key.asc`, and signs both the key and
+the RPM with Sigstore. There is no long-lived RPM signing secret in CI. Verify
+the key's Sigstore bundle against the release workflow and tag before importing
+it; the key by itself is not proof of its origin.
+
 The sections below do the same by hand, one artifact at a time.
 
 ## 1. Verify the Sigstore signature
@@ -57,6 +65,21 @@ check the artifacts against it:
 ```bash
 sha256sum -c SHA256SUMS.txt
 ```
+
+For Fedora 45, after verifying the Sigstore bundles for the RPM and its public
+key, verify the inline signature and require DNF to enforce it for the local
+file (replace `<version>` with the downloaded release version):
+
+```bash
+sudo rpmkeys --import transparent-tor-proxy-<version>-fc45-rpm-key.asc
+rpmkeys --checksig transparent-tor-proxy-<version>-1.fc45.noarch.rpm
+sudo dnf --setopt=localpkg_gpgcheck=1 install ./transparent-tor-proxy-<version>-1.fc45.noarch.rpm
+```
+
+DNF's local-file signature check needs the explicit setting above. A generated
+key is scoped to one release, so import the matching key when installing a new
+release. The release verification workflow checks the same signature in a fresh
+Fedora 45 container.
 
 ## 2. What each artifact contains: the SBOMs
 
@@ -96,7 +119,7 @@ and compare with `SHA256SUMS.txt` from the release. What makes it work:
   permissions, in a venv installed from `packaging/build-requirements.txt` with
   `--require-hashes` - one version and one digest per package, backend included -
   inside a Python image pinned by digest;
-- the `.rpm` is built in a Fedora 44 image pinned by digest.
+- the Fedora 44 and 45 RPMs are each built in a matching image pinned by digest.
 
 The images matter more than they seem: the same files compress to different
 bytes under a different zlib, and Fedora ships zlib-ng, so a wheel built directly
@@ -105,6 +128,12 @@ file inside is identical. Measured on the same commit and `SOURCE_DATE_EPOCH`:
 the wheel, the sdist, the `.rpm` and their SBOMs built on a Fedora 44
 workstation are byte-identical to the ones CI built on Ubuntu 24.04; the `.deb`
 is not, for the reason below.
+
+The unsigned Fedora 45 RPM is checked for reproducibility before signing.
+OpenPGP's newly generated key and signature make its published bytes unique to
+that release run. The post-release verifier compares the signed RPM's package
+header and payload with a fresh unsigned rebuild, regenerates the SBOM from the
+published signed RPM, and verifies the published final bytes with Sigstore.
 
 Two limits, stated plainly. The `.deb` is compressed by the host's `dpkg-deb`, so
 it rebuilds identically only on the same distribution release as the release
@@ -119,8 +148,9 @@ and compared with what was published (`.github/workflows/verify-release.yml`).
 
 Releases built locally by a maintainer may additionally carry a detached GPG
 signature `SHA256SUMS.txt.asc`. **The automated pipeline does not produce one** -
-CI holds no private key, by design - so treat its absence as normal and use the
-Sigstore bundle above.
+CI holds no persistent maintainer key. The temporary Fedora 45 RPM key is a
+separate key and does not sign the checksums. Treat the detached signature's
+absence as normal and use the Sigstore bundle above.
 
 When a `.asc` is present:
 

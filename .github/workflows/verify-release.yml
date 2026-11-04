@@ -87,6 +87,7 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
           FIRST_REPRODUCIBLE: "0.4.10"
         run: |
+          set -euo pipefail
           version="${TAG#v}"
           oldest="$(printf '%s\n%s\n' "$FIRST_REPRODUCIBLE" "$version" | sort -V | head -n1)"
           if [ "$oldest" != "$FIRST_REPRODUCIBLE" ]; then
@@ -100,11 +101,37 @@ jobs:
           status=0
           for published in release-assets/*; do
             name="$(basename "$published")"
-            case "$name" in *.sigstore.json) continue ;; esac
+            case "$name" in
+              *.sigstore.json) continue ;;
+              SHA256SUMS.txt|*-fc45-rpm-key.asc)
+                if compgen -G 'release-assets/*.fc45.noarch.rpm' > /dev/null; then continue; fi ;;
+              *.fc45.noarch.rpm|*.fc45.noarch.rpm.cdx.json) continue ;;
+            esac
             if cmp -s "$published" "rebuild/packaging/$name"; then
               echo "identical  $name"
             else
               echo "::error::$name: the rebuild of $TAG differs from the published artifact"
+              status=1
+            fi
+          done
+          # The Fedora 45 key is intentionally new each release. Compare the
+          # signed RPM's immutable package header and payload with the unsigned
+          # rebuild, then regenerate its SBOM from the published signed bytes.
+          for published in release-assets/*.fc45.noarch.rpm; do
+            [ -f "$published" ] || continue
+            name="$(basename "$published")"
+            original="rebuild/packaging/$name"
+            signed_identity="$(rpm -qp --queryformat '%{SHA256HEADER}' "$published") $(rpm2cpio "$published" | sha256sum | cut -d' ' -f1)"
+            rebuilt_identity="$(rpm -qp --queryformat '%{SHA256HEADER}' "$original") $(rpm2cpio "$original" | sha256sum | cut -d' ' -f1)"
+            if [ "$signed_identity" != "$rebuilt_identity" ]; then
+              echo "::error::$name: signed package header or payload differs from the rebuild"
+              status=1
+            fi
+            cp "$published" "$original"
+            (cd rebuild && SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" \
+              python3 packaging/make_sbom.py "packaging/$name")
+            if ! cmp -s "$published.cdx.json" "$original.cdx.json"; then
+              echo "::error::$name.cdx.json differs from the signed package SBOM"
               status=1
             fi
           done
@@ -114,4 +141,10 @@ jobs:
         run: |
           packaging/smoke_test.sh release-assets/*.deb docker.io/library/debian:13
           packaging/smoke_test.sh release-assets/*.deb docker.io/library/ubuntu:24.04
-          packaging/smoke_test.sh release-assets/*.rpm registry.fedoraproject.org/fedora:44
+          packaging/smoke_test.sh release-assets/*.fc44.noarch.rpm
+          for rpm in release-assets/*.fc45.noarch.rpm; do
+            [ -f "$rpm" ] || continue
+            key="${rpm%-1.fc45.noarch.rpm}-fc45-rpm-key.asc"
+            test -f "$key"
+            TTP_RPM_PUBLIC_KEY="$key" packaging/smoke_test.sh "$rpm"
+          done

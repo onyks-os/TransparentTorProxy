@@ -44,7 +44,13 @@ cd "$(dirname "$0")/.."
 # in an image pinned by digest, because a reproducible build needs the same
 # toolchain every time, not whatever the host or the tag resolves to today.
 # TTP_RPM_NATIVE=1 builds on the host (that is how the container runs this).
-RPM_TARGET_IMAGE="${RPM_TARGET_IMAGE:-registry.fedoraproject.org/fedora@sha256:5340dc71866f0632130a048bebbe2d4c20c9ec5791695308fe723776eb541b00}"
+RPM_TARGET_RELEASE="${RPM_TARGET_RELEASE:-44}"
+case "$RPM_TARGET_RELEASE" in
+    44) default_image="registry.fedoraproject.org/fedora:44@sha256:5340dc71866f0632130a048bebbe2d4c20c9ec5791695308fe723776eb541b00"; expected_abi="3.14" ;;
+    45) default_image="registry.fedoraproject.org/fedora:45@sha256:f5afe36c8ddb2aa5333597e900f53c5ed0267d9ebb27be765dc8ec2633aa1648"; expected_abi="3.15" ;;
+    *) echo "Unsupported RPM_TARGET_RELEASE: $RPM_TARGET_RELEASE (expected 44 or 45)" >&2; exit 2 ;;
+esac
+RPM_TARGET_IMAGE="${RPM_TARGET_IMAGE:-$default_image}"
 
 # Reproducible builds: every timestamp inside every artifact is the commit's, so
 # two builds of the same commit produce the same bytes. An explicit value wins,
@@ -73,6 +79,7 @@ if [ "${TTP_RPM_NATIVE:-0}" != 1 ]; then
     rm -f "$stage"/packaging/*.rpm
     # shellcheck disable=SC2016 # expanded by the container's shell, not this one
     "$engine" run --rm -v "$stage:/src:z" -w /src -e TTP_RPM_NATIVE=1 \
+        -e RPM_TARGET_RELEASE="$RPM_TARGET_RELEASE" \
         -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" "$RPM_TARGET_IMAGE" sh -c '
         set -eu
         dnf install -y -q rpm-build python3-devel python3-build python3-pip unzip curl \
@@ -167,6 +174,17 @@ rpmbuild --define "_topdir $RPM_DIR" \
 # rpmbuild places the finished .rpm inside RPMS/<arch>/.
 # Since our package is 'noarch' (pure Python), it goes in RPMS/noarch/.
 # We copy it back to our packaging/ directory for easy access.
-cp "$RPM_DIR"/RPMS/noarch/*.rpm packaging/
+rpm_file="$(find "$RPM_DIR/RPMS/noarch" -maxdepth 1 -name '*.rpm' -print -quit)"
+[ -n "$rpm_file" ] || { echo "No RPM was built" >&2; exit 1; }
+release="$(rpm -qp --queryformat '%{RELEASE}' "$rpm_file")"
+case "$release" in
+    *.fc"$RPM_TARGET_RELEASE") ;;
+    *) echo "Built RPM has release $release, expected fc$RPM_TARGET_RELEASE" >&2; exit 1 ;;
+esac
+rpm -qp --requires "$rpm_file" | grep -Fx "python(abi) = $expected_abi" >/dev/null || {
+    echo "Built RPM does not require python(abi) = $expected_abi" >&2
+    exit 1
+}
+cp "$rpm_file" packaging/
 
 echo "==> Done! RPM is ready: $(ls packaging/transparent-tor-proxy-*.rpm)"

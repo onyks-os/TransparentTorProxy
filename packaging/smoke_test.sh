@@ -15,7 +15,7 @@
 #
 # Usage:
 #   packaging/smoke_test.sh <package.deb> [image]   default image: debian:13
-#   packaging/smoke_test.sh <package.rpm> [image]   default image: fedora:44
+#   packaging/smoke_test.sh <package.rpm> [image]   image follows fc44/fc45 suffix
 #   packaging/smoke_test.sh arch [image]            builds packaging/PKGBUILD from
 #                                                   this checkout, then installs it
 # Needs podman or docker. Runs no systemd and touches no firewall: it checks the
@@ -52,8 +52,18 @@ case "$target" in
             image="${2:-docker.io/library/debian:13}"
             install='apt-get update -qq && apt-get install -y -qq /stage/package.deb'
         else
-            image="${2:-registry.fedoraproject.org/fedora:44}"
+            case "$target" in
+                *.fc44.noarch.rpm) default_image="registry.fedoraproject.org/fedora:44" ;;
+                *.fc45.noarch.rpm) default_image="registry.fedoraproject.org/fedora:45" ;;
+                *) echo "Cannot select a Fedora test image for $target" >&2; exit 2 ;;
+            esac
+            image="${2:-$default_image}"
             install='dnf install -y -q /stage/package.rpm'
+            if [ -n "${TTP_RPM_PUBLIC_KEY:-}" ]; then
+                [ -f "$TTP_RPM_PUBLIC_KEY" ] || { echo "No RPM public key: $TTP_RPM_PUBLIC_KEY" >&2; exit 2; }
+                cp "$TTP_RPM_PUBLIC_KEY" "$stage/rpm-key.asc"
+                install='rpmkeys --import /stage/rpm-key.asc && rpmkeys -K /stage/package.rpm && dnf --setopt=localpkg_gpgcheck=1 install -y -q /stage/package.rpm'
+            fi
         fi
         label="$(basename "$target")"
         ;;
