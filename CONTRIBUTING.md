@@ -129,7 +129,7 @@ module, and again after, to check the tests you expected to go red actually did.
 
 - **Every pull request and every push to `main`** (`.github/workflows/ci.yml`):
   - lint: ruff (check and format), mypy, ShellCheck, markdownlint, secret scan
-  - unit tests on Python 3.10, 3.11, 3.12 and 3.13, with the coverage ratchet
+  - unit tests on Python 3.12 and 3.13, with the coverage ratchet
   - the zero-leak ruleset suite (`make test-nse`) in a network namespace
   - integration tests in privileged Docker containers: Debian, Fedora, Arch
   - a release rehearsal (`make packages`)

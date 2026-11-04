@@ -37,10 +37,7 @@ def test_every_download_has_an_exact_version_and_hash(profile):
 
 
 def test_runtime_lock_does_not_raise_the_public_dependency_floor():
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib
+    import tomllib
 
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text())
     locked = {
@@ -100,28 +97,37 @@ def test_audit_includes_inactive_marker_variants(tmp_path):
     batches = runpy.run_path(str(ROOT / "scripts/audit_dependency_locks.py"))["batches"]
     lock = tmp_path / "lock.txt"
     lock.write_text(
-        'filelock==4.1.0 ; python_version < "3.11" \\\n --hash=sha256:abc\nfilelock==4.2.7 ; python_version >= "3.11"\n'
+        'filelock==4.2.7 ; python_version < "3.13" \\\n --hash=sha256:abc\nfilelock==4.3.0 ; python_version >= "3.13"\n'
     )
     groups = batches([lock])
-    assert {pin for group in groups for pin in group} == {"filelock==4.1.0", "filelock==4.2.7"}
+    assert {pin for group in groups for pin in group} == {"filelock==4.2.7", "filelock==4.3.0"}
     assert len(groups) == 2
 
 
-def test_audit_tool_does_not_install_a_vulnerable_python310_fallback():
+def test_audit_tool_has_a_patched_filelock_on_supported_python():
     from packaging.markers import default_environment
     from packaging.version import Version
 
     pins = [Requirement(line.removesuffix("\\").strip()) for line in entries("ci") if not line.startswith("--hash=")]
-    for minor in ("3.10", "3.12"):
+    for minor in ("3.12", "3.13", "3.14"):
         environment = {**default_environment(), "python_version": minor, "python_full_version": f"{minor}.99"}
         active = [pin for pin in pins if pin.marker is None or pin.marker.evaluate(environment)]
-        if minor == "3.10":
-            assert not {pin.name.lower() for pin in active} & {"filelock", "pip-audit"}
-        else:
-            assert any(pin.name.lower() == "pip-audit" for pin in active)
+        assert any(pin.name.lower() == "pip-audit" for pin in active)
         for pin in active:
             if pin.name.lower() == "filelock":
                 assert Version(next(iter(pin.specifier)).version) >= Version("4.2.1")
+
+
+def test_python_minimum_excludes_older_interpreters():
+    import tomllib
+
+    from packaging.specifiers import SpecifierSet
+
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    supported = SpecifierSet(metadata["project"]["requires-python"])
+    assert "3.10" not in supported
+    assert "3.11" not in supported
+    assert "3.12" in supported
 
 
 def test_oldest_input_keeps_compatibility_pins_without_external_includes():

@@ -1,4 +1,4 @@
-# Audit runs on Python 3.12; keep its toolchain out of the Python 3.10 test environment.
-pip-audit ; python_version >= "3.11"
+# Audit runs on supported Python versions only.
+pip-audit
 # Earlier releases have reported cross-user lock manipulation vulnerabilities.
-filelock>=4.2.1 ; python_version >= "3.11"
+filelock>=4.2.1

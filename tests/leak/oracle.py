@@ -51,7 +51,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
@@ -104,7 +104,7 @@ class Observation:
     outcome: Outcome
     session_active: bool
     detail: str = ""
-    observed_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    observed_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 def verdict_for(observation: Observation) -> tuple[Verdict, str]:

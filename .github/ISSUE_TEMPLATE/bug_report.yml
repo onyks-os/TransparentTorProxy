@@ -34,7 +34,7 @@ body:
     attributes:
       label: Environment
       description: Operating system, distribution, and Python version.
-      placeholder: "Fedora 43, Python 3.10"
+      placeholder: "Fedora 44, Python 3.14"
     validations:
       required: true
 

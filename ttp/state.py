@@ -25,7 +25,7 @@ import shutil
 import tempfile
 import uuid
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -210,7 +210,7 @@ def write_lock(
             "settings_origins": settings_origins,
             "notification_target": notification_target,
             "pid": pid if pid is not None else os.getpid(),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "dns_backup": dns_backup,
             "transport_port": transport_port,
             "dns_port": dns_port,

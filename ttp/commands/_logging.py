@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import stat
+from datetime import UTC
 from pathlib import Path
 
 # Re-imported here to avoid circular imports for callers that import from _logging
@@ -25,9 +26,9 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         import json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        timestamp = datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat()
+        timestamp = datetime.fromtimestamp(record.created, tz=UTC).isoformat()
         log_obj = {
             "timestamp": timestamp,
             "level": record.levelname,

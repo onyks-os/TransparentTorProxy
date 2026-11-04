@@ -45,7 +45,7 @@ BUNDLED_IN = {"rpm": {"transitions"}, "arch": {"transitions"}, "deb": set()}
 
 
 def _runtime_dependencies() -> dict[str, str]:
-    """name -> floor, from [project] dependencies. tomllib is 3.11+; CI runs 3.10."""
+    """name -> floor, from [project] dependencies."""
     block = re.search(r"^dependencies = \[(.*?)^\]", PYPROJECT, re.MULTILINE | re.DOTALL)
     assert block, "no [project] dependencies list in pyproject.toml"
     deps = re.findall(r'^\s*"([A-Za-z0-9_.-]+)>=([0-9.]+)', block.group(1), re.MULTILINE)

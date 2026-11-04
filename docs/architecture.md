@@ -481,7 +481,7 @@ Building system packages is handled by scripts in the `packaging/` directory:
 
 | Layer | Environment | What it establishes | Where it runs |
 | :---- | :---------- | :------------------ | :------------ |
-| Unit | Host, fully mocked | Logic, rollback and teardown branches; coverage ratchet | CI, every push and PR (Python 3.10-3.13) |
+| Unit | Host, fully mocked | Logic, rollback and teardown branches; coverage ratchet | CI, every push and PR (Python 3.12-3.13) |
 | Zero-leak | Network namespace (NSE), real generated ruleset | Containment, with a positive control per test, alongside competing rulesets | CI, every push and PR |
 | Integration | Privileged Docker (Debian 13, Fedora 41, Arch) | Install, systemd, nftables on a real kernel | CI, every push and PR |
 | Lifecycle | Disposable VM (Debian 13 / systemd-networkd, Fedora 44 / NetworkManager) | Shutdown, reboot, suspend/resume, judged from a capture outside the guest | CI when firewall, lifecycle, DNS or watchdog code changes; weekly |

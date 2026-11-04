@@ -153,8 +153,9 @@ if [ "$n" -eq 0 ]; then
 else
     check "resume onto a new network" fail "$n probe packet(s) escaped after resume"
 fi
-if [ "$(state_is after-resume)" = yes ] && grep -q "Status: ACTIVE" "$VM_WORK/state-after-resume.txt"; then
-    check "session survives suspend/resume" pass "status ACTIVE, table present"
+if [ "$(state_is after-resume)" = yes ] &&
+    grep -q '^\[TTP\] Session: running; health:' "$VM_WORK/state-after-resume.txt"; then
+    check "session survives suspend/resume" pass "session recorded running, table present"
 else
     check "session survives suspend/resume" fail "see state-after-resume.txt"
 fi

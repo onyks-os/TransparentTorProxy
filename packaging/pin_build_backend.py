@@ -24,10 +24,6 @@ from pathlib import Path
 
 OUT = Path(__file__).resolve().parent / "build-requirements.txt"
 
-# Needed by hatchling only on Python < 3.11; the release builds on newer, but a
-# local build on 3.10 must still resolve it under the same constraints.
-CONDITIONAL = ["tomli"]
-
 HEADER = """\
 # Copyright (c) 2026 onyks-os
 # SPDX-License-Identifier: MIT
@@ -60,8 +56,6 @@ def _resolve(hatchling_version: str) -> dict[str, str]:
         subprocess.run([py, "-m", "pip", "install", "-q", f"hatchling=={hatchling_version}", "build"], check=True)
         frozen = subprocess.run([py, "-m", "pip", "freeze"], check=True, capture_output=True, text=True).stdout
     pins = dict(line.split("==", 1) for line in frozen.splitlines() if "==" in line)
-    for name in CONDITIONAL:
-        pins.setdefault(name, _pypi(name)["info"]["version"])
     return pins
 
 
