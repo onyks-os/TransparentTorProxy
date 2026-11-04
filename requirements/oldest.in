@@ -1,4 +1,10 @@
--r ../packaging/oldest-supported.pins
+# Compatibility pins copied from packaging/oldest-supported.pins by the regeneration script.
+typer==0.9.0
+click==8.1.6
+stem==1.8.2
+rich==13.7.1
+transitions==0.9.0
+six==1.16.0
 pytest
 hypothesis
 cyclonedx-python-lib[json-validation]

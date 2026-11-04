@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep the audit tool on Python 3.11+ with patched filelock, avoiding its
+  vulnerable Python 3.10 fallback in the CI lock. Audit every locked version
+  regardless of Python/platform markers, and make oldest-dependency inputs
+  self-contained for Dependabot.
+
 - Resolve integration STUN targets before enabling TTP, separating the UDP
   containment probe from exit-dependent AAAA resolution. Missing targets still
   fail loudly rather than being reported as containment.

@@ -23,3 +23,8 @@ Local TTP source is built without build isolation and installed from its local
 wheel with `installer`; pip cannot fetch undeclared build or runtime requirements.
 Python dependency hashes verify the reviewed downloads, not the trustworthiness
 of PyPI, the selected upstream version or the local TTP checkout.
+
+The audit tool runs on Python 3.11+; Python 3.10 tests do not install it.
+`python scripts/audit_dependency_locks.py` checks all locked versions, including
+marker variants for other interpreters. The oldest input mirrors the compatibility
+pins locally so Dependabot can parse the directory without parent paths.

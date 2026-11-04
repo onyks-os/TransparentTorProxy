@@ -18,4 +18,4 @@ jobs:
       - name: Install pip-audit
         run: bash scripts/install_locked.sh python ci
       - name: Scan dependencies
-        run: pip-audit
+        run: python scripts/audit_dependency_locks.py
