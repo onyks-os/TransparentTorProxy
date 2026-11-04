@@ -12,7 +12,7 @@ version = "0.4.11"
 description = "Transparent Tor Proxy - route all system traffic through Tor"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     # The floors are the versions Ubuntu 24.04 LTS ships, the oldest distribution
     # the .deb targets (packaging/oldest-supported.pins, which CI runs the unit
@@ -140,7 +140,7 @@ search = "transparent-tor-proxy(?P<sep>[_-]){current_version}(?P<rest>_all\\.deb
 replace = "transparent-tor-proxy\\g<sep>{new_version}\\g<rest>"
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 120
 
 [tool.ruff.lint]
@@ -161,7 +161,9 @@ ignore = [
     "E501",    # line-too-long (handled by formatter)
     "B008",    # function-call-in-default-argument (typer pattern)
     "B904",    # raise-without-from-inside-except (CLI exit pattern)
+    "UP042",   # StrEnum changes string conversion; preserve existing enum behavior
     "UP045",   # non-pep604-annotation-optional (wait for type annotation pass)
+    "UP047",   # Preserve the existing TypeVar API until a separate typing change
     "SIM105",  # suppressible-exception (readability tradeoff)
     "SIM117",  # multiple-with-statements (nested with in tests)
     "RUF012",  # mutable-class-default (CLIState is intentional)
@@ -177,7 +179,7 @@ known-first-party = ["ttp"]
 quote-style = "double"
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

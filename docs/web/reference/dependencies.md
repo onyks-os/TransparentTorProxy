@@ -45,7 +45,7 @@ the session starts.
 
 | Binary / Service | Required Version | Package Name (Debian/Fedora/Arch) | Purpose |
 |---|---|---|---|
-| **Python** | `>=3.10` | `python3` | Execution interpreter. |
+| **Python** | `>=3.12` | `python3` | Execution interpreter. |
 | **systemd** | Required | `systemd` | Service lifecycle (`ttp-tor.service`) and transient scopes (`systemd-run`). |
 | **busctl** | Required when systemd-resolved is active | `systemd` / `systemd` / `systemd` | Read-only DNSSEC preflight via the system bus; a missing binary refuses startup rather than skipping the policy check. |
 | **nftables** (`nft`) | `>=0.9` | `nftables` | Kernel packet redirection (`inet ttp` table). |

@@ -51,20 +51,15 @@ scheduled fuzzing. Crash artifacts are available from the Actions run. Adding
 this integration does not establish exhaustive parser coverage or absence of
 vulnerabilities.
 
-## Branch protection and the maintainer exception
+## Branch protection
 
 Finding 22 reports a protection score below the maximum. The approved rules for
 `main` require pull requests, passing status checks, resolved conversations and
 linear history. Zero independent approvals are required for this single-maintainer
-project. The administrator bypass is allowed only through pull requests, so it
-no longer permits direct pushes to `main`.
-
-The bypass can still override requirements within a PR. Normal operation must
-wait for CI; use the bypass only for a reviewed, explicit exception. Scorecard
-counts any bypass as reduced administrator enforcement, and zero mandatory
-reviewers cannot satisfy its higher review tiers. This residual finding is an
-accepted governance tradeoff, not a claim that maximum protection was achieved.
-The assistant must not use it to merge unchecked changes routinely.
+project. There is no administrator bypass. Changes must pass the required checks
+through a pull request. Zero mandatory reviewers cannot satisfy Scorecard's
+higher review tiers; this residual finding is an accepted governance tradeoff,
+not a claim that maximum protection was achieved.
 
 See the [Scorecard check definitions](https://github.com/ossf/scorecard/blob/main/docs/checks.md)
 and the repository's active GitHub ruleset for the exact checks and enforcement.

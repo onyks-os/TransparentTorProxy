@@ -9,7 +9,7 @@ This tutorial guides you through installing TTP and running your first transpare
 Before starting, ensure your system meets these prerequisites:
 
 * **Operating System**: Linux with `systemd`. Native packages are built and tested for Debian 13, Ubuntu 24.04, Fedora 44 and Arch Linux; elsewhere, install with `pipx`.
-* **Runtime**: Python 3.10 or higher
+* **Runtime**: Python 3.12 or higher
 * **Firewall Engine**: `nftables`
 * **Privileges**: Root access (`sudo`)
 

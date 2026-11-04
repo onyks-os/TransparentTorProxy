@@ -49,7 +49,7 @@ Because TTP performs low-level routing and networking modifications, it relies o
 
 | Package/Binary                     | Requirement | Purpose                                                                                                    |
 | :--------------------------------- | :---------- | :--------------------------------------------------------------------------------------------------------- |
-| **Python**                         | `>=3.10`    | The primary runtime interpreter.                                                                           |
+| **Python**                         | `>=3.12`    | The primary runtime interpreter.                                                                           |
 | **systemd**                        | Required    | Managing the lifecycle of the dedicated `ttp-tor.service` and `ttp-watchdog.service` units (not required in BYOD/external-daemon mode). |
 | **nftables** (`nft`)               | Required    | Atomic firewall rule application, redirecting TCP and DNS traffic, and enforcing the emergency killswitch. |
 | **tor**                            | Required    | The Tor network routing daemon. (TTP checks binary presence and displays distro installation guidance if missing). |

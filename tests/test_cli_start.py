@@ -72,6 +72,7 @@ def mock_base_start(tmp_path, monkeypatch):
     directory.mkdir()
     store = RecordStore(directory / "watchdog", os.getuid(), os.getgid())
     monkeypatch.setattr(state, "ensure_runtime_dir", lambda: None)
+    monkeypatch.setattr("ttp.ux.STAR_NOTIFIED_PATH", directory / ".starred_notified")
     monkeypatch.setattr("ttp.commands.start.session_store", lambda: store)
     monkeypatch.setattr("ttp.session_safety.session_store", lambda: store)
     monkeypatch.setattr("ttp.session_report.session_store", lambda: store)

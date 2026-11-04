@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flags and diagnostic codes 5–9, with all concurrent causes retained. See
   [session observations](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/web/how-to/session-observations.md) and ADR 0013.
 
+### Changed
+
+- Raise the minimum supported Python version to 3.12 for the upcoming 0.5.0
+  release. Python 3.10 and 3.11 remain supported by the published 0.4.11
+  artifacts, but are no longer in the development CI matrix or dependency locks.
+
 ### Fixed
 
 - Keep the audit tool on Python 3.11+ with patched filelock, avoiding its
