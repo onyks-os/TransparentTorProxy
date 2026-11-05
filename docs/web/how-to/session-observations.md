@@ -45,6 +45,31 @@ network policy. Its successful exit means the observation command completed,
 not that the session is healthy. A recorded session, PID or cached active flag
 does not prove that supervision is progressing.
 
+## Watch changes in a terminal
+
+```bash
+sudo ttp monitor
+sudo ttp monitor --interval 10
+```
+
+`monitor` refreshes the same passive evidence as `status` every five seconds by
+default (allowed range: 2–60 seconds). It needs root and an interactive terminal.
+The screen shows session phase, the age of the **last** Tor verification,
+watchdog progress, emergency containment and its kernel verification,
+notification delivery, active diagnostic reasons, and the existing
+rejected-packet counter. A short timeline records changes observed while this
+view is open; it has no earlier history and resets for a new session.
+
+An observation failure replaces the current view with UNKNOWN. A Tor result is
+historical, even if it says confirmed. A positive rejected-packet difference
+since the preceding sample is not a leak count. Notification acceptance does
+not prove the user saw a popup. `monitor` does not run an Internet check, test
+DNS, or add firewall checks. Use `check` when you deliberately want a new Tor
+verification; `check-leak` adds optional informational DNS observations.
+
+Ctrl-C or SIGTERM closes only the monitor. For scripts or redirected output,
+use `sudo ttp status --json`.
+
 Local observations include session, boot and service-instance identity. Expired
 or invalidated observations are unknown. Tor verification is a measurement at a
 particular time, not a continuous guarantee. A failed DNS/TLS request, timeout or

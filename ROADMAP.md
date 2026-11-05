@@ -88,12 +88,12 @@ They exclude decision waiting time and are not a release-date commitment.
 | 1a | **Hardened-host compatibility:** readable installed code and DNS artifacts under restrictive umasks; temporary inherited-global `DNSSEC=no`; preserve explicit per-link `DNSSEC=yes` and refuse startup before network changes, with documentation and exit code `4`. No new flag. | Approved; implemented for 0.5.0. Runtime behavior was diagnosed on Fedora; automated permission, preflight and resolver tests cover the fix. | Complete; release validation below. |
 | 2 | **Degraded-state contract:** distinguish inconclusive Tor verification, requested versus live watchdog, and killswitch requested/applied/verified. Correct claims of isolation only after defining what evidence supports them. | Approved in ADR 0013; implemented: frozen budgets, typed checks, useful-progress watchdog, independent termination handler and verified persistent emergency. | Complete; release validation below. |
 | 3 | **Delivered desktop notifications:** define recipients, events, delivery evidence and the privilege boundary between the system service and desktop sessions before choosing an implementation. | Approved in ADR 0013; implemented: optional unprivileged recipient agent, authenticated IPC, D-Bus acceptance evidence and CLI/journal fallback. | Complete; release validation below. |
-| 4 | **`ttp monitor`:** present trustworthy session, watchdog and containment information; define which other metrics are useful and actually available. Depends on item 2. | Definition and approval required; no UI toolkit or metric set selected. | 2–4 days |
+| 4 | **`ttp monitor`:** passive terminal view of existing session, watchdog and containment evidence, with changes seen since opening. | Approved in ADR 0014; implemented for 0.5.0. | Complete; release validation below. |
 | 5 | **VPN compatibility:** first define supported topologies, startup/shutdown order, DNS behavior and what happens when either VPN or Tor fails. Interface names alone do not establish a topology. | Definition and approval required; neither Tor-over-VPN nor VPN-over-Tor is approved yet. | 5–10 days, topology-dependent |
 | Release | **Integration and release validation:** unit/NSE tests, resolver compatibility, VM lifecycle, packaging, documentation and regression review across supported distributions. | Required before publishing 0.5.0. | 2–3 days |
 
-Indicative remaining total: **9–17 focused engineering days** after the pending
-contracts are approved. The VPN scope is the largest uncertainty. NSE changes
+Indicative remaining total: **7–13 focused engineering days** after the pending
+VPN contract is approved. The VPN scope is the largest uncertainty. NSE changes
 needed to support future scenarios must be scoped separately; these estimates do
 not authorize changes to NSE.
 

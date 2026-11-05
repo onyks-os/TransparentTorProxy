@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `ttp monitor`: a passive, root-only terminal view of existing session
+  evidence with a short in-memory timeline of changes seen while open. It does
+  not run Tor/DNS probes or modify the session; Ctrl-C leaves TTP running.
 - Build a separate Fedora 45 RPM with its Python 3.15 ABI, sign it with a fresh
   OpenPGP key for each release, and publish the public key and Sigstore bundles.
   Keep the Fedora 44 RPM and its existing Sigstore distribution path.
@@ -91,6 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- Cover monitor incident transitions, stale historical evidence, failed
+  observations, terminal control sanitization and non-mutating exit signals.
 - Add isolated real systemd/nftables tests for SIGSTOP/SIGKILL, independent
   containment, restart latching, tamper repair and explicit stop. Private D-Bus
   tests cover unprivileged delivery, ordinary and critical expiry, deduplication,

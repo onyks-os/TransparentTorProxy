@@ -193,6 +193,7 @@ The command handlers are modularized within `ttp/commands/`:
 * `start.py`: Orchestrates start steps, delegating to helper parsers (`_parse_bypass_users_groups`, `_parse_bridges`, `_resolve_external_tor_uid`).
 * `stop_restart.py`: Handles session teardown (`stop`) and session regeneration (`restart`).
 * `session.py`: Coordinates passive diagnostic checking (`status`, `check`, `check-leak`, `refresh`).
+* `monitor.py`: Repeats the passive session observation in an interactive terminal; `ttp/monitor.py` renders it and keeps a bounded in-memory timeline.
 * `admin.py`: Handles logs extraction (`logs`), uninstallation (`uninstall`), and manual process bypass (`bypass`).
 
 Helper functions are split into internal submodules:
@@ -271,6 +272,9 @@ stateDiagram-v2
 ```
 
 Read-only status reports evidence without changing intent or running HTTP probes.
+`ttp monitor` repeatedly reads that same evidence and compares consecutive
+snapshots. It never calls the active Tor check, and closing its terminal does
+not stop the session. See [ADR 0014](decisions/0014-passive-monitor.md).
 External verification has its own total budget after bootstrap. The guide covers
 [configuration, exit codes and delivery limits](web/how-to/session-observations.md).
 

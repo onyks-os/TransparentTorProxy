@@ -43,6 +43,7 @@ from ttp.commands.admin import (
 )
 from ttp.commands.config import config_command
 from ttp.commands.lifecycle import do_stop, signal_handler
+from ttp.commands.monitor import monitor_command
 from ttp.commands.session import (
     check_command,
     check_leak_command,
@@ -97,6 +98,7 @@ app.command("restart")(restart_command)
 
 app.command("refresh")(refresh_command)
 app.command("status")(status_command)
+app.command("monitor")(monitor_command)
 app.command("check")(check_command)
 app.command("check-leak")(check_leak_command)
 app.command("config")(config_command)
