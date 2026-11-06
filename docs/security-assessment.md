@@ -32,6 +32,15 @@ A missing notification alone does not isolate; CLI/journal retain diagnostics.
 There is no promise of notification without a running producer and delivery
 channel, nor continuous integrity monitoring when no watchdog was selected.
 
+The optional `ttp monitor` terminal view ([ADR 0014](decisions/0014-passive-monitor.md))
+repeats the passive status observation. It neither probes the Internet nor
+changes firewall/session state. Failed observations replace the current view
+with UNKNOWN; a cached Tor verdict is labeled as historical. The bounded
+timeline is process-local and starts when the command opens, so it cannot
+serve as an audit log or unattended alert. Observed text is rendered without
+terminal control characters. The root-owned terminal and its scrollback may
+contain private session diagnostics; operators should treat them accordingly.
+
 Disposable-container tests cover real systemd/nftables failure and restart paths
 and private D-Bus delivery. They do not replace VM lifecycle/capture tests or
 prove every desktop environment renders notifications. Timing budgets bound

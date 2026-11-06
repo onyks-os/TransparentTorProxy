@@ -36,6 +36,7 @@ Most commands require root privileges (`sudo`). Exceptions are noted in the tabl
 | `ttp restart`         |       ✅       | Shortcut for `ttp stop` followed by `ttp start`. Accepts all `start` options.                                                                                |
 | `ttp refresh`         |       ✅       | Requests a new Tor circuit via `NEWNYM` signal. All active streams are rotated for a new exit IP.                                                            |
 | `ttp status [--json]` | Recommended | Read-only evidence with session health separated from command success; no HTTP probe. Root is needed to read private session evidence. |
+| `ttp monitor [--interval SECONDS]` | ✅ | Interactive passive view of status evidence and changes seen since opening; no Tor/DNS probe or network-policy change. |
 | `ttp check` | ✅ | Bounded non-exempt Tor verification; valid negative requests containment, inconclusive returns 3. |
 | `ttp check-leak` | ✅ | Shared typed Tor check plus optional informational DNS observations; not a proof covering all applications. |
 | `ttp logs`            |       ✅       | Streams real-time content from the volatile log at `/run/ttp/ttp.log`.                                                                                       |
@@ -90,6 +91,14 @@ All contributing causes remain available. Principal session-result precedence is
 protection is present. Codes 2/4 are preflight refusals. See
 [ADR 0013](decisions/0013-session-evidence-and-notifications.md) and the
 [operator guide](web/how-to/session-observations.md).
+
+`ttp monitor` requires root and a terminal on both stdin and stdout. It samples
+every five seconds by default (`--interval` accepts 2 to 60 seconds). Its
+timeline contains at most six changes from the current invocation and resets
+when session identity changes; it is not a persistent audit log. Ctrl-C or
+SIGTERM closes the view without ending the TTP session. `--quiet` and redirected
+terminal output are unsupported; use `ttp status --json` for automation. Exit
+code 0 on deliberate close does not describe session health.
 
 The internal `watchdog terminated --session UUID` command is exclusively the
 independent systemd termination hook. It authenticates root/the watchdog account
@@ -248,8 +257,7 @@ TTP contacts the following external URLs exclusively for session verification an
 | `https://check.torproject.org/api/ip` | `ttp start`, `ttp check`, `ttp check-leak` | Exit IP and the `IsTor` verdict. The only endpoint allowed to assert that traffic is on Tor. |
 | `https://api.ipify.org?format=json`   | same (fallback)          | Exit IP only, if `check.torproject.org` does not answer. Never asserts `IsTor`. |
 | `https://ifconfig.me/all.json`        | same (fallback)          | Second fallback for the exit IP. Never asserts `IsTor`. |
-| `https://api.ipify.org`               | `ttp status`             | Current public IP, shown in the status panel. |
 
 `ttp check-leak` also runs `dig` against `check.torproject.org` and `whoami.ipv4.akahelp.net` when `dig` is installed; those go through the system resolver, and therefore through Tor.
 
-While a session is active, these requests go through Tor like any other traffic, which is what makes them a check. When `ttp` runs as root, the requests are made by a child process running as `nobody`, so the root process never parses what these services send back. `ttp status` is the exception: it queries `api.ipify.org` whether or not a session is running, so without a session that request is in cleartext and shows your real IP.
+While a session is active, these requests go through Tor like any other traffic, which is what makes them a check. When `ttp` runs as root, the requests are made by a child process running as `nobody`, so the root process never parses what these services send back. `ttp status` and `ttp monitor` only read local observations, including any previously recorded Tor verdict; neither contacts these endpoints.

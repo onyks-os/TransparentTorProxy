@@ -177,6 +177,15 @@ Most network-modifying commands require root privileges (`sudo`):
   ttp status
   ```
 
+* **Watch local session observations and changes**:
+
+  ```bash
+  sudo ttp monitor
+  ```
+
+  The terminal view is passive. Its Tor result is the last recorded check,
+  not a new verification; close it with Ctrl-C without stopping the session.
+
 * **Verify Tor routing and latency**:
 
   ```bash
