@@ -272,6 +272,15 @@ stateDiagram-v2
 ```
 
 Read-only status reports evidence without changing intent or running HTTP probes.
+The optional required-VPN mode ([ADR 0015](decisions/0015-required-vpn-before-tor.md))
+uses `vpn.py` to compare non-secret NetworkManager/WireGuard state with frozen
+device indices, endpoint and routing evidence. `vpn_guard.py` installs a separate
+drop-policy kernel table before managed Tor starts. The main table shares the
+precise transport exceptions; independent protection survives its replacement.
+Private root intent survives an interrupted pre-lock startup. Explicit teardown
+releases the guard last, after systemd Tor termination is verified. The watchdog
+is mandatory, and VPN evidence failure enters the existing persistent emergency
+contract. Full scope and validation limits are in the [VPN guide](web/how-to/vpn.md).
 `ttp monitor` repeatedly reads that same evidence and compares consecutive
 snapshots. It never calls the active Tor check, and closing its terminal does
 not stop the session. See [ADR 0014](decisions/0014-passive-monitor.md).

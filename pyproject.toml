@@ -83,6 +83,8 @@ filterwarnings = [
 include = [
     "/ttp",
     "/assets",
+    "/docs/web/how-to/vpn.md",
+    "/docs/web/how-to/session-observations.md",
     "/README.md",
     "/LICENSE",
     "/pyproject.toml"

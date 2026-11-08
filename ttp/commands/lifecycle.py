@@ -119,6 +119,19 @@ def do_stop() -> None:
             dns.restore_dns(lock.get("dns_backup"))
         except Exception as e:
             logger.error("DNS restoration failed, continuing teardown: %s", e)
+        if lock.get("vpn"):
+            from ttp.vpn import VPNError
+            from ttp.vpn_guard import release_after_stop
+
+            try:
+                release_after_stop()
+            except VPNError as exc:
+                import typer
+
+                from ttp.commands._common import print_error
+
+                print_error("VPN Protection Retained", str(exc))
+                raise typer.Exit(code=8)
     finally:
         # The lock must not outlive the nftables table. A lock whose session is
         # already torn down blocks the next `ttp start` behind a concurrency
@@ -142,6 +155,16 @@ def do_stop() -> None:
 def signal_handler(signum: int, frame) -> None:
     """Handle SIGINT/SIGTERM - clean up and exit."""
     lock = state.read_lock()
+    if lock is None:
+        from ttp.vpn_guard import INTENT
+
+        if INTENT.exists():
+            from ttp.commands._common import print_error
+
+            print_error(
+                "VPN Protection Retained", "Interrupted startup; use ttp stop --restore-only for explicit recovery."
+            )
+            sys.exit(10)
     if lock and lock.get("session_id"):
         from ttp.commands._common import print_error
         from ttp.session_safety import STOP_ADVICE, emergency_latched

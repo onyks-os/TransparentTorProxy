@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pwd
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 
@@ -159,8 +159,16 @@ def start_command(
     notification_user: Optional[str] = typer.Option(
         None, "--notification-user", help="Explicit non-root desktop recipient (required for direct root invocation)."
     ),
+    require_vpn: Optional[str] = typer.Option(
+        None,
+        "--require-vpn",
+        help="Require an already active native NetworkManager WireGuard UUID; watchdog and no bypass required. See the VPN guide in command help.",
+    ),
 ) -> None:
-    """Start the transparent Tor proxy session."""
+    """Start TTP. --require-vpn UUID requires an active full-tunnel NM WireGuard profile.
+
+    VPN guide: https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/web/how-to/vpn.md
+    """
     _require_root()
     require_systemd()
 
@@ -170,6 +178,19 @@ def start_command(
         _print_error("Invalid Configuration", str(exc))
         raise typer.Exit(code=1)
     watchdog = selected.settings.watchdog.enabled
+    vpn_policy = None
+    if require_vpn is not None:
+        from ttp.vpn import GUIDE, VPNError, inspect_profile
+
+        try:
+            if not watchdog or external_daemon or allow_root or bypass_user or bypass_group or not no_lan_bypass:
+                raise VPNError(
+                    "VPN requires watchdog, managed Tor and --no-lan-bypass; root/user/group bypass is forbidden"
+                )
+            vpn_policy = inspect_profile(require_vpn, no_ipv6=no_ipv6)
+        except Exception as exc:
+            _print_error("Required VPN Unavailable", f"{exc}\n{GUIDE}")
+            raise typer.Exit(code=10)
     result = Result()
     target = None
     if notification_user and not selected.settings.notifications.enabled:
@@ -239,6 +260,14 @@ def start_command(
         )
 
     preflight_checks()
+    # A retained pre-start guard may exist without a session lock. Never start
+    # another Tor instance over it or silently adopt it as the new policy.
+    if require_vpn is not None or Path("/run/ttp/vpn-intent.json").exists():
+        from ttp.vpn_guard import retained
+
+        if retained():
+            _print_error("VPN Protection Retained", "Run ttp stop --restore-only before starting a new session.")
+            raise typer.Exit(code=10)
     # Record storage is prepared before changing the network, including on
     # installations without a dedicated watchdog account.
     try:
@@ -254,12 +283,26 @@ def start_command(
         tor_user = _resolve_external_tor_uid(transport_port, tor_uid)
         console.print(f"{_PREFIX} Tor daemon detected operating under UID: {tor_user} (BYOD Mode).")
     else:
+        extra_setup: dict[str, Any] = {}
+        if vpn_policy is not None:
+            from ttp.vpn import VPNError, inspect_profile
+            from ttp.vpn_guard import install
+
+            def protect_vpn(tor_user: str) -> None:
+                assert vpn_policy is not None
+                uid = pwd.getpwnam(tor_user).pw_uid
+                if inspect_profile(vpn_policy.uuid, no_ipv6=no_ipv6, tor_uid=uid) != vpn_policy:
+                    raise VPNError("VPN changed during startup")
+                install(vpn_policy, uid)
+
+            extra_setup["before_start"] = protect_vpn
         info = setup_managed_tor(
             transport_port=transport_port,
             dns_port=dns_port,
             bridge_lines=bridge_lines,
             use_bridges=use_bridges,
             no_ipv6=no_ipv6,
+            **extra_setup,
         )
         tor_user = info.get("tor_user", "debian-tor")
 
@@ -267,11 +310,13 @@ def start_command(
 
     # --- Step 2: Apply stateless firewall rules ---
     try:
-        kwargs_fw = {}
+        kwargs_fw: dict[str, Any] = {}
         if bypass_uids:
             kwargs_fw["bypass_uids"] = bypass_uids
         if bypass_gids:
             kwargs_fw["bypass_gids"] = bypass_gids
+        if vpn_policy is not None:
+            kwargs_fw["vpn"] = vpn_policy.snapshot()
 
         firewall.apply_rules(
             tor_user=tor_user,
@@ -331,6 +376,8 @@ def start_command(
             kwargs_lock["bridge_file"] = str(bridge_file)
         if bridge_lines:
             kwargs_lock["bridges"] = bridge_lines
+        if vpn_policy is not None:
+            kwargs_lock["vpn"] = vpn_policy.snapshot()
 
         state.write_lock(
             dns_backup=dns_backup,

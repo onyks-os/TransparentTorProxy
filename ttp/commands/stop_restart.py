@@ -71,6 +71,19 @@ def stop_command(
         else:
             dns.restore_dns(None)
 
+        from ttp.vpn_guard import INTENT
+
+        if (lock and lock.get("vpn")) or INTENT.exists():
+            from ttp.vpn import VPNError
+            from ttp.vpn_guard import release_after_stop
+
+            try:
+                release_after_stop()
+            except VPNError as exc:
+                from ttp.commands._common import print_error
+
+                print_error("VPN Protection Retained", str(exc))
+                raise typer.Exit(code=8)
         state.delete_lock()
         console.print(f"{_PREFIX} [bold red]Network restored. Traffic in cleartext.[/]")
         if lock:
@@ -84,6 +97,11 @@ def stop_command(
         raise typer.Exit(code=0)
 
     if state.read_lock() is None:
+        from ttp.vpn_guard import INTENT
+
+        if INTENT.exists():
+            console.print(f"{_PREFIX} VPN startup protection remains; use ttp stop --restore-only.")
+            raise typer.Exit(code=10)
         console.print(f"{_PREFIX} No active session found.")
         raise typer.Exit(code=0)
 
@@ -188,6 +206,12 @@ def restart_command(
     try:
         load_settings().select(watchdog=watchdog, notifications=notifications)
         lock = state.read_lock(strict=True)
+        if lock and lock.get("vpn"):
+            print_error(
+                "Restart Refused",
+                "VPN sessions require explicit stop/start; restart would create an unprotected interval.",
+            )
+            raise typer.Exit(code=10)
         if lock and lock.get("session_id") and emergency_latched(lock):
             print_error("Emergency Latched", STOP_ADVICE)
             raise typer.Exit(code=7)
@@ -224,4 +248,5 @@ def restart_command(
         no_ipv6=no_ipv6,
         notifications=notifications,
         notification_user=notification_user,
+        require_vpn=None,
     )

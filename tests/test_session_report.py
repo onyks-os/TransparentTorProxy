@@ -64,6 +64,40 @@ def test_required_watchdog_with_no_fresh_observation_is_reported_separately(reco
     assert value["diagnostics"][0]["reason"] == "watchdog.stale"
 
 
+@pytest.mark.parametrize("condition", ["ready", "unavailable", "corrupt"])
+def test_vpn_report_retains_guard_and_path_as_independent_evidence(recorded, monkeypatch, condition):
+    from ttp.vpn import VPNPolicy
+
+    _, lock = recorded
+    policy = VPNPolicy(
+        "12345678-1234-4234-8234-123456789012",
+        "/org/freedesktop/NetworkManager/ActiveConnection/1",
+        "wg0",
+        7,
+        "eth0",
+        2,
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "192.0.2.1",
+        51820,
+        51820,
+        False,
+    )
+    lock.update(vpn={} if condition == "corrupt" else policy.snapshot(), tor_uid=100)
+    state.LOCK_PATH.write_text(json.dumps(lock))
+    monkeypatch.setattr(
+        "ttp.vpn.observe",
+        lambda *args: {
+            "state": "constrained" if condition == "ready" else "unknown",
+            "reason": "vpn.test",
+            "guard_verified": True,
+        },
+    )
+    value = report.observe_session()
+    assert value["vpn"]["required"] is True
+    assert value["session_exit_code"] == (0 if condition == "ready" else 10)
+    assert value["vpn"]["guard_verified"] is (condition != "corrupt")
+
+
 @pytest.mark.parametrize("failure", [False, True])
 def test_status_reports_optional_agent_response_without_changing_network(recorded, monkeypatch, failure):
     _, lock = recorded

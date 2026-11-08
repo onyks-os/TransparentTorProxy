@@ -67,6 +67,24 @@ def observe_session() -> dict[str, Any]:
     """Read-only: no network request, healing, teardown or intent rewriting."""
     lock = state.read_lock(strict=True)
     if lock is None:
+        from ttp.vpn_guard import INTENT
+
+        if INTENT.exists():
+            return {
+                "phase": "protection_retained",
+                "health": "unknown",
+                "session_exit_code": 10,
+                "vpn": {"required": True, "state": "unknown", "guard_verified": False},
+                "diagnostics": [
+                    Diagnostic(
+                        ExitCode.VPN_UNAVAILABLE,
+                        "vpn.startup_retained",
+                        "vpn",
+                        "observe",
+                        "VPN startup protection may remain; inspect and use ttp stop --restore-only",
+                    ).as_dict()
+                ],
+            }
         return {"phase": "absent", "health": "unknown", "diagnostics": [], "session_exit_code": 0}
     from ttp.watchdog.service import watchdog_observation
 
@@ -156,6 +174,35 @@ def observe_session() -> dict[str, Any]:
                 )
             )
     report["diagnostics"] = result.as_dict()["diagnostics"]
+    if lock.get("vpn") is not None:
+        from ttp.vpn import VPNPolicy, observe
+
+        try:
+            policy = VPNPolicy.from_snapshot(lock["vpn"])
+            report["vpn"] = {
+                "required": True,
+                "uuid": policy.uuid,
+                "interface": policy.interface,
+                **observe(policy, lock["tor_uid"]),
+            }
+        except Exception:
+            report["vpn"] = {
+                "required": True,
+                "state": "unknown",
+                "reason": "vpn.evidence_invalid",
+                "guard_verified": False,
+            }
+        if report["vpn"]["state"] != "constrained":
+            result = result.add(
+                Diagnostic(
+                    ExitCode.VPN_UNAVAILABLE,
+                    report["vpn"]["reason"],
+                    "vpn",
+                    "observe",
+                    "Required VPN path has no current evidence",
+                )
+            )
+        report["diagnostics"] = result.as_dict()["diagnostics"]
     report["session_exit_code"] = int(result.exit_code)
     return report
 
@@ -164,11 +211,34 @@ def check_session() -> tuple[Verification, Result]:
     from ttp.probe import verify_session
 
     lock = state.read_lock(strict=True)
+    if lock is None:
+        from ttp.vpn_guard import INTENT
+
+        if INTENT.exists():
+            cause = Diagnostic(
+                ExitCode.VPN_UNAVAILABLE,
+                "vpn.startup_retained",
+                "vpn",
+                "check",
+                "Recover retained VPN startup protection before requesting a probe",
+            )
+            return Verification(VerificationState.NOT_RUN, cause.reason), Result((cause,))
     settings = session_settings(lock) if lock else load_settings().settings
     if lock and lock.get("session_id") and emergency_latched(lock):
         verification = Verification(VerificationState.NOT_RUN, "session.emergency_latched")
         report = observe_session()
         return verification, Result(tuple(Diagnostic.from_dict(item) for item in report["diagnostics"]))
+    if lock and lock.get("vpn") is not None:
+        report = observe_session()
+        if report["vpn"]["state"] != "constrained":
+            cause = Diagnostic(
+                ExitCode.VPN_UNAVAILABLE,
+                "vpn.required_path_unavailable",
+                "vpn",
+                "check",
+                "Required VPN path is unavailable",
+            )
+            return Verification(VerificationState.NOT_RUN, cause.reason), request_emergency(lock, cause)
     previous = session_store().read("verification", lock["session_id"]) if lock and lock.get("session_id") else None
     verification = verify_session(timeout=settings.verification.timeout, lock=lock)
     result = record_verification(lock, verification) if lock else verification.result

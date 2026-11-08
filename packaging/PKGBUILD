@@ -46,6 +46,8 @@ license=('MIT')
 # Runtime dependencies. Pacman will ensure these are installed before TTP runs.
 # Notice how Arch package names differ slightly from Debian (e.g., 'python-typer' instead of 'python3-typer').
 # python-six is for the bundled transitions below.
+optdepends=('networkmanager: required VPN mode' 'wireguard-tools: required VPN mode')
+
 depends=('python>=3.12' 'python-typer' 'python-rich' 'python-stem' 'python-six' 'nftables' 'tor')
 
 # Build dependencies. These are only needed temporarily while creating the package.
@@ -109,4 +111,6 @@ package() {
     # Install the license file (required by Arch Linux standards for MIT).
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
     install -Dm644 assets/ttp.conf.example "$pkgdir/usr/share/doc/$pkgname/ttp.conf.example"
+    install -Dm644 docs/web/how-to/session-observations.md "$pkgdir/usr/share/doc/$pkgname/session-observations.md"
+    install -Dm644 docs/web/how-to/vpn.md "$pkgdir/usr/share/doc/$pkgname/vpn.md"
 }

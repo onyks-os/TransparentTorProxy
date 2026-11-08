@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add required VPN-before-Tor mode for an active native NetworkManager WireGuard
+  profile, with mandatory watchdog, frozen path identity, a kernel guard before
+  Tor startup and explicit recovery. Reject bypass/restart and retain emergency
+  across reconnects. See the VPN guide for the restricted scope and pending VM
+  release qualification, including ParrotOS.
 - Add `ttp monitor`: a passive, root-only terminal view of existing session
   evidence with a short in-memory timeline of changes seen while open. It does
   not run Tor/DNS probes or modify the session; Ctrl-C leaves TTP running.

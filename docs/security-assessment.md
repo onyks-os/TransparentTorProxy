@@ -49,6 +49,17 @@ zero-latency guarantees. A privileged administrator can remove all protection.
 
 ## Table of Contents
 
+The 0.5.0 required-VPN mode adds a public-profile selection boundary and
+independent egress enforcement ([ADR 0015](decisions/0015-required-vpn-before-tor.md)).
+UUID, endpoint, marks and interface identities are validated before privileged
+rule construction; no secret API is called. Device state is not remote liveness.
+Atomic kernel guard installation precedes Tor startup and cleanup retains it
+when termination cannot be confirmed. A changed route cannot authorize direct
+Tor egress. Root can still delete protection; incompatible provider clients can
+disrupt it and are unsupported. DHCP/IPv6 neighbor-discovery exceptions and ARP
+are outside the encrypted payload path. Mandatory watchdog response is bounded,
+not instantaneous. See [VPN limits and release qualification](web/how-to/vpn.md).
+
 1. [Security Objectives](#1-security-objectives)
 2. [Trust Boundaries & Assets](#2-trust-boundaries--assets)
 3. [Threat Model (STRIDE)](#3-threat-model-stride)

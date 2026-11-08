@@ -22,6 +22,46 @@ from ttp.commands._common import EXIT_UNVERIFIED
 runner = CliRunner()
 
 
+@pytest.mark.parametrize("restore", [False, True])
+@pytest.mark.parametrize("failure", [False, True])
+def test_vpn_teardown_keeps_recovery_when_guard_cannot_be_released(monkeypatch, restore, failure):
+    from ttp.vpn import VPNError
+
+    monkeypatch.setattr("ttp.state.read_lock", lambda **kw: {"vpn": {"required": True}, "tor_uid": 100})
+    with (
+        patch("ttp.watchdog.stop_watchdog"),
+        patch("ttp.tor_control.graceful_shutdown"),
+        patch("ttp.tor_install.stop_tor_service"),
+        patch("ttp.tor_install.unlabel_ports_selinux"),
+        patch("ttp.firewall.apply_teardown_lockdown"),
+        patch("ttp.firewall.apply_active_socket_slaughter"),
+        patch("ttp.firewall.destroy_rules"),
+        patch("ttp.dns.restore_dns"),
+        patch("ttp.state.delete_lock"),
+        patch("ttp.commands.lifecycle.resolve_optional", return_value=None),
+        patch("ttp.commands.lifecycle.time.sleep"),
+        patch(
+            "ttp.vpn_guard.release_after_stop", side_effect=VPNError("Guard retained") if failure else None
+        ) as release,
+    ):
+        result = runner.invoke(app, ["stop", *(["--restore-only"] if restore else [])])
+    assert result.exit_code == (8 if failure else 0), result.output
+    release.assert_called_once()
+    assert ("terminated" in result.output or "Network restored" in result.output) is (not failure)
+
+
+def test_partial_vpn_start_requires_explicit_restore(tmp_path, monkeypatch):
+    intent = tmp_path / "intent"
+    intent.write_text("{}")
+    monkeypatch.setattr("ttp.vpn_guard.INTENT", intent)
+    monkeypatch.setattr("ttp.state.read_lock", lambda **kw: None)
+    result = runner.invoke(app, ["stop"])
+    assert result.exit_code == 10 and "restore-only" in result.output
+    with pytest.raises(SystemExit) as stopped:
+        lifecycle.signal_handler(2, None)
+    assert stopped.value.code == 10
+
+
 @pytest.fixture(autouse=True)
 def private_runtime(tmp_path, monkeypatch):
     import os

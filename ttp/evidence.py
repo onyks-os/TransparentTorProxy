@@ -28,6 +28,7 @@ class ExitCode(IntEnum):
     EMERGENCY_VERIFIED = 7
     CONTAINMENT_UNCONFIRMED = 8
     NOTIFICATION_FAILED = 9
+    VPN_UNAVAILABLE = 10
 
 
 _PRIORITY = {
@@ -42,6 +43,7 @@ _PRIORITY = {
     # Preflight refusals do not participate in normal session evaluation.
     ExitCode.USAGE: 70,
     ExitCode.DNSSEC_CONFLICT: 70,
+    ExitCode.VPN_UNAVAILABLE: 35,
 }
 
 

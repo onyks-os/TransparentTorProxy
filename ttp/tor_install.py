@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections.abc import Callable
 from typing import Any, Optional
 
 import typer
@@ -175,6 +176,7 @@ def ensure_tor_ready(
     use_bridges: bool = False,
     bridges: Optional[list[str]] = None,
     disable_ipv6: bool = False,
+    before_start: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Ensure Tor is installed and start it via the dedicated systemd service.
 
@@ -227,6 +229,9 @@ def ensure_tor_ready(
                     required_transports.append(first_word)
         if required_transports:
             ensure_pluggable_transports(required_transports)
+
+    if before_start is not None:
+        before_start(tor_user)
 
     # Start Tor via the dedicated ttp-tor service
     start_tor_service(

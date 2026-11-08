@@ -65,6 +65,13 @@ Most commands require root privileges (`sudo`). Exceptions are noted in the tabl
 
 ### 1.4 Configuration and exit codes
 
+`ttp start --require-vpn UUID --watchdog --no-lan-bypass` selects an already
+active native NetworkManager WireGuard full tunnel, one peer and a stable
+numeric endpoint. Require full IPv6 coverage or explicit `--no-ipv6`. Root,
+UID/GID, cgroup and LAN bypass, external Tor and restart are refused in this
+mode. See the [VPN requirements and recovery guide](web/how-to/vpn.md) before
+using it; its release qualification remains mandatory.
+
 `ttp config` prints validated administrator values and origins; `ttp config
 --session` prints the frozen session snapshot. `/etc/ttp/ttp.conf` is optional,
 root-owned and rejects unknown keys. See the [configuration example](../assets/ttp.conf.example).
@@ -85,9 +92,10 @@ Desktop dependencies are needed only when notifications are selected.
 | 7 | Emergency rules independently verified |
 | 8 | Required containment unconfirmed |
 | 9 | Notification selection, readiness or delivery failure |
+| 10 | Required VPN unavailable or incompatible operation refused |
 
 All contributing causes remain available. Principal session-result precedence is
-`8 > 7 > 6 > 5 > 1 > 9 > 3 > 0`. A nonzero code alone does not establish whether
+`8 > 7 > 6 > 10 > 5 > 1 > 9 > 3 > 0`. A nonzero code alone does not establish whether
 protection is present. Codes 2/4 are preflight refusals. See
 [ADR 0013](decisions/0013-session-evidence-and-notifications.md) and the
 [operator guide](web/how-to/session-observations.md).

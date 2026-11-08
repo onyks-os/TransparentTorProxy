@@ -173,6 +173,7 @@ def apply_rules(
     bypass_uids: list[int] | None = None,
     bypass_gids: list[int] | None = None,
     disable_ipv6: bool = False,
+    vpn: dict | None = None,
 ) -> None:
     """Create the dedicated 'inet ttp' table and inject redirection rules.
 
@@ -212,6 +213,13 @@ def apply_rules(
         except KeyError:
             continue
 
+    vpn_rules = ""
+    if vpn is not None:
+        from ttp.vpn import VPNPolicy
+        from ttp.vpn_guard import transport_rules
+
+        vpn_rules = transport_rules(VPNPolicy.from_snapshot(vpn))
+
     ruleset = _build_ruleset(
         tor_uid=tor_uid,
         transport_port=transport_port,
@@ -222,7 +230,8 @@ def apply_rules(
         bypass_uids=bypass_uids,
         bypass_gids=bypass_gids,
         resolved_uid=resolved_uid,
-        cgroup_bypass=_has_cgroup_bypass_support(),
+        cgroup_bypass=False if vpn is not None else _has_cgroup_bypass_support(),
+        vpn_transport=vpn_rules,
     )
 
     try:

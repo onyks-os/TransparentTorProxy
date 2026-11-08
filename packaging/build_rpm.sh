@@ -75,7 +75,7 @@ if [ "${TTP_RPM_NATIVE:-0}" != 1 ]; then
     # or read by the container.
     stage="$(mktemp -d)"
     trap 'rm -rf "$stage"' EXIT
-    cp -r ttp assets packaging pyproject.toml README.md LICENSE "$stage/"
+    cp -r ttp assets packaging docs pyproject.toml README.md LICENSE "$stage/"
     rm -f "$stage"/packaging/*.rpm
     # shellcheck disable=SC2016 # expanded by the container's shell, not this one
     "$engine" run --rm -v "$stage:/src:z" -w /src -e TTP_RPM_NATIVE=1 \
@@ -129,7 +129,7 @@ rm -rf "$TMP_SRC"
 mkdir -p "$TMP_SRC"
 
 # Copy only the files needed for the build (no .git, no tests, no VMs).
-cp -r ttp assets packaging pyproject.toml README.md LICENSE "$TMP_SRC/"
+cp -r ttp assets packaging docs pyproject.toml README.md LICENSE "$TMP_SRC/"
 
 # Create the tarball in the SOURCES directory where rpmbuild expects it.
 tar -czf "$RPM_DIR/SOURCES/${PKG_NAME}.tar.gz" -C "/tmp" "$PKG_NAME"

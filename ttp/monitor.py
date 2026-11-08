@@ -101,6 +101,11 @@ class MonitorView:
         self._seen_sample = True
 
     def _record_changes(self, old: dict[str, Any], new: dict[str, Any], at: datetime) -> None:
+        old_vpn, new_vpn = old.get("vpn", {}), new.get("vpn", {})
+        if tuple(old_vpn.get(key) for key in ("state", "reason", "guard_verified")) != tuple(
+            new_vpn.get(key) for key in ("state", "reason", "guard_verified")
+        ):
+            self._record(at, f"Required VPN: {new.get('vpn', {}).get('state', 'unknown')}")
         if old.get("phase") != new.get("phase"):
             self._record(at, f"Session phase: {old.get('phase', 'unknown')} → {new.get('phase', 'unknown')}")
         if old.get("health") != new.get("health"):
@@ -175,6 +180,14 @@ def render_monitor(view: MonitorView) -> Group:
         session_id = str(report.get("session_id") or "unknown")
         current.add_row("Session", _text(f"{report.get('phase', 'unknown')} · {session_id[:12]}"))
         current.add_row("Health assessment", _text(report.get("health", "unknown")))
+        if "vpn" in report:
+            vpn = report["vpn"]
+            current.add_row(
+                "Required VPN",
+                _text(
+                    f"{vpn.get('state', 'unknown')} · guard verified={vpn.get('guard_verified', False)} · not a remote liveness proof"
+                ),
+            )
 
         verification = report.get("verification", {})
         ver_state = str(verification.get("state", "unknown"))
