@@ -25,6 +25,8 @@ on:
       - "ttp/tor_service.py"
       - "ttp/tor_config.py"
       - "ttp/watchdog/**"
+      - "ttp/vpn.py"
+      - "ttp/vpn_guard.py"
       - "tests/chaos_monkey.py"
   schedule:
     - cron: "17 4 * * 1"
