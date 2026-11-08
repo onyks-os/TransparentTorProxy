@@ -23,6 +23,7 @@ and [Whonix's comparison](https://www.whonix.org/wiki/Tunnels).
 | Selection | Explicit NetworkManager connection UUID; no guessing by interface name |
 | Peers | Exactly one, with a numeric fixed IP and port |
 | Routing | Full IPv4 tunnel; full IPv6 tunnel or explicit `--no-ipv6` |
+| Physical underlay | Ordinary Ethernet/Wi-Fi, VM Ethernet or veth; VLAN, bridge, bond and other virtual underlays are refused in the initial implementation |
 | Supervision | Watchdog required; optional desktop notifications remain independent |
 | Service teardown | Unified cgroup v2; retain protection until the managed Tor cgroup is empty |
 | Tor | Dedicated TTP-managed instance, including its bridge transport children |
@@ -119,6 +120,8 @@ a disconnected profile can be unknown while the kernel guard is still present.
 
 The JSON field `handshake_at` is the last recorded WireGuard handshake in Unix
 wall-clock seconds (null when none), not a new connectivity measurement.
+The existing rejected-packet counter belongs to the main TTP table; it does not
+count packets dropped by the independent VPN guard.
 
 `ttp check` deliberately performs a new Tor verification. A result `IsTor=true`
 does not by itself prove a VPN path. If the required VPN evidence is unavailable,
@@ -190,7 +193,7 @@ reconnection with changed identity, coexistence with the TTP table and retained
 protection while a systemd Tor test process is live.
 
 That fixture uses a controlled Tor UID probe, **not a public Tor circuit**. It
-does not establish real-provider compatibility, IPv6 coverage, DHCP renewal,
+does not establish real-provider compatibility, every IPv6 combination, DHCP renewal,
 Tor bridges, suspend/resume or ParrotOS support. Those require VM qualification
 before 0.5.0 release: actual TTP startup and Tor verification through the tunnel,
 DNS interception, IPv4/IPv6 underlay and tunnel combinations, transport failures,

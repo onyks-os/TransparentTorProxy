@@ -56,6 +56,7 @@ cp -r assets /opt/ttp/
 cp pyproject.toml /opt/ttp/
 cp README.md /opt/ttp/
 cp docs/web/how-to/vpn.md /opt/ttp/VPN.md
+cp docs/web/how-to/session-observations.md /opt/ttp/session-observations.md
 cp LICENSE /opt/ttp/
 mkdir -p /opt/ttp/requirements /opt/ttp/scripts
 cp requirements/tools.txt requirements/runtime.txt /opt/ttp/requirements/
