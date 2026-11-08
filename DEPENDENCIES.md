@@ -64,6 +64,14 @@ container; its private key is generated there and discarded. Consumers need
 
 ### 1.3 Optional & Dynamic Dependencies
 
+The optional `--require-vpn` mode requires **NetworkManager** (GPL-2.0-or-later),
+**wireguard-tools** (`wg`, GPL-2.0), **iproute2** (`ip`, GPL-2.0-or-later), and
+systemd **busctl** (LGPL-2.1-or-later). They supply non-secret profile, kernel
+peer and routing evidence; TTP neither obtains VPN keys nor activates profiles.
+The existing watchdog dependency is mandatory for this mode. No new Python
+dependency is introduced and the base installation does not require a VPN.
+See [the VPN guide](docs/web/how-to/vpn.md) for the restricted backend contract.
+
 Depending on your distribution's configuration and active features, additional dependencies may be required:
 
 * **SELinux Build Tools** (`checkpolicy`, `policycoreutils`): Required on Red Hat, Fedora, or CentOS systems where SELinux is in `Enforcing` mode to compile and load the custom `ttp_tor_policy.te` module allowing Tor to bind to non-standard ports.

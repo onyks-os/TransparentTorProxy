@@ -45,6 +45,8 @@ Requires:       python3-rich
 Requires:       python3-stem
 Requires:       nftables
 Requires:       tor
+Suggests:       NetworkManager
+Suggests:       wireguard-tools
 Requires:       policycoreutils
 Requires:       python3-six
 Provides:       bundled(python3dist(transitions)) = @@TRANSITIONS_VERSION@@
@@ -141,6 +143,7 @@ fi
 %files
 %license LICENSE
 %doc assets/ttp.conf.example
+%doc docs/web/how-to/vpn.md docs/web/how-to/session-observations.md
 %{_bindir}/ttp
 %{python3_sitelib}/ttp/
 %{python3_sitelib}/transparent_tor_proxy-*.dist-info/

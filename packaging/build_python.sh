@@ -43,7 +43,7 @@ trap 'rm -rf "$work"' EXIT
 # sdist from one made under 022 - the same commit, different bytes, depending
 # only on who cloned it. The copy also keeps the build venv out of the tree.
 mkdir -p "$work/src/packaging" "$work/out"
-cp -r ttp assets README.md LICENSE pyproject.toml "$work/src/"
+cp -r ttp assets docs README.md LICENSE pyproject.toml "$work/src/"
 cp packaging/build_python.sh packaging/build-requirements.txt "$work/src/packaging/"
 find "$work/src" -name __pycache__ -prune -exec rm -rf {} +
 chmod -R u=rwX,go=rX "$work/src"

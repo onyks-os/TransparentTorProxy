@@ -160,6 +160,10 @@ def bypass_command(
         raise typer.Exit(code=1)
 
     # Resolve systemd-run path
+    if lock.get("vpn"):
+        _print_error("Bypass Refused", "Bypass is unavailable in required-VPN sessions.")
+        raise typer.Exit(code=10)
+
     systemd_run_bin = resolve_optional("systemd-run")
     if not systemd_run_bin:
         _print_error(

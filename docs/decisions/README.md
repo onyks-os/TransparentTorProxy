@@ -33,3 +33,4 @@ Each ADR is formatted using the Markdown standard and named using a sequential I
 12. [0012-doh-dot-and-browser-leaks-are-out-of-scope.md](0012-doh-dot-and-browser-leaks-are-out-of-scope.md) — The structural guarantee, not a resolver blocklist, is what protects against DoH/DoT; browser-level WebRTC leaks are not packets and are out of scope.
 13. [0013-session-evidence-and-notifications.md](0013-session-evidence-and-notifications.md) — Session evidence, required supervision, emergency retention and optional desktop delivery.
 14. [0014-passive-monitor.md](0014-passive-monitor.md) — Passive terminal monitor and in-memory observation timeline.
+15. [0015-required-vpn-before-tor.md](0015-required-vpn-before-tor.md) — Required NetworkManager WireGuard path, mandatory supervision and retained kernel guard.

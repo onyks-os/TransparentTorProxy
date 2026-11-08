@@ -19,6 +19,17 @@ from ttp.cli import app
 runner = CliRunner()
 
 
+def test_bypass_refuses_required_vpn_session(monkeypatch):
+    monkeypatch.setenv("SUDO_UID", "1000")
+    monkeypatch.setenv("SUDO_GID", "1000")
+    monkeypatch.setattr("ttp.commands.admin.require_systemd", lambda: None)
+    monkeypatch.setattr("ttp.state.read_lock", lambda: {"vpn": {"required": True}})
+    with patch("ttp.commands.admin.subprocess.run") as execute:
+        result = runner.invoke(app, ["bypass", "curl", "https://example.org"])
+    assert result.exit_code == 10
+    execute.assert_not_called()
+
+
 def _mock_cmd_tokens(cmd: object) -> list[str]:
     """Split mocked subprocess.run argv into tokens (avoids substring `in` on raw cmd)."""
     if isinstance(cmd, str):

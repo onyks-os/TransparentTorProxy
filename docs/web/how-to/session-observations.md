@@ -5,6 +5,10 @@
 This page describes the implemented 0.5.0 contract (unreleased). It does not change
 the behavior of an installed 0.4.11 package.
 
+Required-VPN sessions additionally mandate the watchdog and enforce a fixed
+VPN-before-Tor path. Read [VPN requirements, limits and recovery](vpn.md) before
+selecting that mode; it has its own release qualification gate.
+
 ## Select the capabilities you need
 
 ```bash

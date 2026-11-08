@@ -73,6 +73,9 @@ def status_command(json_output: bool = typer.Option(False, "--json", help="Print
     if json_output:
         typer.echo(json.dumps(report, indent=2))
         return
+    if report["phase"] == "protection_retained":
+        console.print(f"{_PREFIX} VPN startup protection may remain; use ttp stop --restore-only.")
+        return
     if report["phase"] == "absent":
         console.print(f"{_PREFIX} Status: INACTIVE (no recorded TTP session)")
         return
@@ -86,6 +89,11 @@ def status_command(json_output: bool = typer.Option(False, "--json", help="Print
         f"{_PREFIX} Watchdog requested: {report['watchdog_requested']}; observation: {report['watchdog']['value']}"
     )
     verification = report["verification"]
+    if "vpn" in report:
+        vpn = report["vpn"]
+        console.print(
+            f"{_PREFIX} Required VPN: {vpn['state']}; kernel guard verified: {vpn['guard_verified']}", markup=False
+        )
     console.print(f"{_PREFIX} Tor verification: {verification['state']} (recorded measurement)")
     if "age_seconds" in verification:
         console.print(

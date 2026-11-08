@@ -93,6 +93,15 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
         e.g., ("dns", "overlay unmounted") or (None, None) if all is healthy.
     """
     lock = state.read_lock()
+    if lock and lock.get("vpn") is not None:
+        from ttp.vpn import VPNPolicy, observe
+
+        try:
+            observation = observe(VPNPolicy.from_snapshot(lock["vpn"]), lock["tor_uid"])
+            if observation["state"] != "constrained":
+                return "vpn", observation["reason"]
+        except Exception:
+            return "vpn", "vpn.evidence_invalid"
 
     # 1. DNS Overlay mount check
     target = dns.RESOLV_CONF

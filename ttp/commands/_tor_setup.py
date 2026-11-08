@@ -9,6 +9,7 @@ import grp
 import os
 import pwd
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,7 @@ from ttp.commands._common import (
 )
 from ttp.exceptions import TorError
 from ttp.paths import resolve
+from ttp.vpn import GUIDE, VPNError
 
 #: Largest bridge file read. A real one is a few lines; this bounds what a
 #: caller can make root buffer.
@@ -300,17 +302,23 @@ def setup_managed_tor(
     bridge_lines: list[str],
     use_bridges: bool,
     no_ipv6: bool,
+    before_start: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Detect Tor, verify readiness, and start the managed Tor service."""
     console.print(f"{_PREFIX} Detecting Tor...", end=" ")
     try:
+        extra: dict[str, Any] = {"before_start": before_start} if before_start is not None else {}
         info = tor_install.ensure_tor_ready(
             transport_port=transport_port,
             dns_port=dns_port,
             use_bridges=use_bridges,
             bridges=bridge_lines,
             disable_ipv6=no_ipv6,
+            **extra,
         )
+    except VPNError as exc:
+        _print_error("Required VPN Unavailable", f"{exc}\n{GUIDE}")
+        raise typer.Exit(code=10)
     except TorError as exc:
         logger.error("Tor detection/install failed: %s", exc)
         console.print("[bold red]failed.[/]")

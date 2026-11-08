@@ -238,6 +238,12 @@ jobs:
             -t localhost/ttp-notifications-check:latest .
       - name: Verify readiness, lost progress, independent containment and notification receipts
         run: sudo scripts/check-session-services.sh
+      - name: Build offline WireGuard fixture
+        run: sudo podman build -f tests/containers/vpn.Containerfile -t localhost/ttp-vpn-check:latest .
+      - name: Verify required VPN path with real NM, WireGuard and external capture
+        run: sudo scripts/check-vpn.sh
+      - name: Verify IPv6 payload and IPv6 WireGuard underlay
+        run: sudo env TTP_VPN_DUALSTACK=1 scripts/check-vpn.sh
 
   dnssec-policy:
     name: DNSSEC policy (${{ matrix.distribution }})

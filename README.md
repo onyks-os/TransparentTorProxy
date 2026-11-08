@@ -59,6 +59,12 @@ No per-application setup needed - just `sudo ttp start` and **every connection**
 > Read the [operator guide](docs/web/how-to/session-observations.md) for independent
 > `--watchdog` / `--notifications` selection, configurable deadlines, exit codes
 > and explicit emergency termination. These changes are not in released 0.4.11.
+>
+> **VPN before Tor (0.5.0 development):** see the [VPN guide](docs/web/how-to/vpn.md)
+> before using `--require-vpn UUID`. It requires an already active native
+> NetworkManager WireGuard tunnel, watchdog and no bypass. Supported profiles,
+> limitations, deliberate stop/recovery and pending release qualification are
+> documented together; this is not a general VPN-manager integration.
 
 ## Why TTP?
 

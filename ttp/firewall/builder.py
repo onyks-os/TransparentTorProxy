@@ -57,6 +57,7 @@ def _build_ruleset(
     bypass_gids: list[int] | None,
     resolved_uid: int | None,
     cgroup_bypass: bool,
+    vpn_transport: str = "",
 ) -> str:
     """Build and return the nftables ruleset string for the TTP session.
 
@@ -248,6 +249,9 @@ def _build_ruleset(
             # or bridge. In managed mode tor_config already emits "ClientUseIPv6 0" whenever IPv6
             # is unavailable, so this exemption is inert there.
             meta skuid {tor_uid} accept
+
+            # Required VPN transport and underlay control precede family drops.
+            {vpn_transport}
 
             # 1a. IPv6 Leak Prevention: drop every remaining IPv6 packet when IPv6 is disabled or
             # unrouteable. This MUST precede every exemption below. "meta skuid", "meta skgid" and

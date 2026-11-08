@@ -139,6 +139,57 @@ def test_start_happy_path(
     assert lock_kwargs["dns_port"] == 9054
     assert lock_kwargs["interface"] == "eth0"
     assert lock_kwargs["external_daemon"] is False
+    assert lock_kwargs["tor_uid"] == 110
+
+
+@pytest.mark.parametrize("condition", ["ready", "changed", "retained"])
+def test_required_vpn_is_frozen_and_guard_precedes_tor(mock_base_start, monkeypatch, condition):
+    from ttp.vpn import VPNPolicy
+
+    profile = VPNPolicy(
+        "12345678-1234-4234-8234-123456789012",
+        "/org/freedesktop/NetworkManager/ActiveConnection/1",
+        "wg0",
+        7,
+        "eth0",
+        2,
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "192.0.2.1",
+        51820,
+        51820,
+        False,
+    )
+    events = []
+
+    def ready(**kwargs):
+        kwargs["before_start"]("tor")
+        events.append("tor-started")
+        return {"tor_user": "tor"}
+
+    with (
+        patch("ttp.tor_install.ensure_tor_ready", side_effect=ready),
+        patch("ttp.commands.start.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=100)),
+        patch("ttp.vpn.inspect_profile", side_effect=[profile, None if condition == "changed" else profile]),
+        patch("ttp.vpn_guard.retained", return_value=condition == "retained"),
+        patch("ttp.vpn_guard.install", side_effect=lambda *a: events.append("guard-verified")),
+        patch("ttp.firewall.apply_rules") as rules,
+        patch("ttp.state.write_lock") as lock,
+        patch("ttp.watchdog.start_watchdog"),
+    ):
+        result = runner.invoke(
+            app, ["start", "--require-vpn", profile.uuid, "--watchdog", "--no-lan-bypass", "--no-ipv6"]
+        )
+    if condition == "ready":
+        assert result.exit_code == 0, result.output
+        assert events == ["guard-verified", "tor-started"]
+        assert rules.call_args.kwargs["vpn"] == profile.snapshot()
+        assert lock.call_args.kwargs["vpn"] == profile.snapshot()
+        assert lock.call_args.kwargs["tor_uid"] == 100
+    else:
+        assert result.exit_code == 10, result.output
+        assert events == []
+        lock.assert_not_called()
+        rules.assert_not_called()
 
 
 @patch("os.geteuid", return_value=1000)

@@ -73,7 +73,7 @@ case "$target" in
         # build reads, so a local venv or cache is never mounted.
         repo="$(cd "$(dirname "$0")/.." && pwd)"
         mkdir "$stage/src"
-        (cd "$repo" && cp -r ttp assets packaging pyproject.toml README.md LICENSE "$stage/src/")
+        (cd "$repo" && cp -r ttp assets packaging docs pyproject.toml README.md LICENSE "$stage/src/")
         rm -f "$stage"/src/packaging/*.deb "$stage"/src/packaging/*.rpm "$stage"/src/packaging/*.pkg.tar.*
         install='
             pacman -Syu --noconfirm --needed base-devel python-build python-installer python-wheel python-hatchling

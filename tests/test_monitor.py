@@ -122,6 +122,21 @@ def test_observed_strings_are_not_interpreted_as_rich_markup():
     assert "\x1b" not in output
 
 
+def test_vpn_path_loss_retains_guard_evidence_in_view_and_history():
+    view = MonitorView()
+    at = datetime(2026, 11, 6, 10, 0, tzinfo=UTC)
+    report = sample()
+    report["vpn"] = {"state": "constrained", "reason": "vpn.path_constrained", "guard_verified": True}
+    view.accept(report, at, boot_now=105.0)
+    changed = copy.deepcopy(report)
+    changed["vpn"].update(state="unknown", reason="vpn.path_lost")
+    view.accept(changed, at, boot_now=110.0)
+    output = rendered(view)
+    assert "Required VPN: unknown" in output
+    assert "guard verified=True" in output
+    assert "not a remote liveness proof" in output
+
+
 def test_non_terminal_invocation_points_scripts_to_status_json(monkeypatch):
     monkeypatch.setattr(monitor_command_module, "require_root", lambda: None)
     monkeypatch.setattr(monitor_command_module, "_terminal_available", lambda: False)
