@@ -183,6 +183,7 @@ def isolated_apparmor_kernel(request, monkeypatch, tmp_path):
     lsm.write_text("capability\n")
     monkeypatch.setattr(apparmor, "LSM", lsm)
     monkeypatch.setattr(apparmor, "ENABLED", tmp_path / "apparmor-enabled")
+    monkeypatch.setattr(apparmor, "MODE", tmp_path / "apparmor-mode")
     monkeypatch.setattr(apparmor, "PROFILES", tmp_path / "apparmor-profiles")
 
 

@@ -80,6 +80,27 @@ def test_status_active(mock_read, mock_orphan, mock_ip):
     assert mock_read.called
 
 
+@pytest.mark.parametrize("confinement", ["enforced", "unverified"])
+def test_status_reports_actual_confinement_separately(confinement):
+    with (
+        patch(
+            "ttp.state.read_lock",
+            return_value={
+                "timestamp": "2026-11-10T12:00:00",
+                "apparmor": {"required": True, "profile": "ttp-tor"},
+                "tor_uid": 103,
+            },
+        ),
+        patch(
+            "ttp.apparmor.observe",
+            return_value={"state": confinement, "profile": "ttp-tor", "reason": "apparmor.test"},
+        ),
+    ):
+        result = runner.invoke(app, ["status"])
+    assert result.exit_code == 0, result.output
+    assert f"Tor AppArmor: {confinement}; profile: ttp-tor" in result.output
+
+
 @patch("ttp.state.read_lock", return_value=None)
 def test_status_inactive(mock_read):
     """status with no session -> shows INACTIVE."""

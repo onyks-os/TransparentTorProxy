@@ -98,6 +98,10 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
 
         confinement = observe_apparmor(lock["apparmor"], lock.get("tor_uid"))
         if confinement["state"] != "enforced":
+            if confinement["reason"] == "apparmor.tor_inactive":
+                # Preserve bounded Tor-only healing. The restarted instance
+                # must pass this same confinement check before being healthy.
+                return "tor", "Managed Tor service is inactive"
             return "apparmor", confinement["reason"]
     if lock and lock.get("vpn") is not None:
         from ttp.vpn import VPNPolicy, observe

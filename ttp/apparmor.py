@@ -22,10 +22,15 @@ from ttp.paths import resolve
 PROFILE = "ttp-tor"
 LSM = Path("/sys/kernel/security/lsm")
 ENABLED = Path("/sys/module/apparmor/parameters/enabled")
+MODE = Path("/sys/module/apparmor/parameters/mode")
 PROFILES = Path("/sys/kernel/security/apparmor/profiles")
 PROC = Path("/proc")
 POLICY_SOURCE = Path(__file__).with_name("ttp-tor.apparmor")
 GUIDE = "https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/web/how-to/apparmor.md"
+
+
+class _TorInactive(Exception):
+    """A definitely stopped daemon can follow the existing Tor healing path."""
 
 
 def active() -> bool:
@@ -61,6 +66,13 @@ def prepare() -> dict[str, Any] | None:
     if not active():
         return None
     try:
+        # The process label reports the profile's mode, not the kernel-wide
+        # override. Refuse a globally relaxed kernel at startup even when the
+        # named profile itself says enforce. This root-only parameter cannot
+        # be monitored by the unprivileged watchdog; root changes to global
+        # policy have the same trust limit as replacement of policy contents.
+        if MODE.read_text(encoding="ascii").strip() != "enforce":
+            raise TorError("AppArmor must be in global enforce mode before starting managed Tor")
         container = subprocess.run(
             [resolve("systemd-detect-virt"), "--container", "--quiet"],
             capture_output=True,
@@ -108,6 +120,8 @@ def _main_pid() -> int:
     )
     fields = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
     pid = int(fields.get("MainPID", "0"))
+    if fields.get("ActiveState") in ("inactive", "failed") and pid == 0:
+        raise _TorInactive
     if fields.get("ActiveState") != "active" or pid <= 0:
         raise ValueError("Managed Tor is not active")
     return pid
@@ -150,6 +164,8 @@ def observe(policy: Any, tor_uid: int | None) -> dict[str, Any]:
             result.update(state="unverified", reason="apparmor.confinement_unverified")
         else:
             result.update(state="enforced", reason="apparmor.process_enforced")
+    except _TorInactive:
+        result["reason"] = "apparmor.tor_inactive"
     except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
         pass
     return result

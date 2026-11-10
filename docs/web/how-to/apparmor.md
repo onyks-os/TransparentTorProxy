@@ -17,7 +17,9 @@ At each managed startup, TTP:
 
 1. Reads the running kernel's LSM selection. A module compiled with AppArmor
    support is not sufficient evidence that AppArmor is active. Ambiguous or
-   unreadable kernel evidence causes startup to fail.
+   unreadable kernel evidence causes startup to fail. The kernel-wide AppArmor
+   mode must also be `enforce`; a global complain override refuses startup even
+   if the named profile would report enforce.
 2. Refuses AppArmor policy loading from containers. Use a host or a disposable
    VM; policy namespace delegation for containers is not implemented.
 3. Writes its shipped policy to a private, root-owned file under `/run/ttp/`
@@ -57,7 +59,7 @@ visible denial. Report the denial with sensitive bridge details removed.
 
 ## Observations and loss of confinement
 
-`sudo ttp status --json` includes a separate observation:
+`sudo ttp status` shows confinement separately; `sudo ttp status --json` includes:
 
 ```json
 {
@@ -82,7 +84,10 @@ The watchdog checks confinement before ordinary network integrity checks.
 It needs no new capability and does not read the privileged kernel profile
 store: the actual process label provides the current enforce-mode evidence.
 Loss or unreadability triggers the existing emergency containment path,
-without automatic healing of AppArmor policy. `ttp check` also checks this
+without automatic healing of AppArmor policy. A definitely stopped Tor service
+can follow the existing bounded Tor recovery path; the restarted process must
+pass the confinement check before supervision reports it healthy again.
+`ttp check` also checks this
 requirement before attempting an Internet verification and requests containment
 if it fails. A verified emergency returns `7`; containment that cannot be
 confirmed returns `8`. Passive missing confinement evidence contributes code
@@ -124,7 +129,9 @@ limitation, not evidence of an AppArmor-free host.
 - A process label proves the profile name and enforcement mode at observation
   time. It does not attest the full policy contents, prevent every compromise,
   or establish network anonymity. Root can replace a loaded policy under the
-  same name or change distribution abstractions. Root compromise is outside
+  same name, change distribution abstractions or relax the kernel-wide mode.
+  That global setting is verified at startup; its root-only interface is not
+  read by the unprivileged watchdog. Root compromise is outside
   this guarantee, as it is for TTP's firewall and session evidence.
 - A loaded profile remains in kernel memory after stop; TTP does not unload
   policy from a possibly attached task. The runtime source file is volatile,

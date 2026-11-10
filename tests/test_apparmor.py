@@ -75,6 +75,7 @@ def test_inactive_never_loads_policy():
 @pytest.fixture
 def policy_loader(monkeypatch, tmp_path):
     apparmor.LSM.write_text("capability,apparmor")
+    apparmor.MODE.write_text("enforce\n")
     apparmor.PROFILES.write_text("other (enforce)\nttp-tor (enforce)\n")
     monkeypatch.setattr(apparmor.state, "LOCK_DIR", tmp_path)
     with (
@@ -83,6 +84,21 @@ def policy_loader(monkeypatch, tmp_path):
     ):
         run.side_effect = [SimpleNamespace(returncode=1), SimpleNamespace(returncode=0)]
         yield run
+
+
+@pytest.mark.parametrize("mode", ["complain", "kill", "unknown"])
+def test_global_override_must_be_enforce(policy_loader, mode):
+    apparmor.MODE.write_text(mode)
+    with pytest.raises(TorError, match="global enforce"):
+        apparmor.prepare()
+    policy_loader.assert_not_called()
+
+
+def test_global_mode_must_be_readable(policy_loader):
+    apparmor.MODE.unlink()
+    with pytest.raises(TorError, match="Cannot load"):
+        apparmor.prepare()
+    policy_loader.assert_not_called()
 
 
 def test_policy_is_private_and_no_cache(policy_loader, tmp_path):
@@ -210,6 +226,12 @@ def test_invalid_systemd_evidence(process_evidence, state):
     assert apparmor.observe(POLICY, 103)["state"] == "unknown"
 
 
+@pytest.mark.parametrize("service_state", ["inactive", "failed"])
+def test_definitely_stopped_tor_is_distinct_from_live_confinement_loss(process_evidence, service_state):
+    process_evidence[2].return_value.stdout = f"ActiveState={service_state}\nMainPID=0"
+    assert apparmor.observe(POLICY, 103)["reason"] == "apparmor.tor_inactive"
+
+
 def test_legacy_attribute_fallback_only_if_absent(process_evidence):
     process, label, _ = process_evidence
     label.unlink()
@@ -287,3 +309,13 @@ def test_watchdog_continues_other_checks_when_confinement_is_enforced():
         patch.object(integrity.dns, "_is_mount_point", return_value=False),
     ):
         assert integrity.check_system_integrity()[0] == "dns"
+
+
+def test_watchdog_retains_tor_healing_for_a_definitely_stopped_daemon():
+    from ttp.watchdog import integrity
+
+    with (
+        patch.object(integrity.state, "read_lock", return_value={"apparmor": POLICY, "tor_uid": 103}),
+        patch.object(apparmor, "observe", return_value={"state": "unknown", "reason": "apparmor.tor_inactive"}),
+    ):
+        assert integrity.check_system_integrity()[0] == "tor"
