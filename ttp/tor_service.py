@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import logging
+import pwd
 import subprocess
 from pathlib import Path
 from typing import Optional
 
+from ttp import apparmor
 from ttp.exceptions import TorError
 from ttp.paths import resolve, resolve_optional
 from ttp.selinux import label_ports_selinux
@@ -63,7 +65,7 @@ UMask=0077
 """
 
 
-def _build_service_unit_content(tor_user: str, tor_bin: str) -> str:
+def _build_service_unit_content(tor_user: str, tor_bin: str, apparmor_profile: str | None = None) -> str:
     """Build and return the volatile systemd ttp-tor.service unit content.
 
     This is a **pure function** with no side-effects.
@@ -75,6 +77,7 @@ def _build_service_unit_content(tor_user: str, tor_bin: str) -> str:
     Returns:
         str: Rendered systemd service unit file definition.
     """
+    confinement = f"AppArmorProfile={apparmor_profile}\n" if apparmor_profile else ""
     return f"""\
 [Unit]
 Description=TTP Managed Tor Instance
@@ -102,13 +105,13 @@ ExecStartPre=+/bin/chown {tor_user}:{tor_user} {TOR_CACHE_DIR.parent}
 ExecStartPre=+/bin/chmod 0700 {TOR_CACHE_DIR.parent}
 
 ExecStart={tor_bin} -f {TOR_RUNTIME_DIR / "torrc"} --RunAsDaemon 0
-Restart=no
+{confinement}Restart=no
 TimeoutStartSec=120
 LimitNOFILE=32768
 {_tor_sandbox(tor_user)}"""
 
 
-def _write_service_unit(tor_user: str) -> None:
+def _write_service_unit(tor_user: str, apparmor_profile: str | None = None) -> None:
     """Write a volatile ``ttp-tor.service`` unit to ``/run/systemd/system/``.
 
     Creates a dedicated systemd service definition for TTP in volatile memory.
@@ -121,7 +124,7 @@ def _write_service_unit(tor_user: str) -> None:
     # environment could have decided which program the unit launches - for the
     # lifetime of the unit file, not just the current process.
     tor_bin = resolve_optional("tor") or "/usr/bin/tor"
-    unit = _build_service_unit_content(tor_user, tor_bin)
+    unit = _build_service_unit_content(tor_user, tor_bin, apparmor_profile)
     TTP_SERVICE_PATH.parent.mkdir(parents=True, exist_ok=True)
     TTP_SERVICE_PATH.write_text(unit, encoding="utf-8")
     logger.debug("Wrote volatile service unit to %s", TTP_SERVICE_PATH)
@@ -163,7 +166,7 @@ def start_tor_service(
     use_bridges: bool = False,
     bridges: Optional[list[str]] = None,
     disable_ipv6: bool = False,
-) -> None:
+) -> dict | None:
     """Generate the runtime torrc and start a dedicated TTP Tor systemd service.
 
     Sequence:
@@ -194,7 +197,11 @@ def start_tor_service(
         disable_ipv6=disable_ipv6,
     )
     label_ports_selinux(transport_port, dns_port)
-    _write_service_unit(tor_user)
+    confinement = apparmor.prepare()
+    if confinement is None:
+        _write_service_unit(tor_user)
+    else:
+        _write_service_unit(tor_user, apparmor.PROFILE)
 
     try:
         subprocess.run(
@@ -221,7 +228,13 @@ def start_tor_service(
         if journal:
             message += f"\nLast lines from the Tor journal:\n{journal}"
         raise TorError(message) from e
+    if confinement is not None:
+        observation = apparmor.observe(confinement, pwd.getpwnam(tor_user).pw_uid)
+        if observation["state"] != "enforced":
+            stop_tor_service()
+            raise TorError(f"Required Tor AppArmor confinement could not be verified. See {apparmor.GUIDE}")
     logger.info("TTP Tor service started with dedicated config.")
+    return confinement
 
 
 def stop_tor_service() -> None:

@@ -15,8 +15,43 @@ import json
 import secrets
 import socket
 import struct
+import subprocess
 import time
 from pathlib import Path
+
+
+def create_overlay(base: Path, destination: Path) -> int:
+    """Never shrink a prepared guest when creating its disposable disk."""
+    response = subprocess.run(
+        ["qemu-img", "info", "--output=json", str(base)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    info = json.loads(response.stdout)
+    size = info.get("virtual-size")
+    if info.get("format") != "qcow2" or type(size) is not int or size <= 0:
+        raise ValueError("Expected a QCOW2 base with a positive virtual size")
+    size = max(size, 8 * 1024**3)
+    subprocess.run(
+        [
+            "qemu-img",
+            "create",
+            "-q",
+            "-f",
+            "qcow2",
+            "-F",
+            "qcow2",
+            "-b",
+            str(base.resolve()),
+            str(destination),
+            str(size),
+        ],
+        check=True,
+        timeout=10,
+    )
+    return size
 
 
 class Agent:

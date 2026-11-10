@@ -46,7 +46,8 @@ license=('MIT')
 # Runtime dependencies. Pacman will ensure these are installed before TTP runs.
 # Notice how Arch package names differ slightly from Debian (e.g., 'python-typer' instead of 'python3-typer').
 # python-six is for the bundled transitions below.
-optdepends=('networkmanager: required VPN mode' 'wireguard-tools: required VPN mode')
+optdepends=('networkmanager: required VPN mode' 'wireguard-tools: required VPN mode'
+            'apparmor: required for managed Tor when the kernel selects AppArmor')
 
 depends=('python>=3.12' 'python-typer' 'python-rich' 'python-stem' 'python-six' 'nftables' 'tor')
 
@@ -113,4 +114,5 @@ package() {
     install -Dm644 assets/ttp.conf.example "$pkgdir/usr/share/doc/$pkgname/ttp.conf.example"
     install -Dm644 docs/web/how-to/session-observations.md "$pkgdir/usr/share/doc/$pkgname/session-observations.md"
     install -Dm644 docs/web/how-to/vpn.md "$pkgdir/usr/share/doc/$pkgname/vpn.md"
+    install -Dm644 docs/web/how-to/apparmor.md "$pkgdir/usr/share/doc/$pkgname/apparmor.md"
 }

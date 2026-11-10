@@ -131,6 +131,7 @@ cp LICENSE "$BUILD_DIR/usr/share/doc/transparent-tor-proxy/copyright"
 cp assets/ttp.conf.example "$BUILD_DIR/usr/share/doc/transparent-tor-proxy/ttp.conf.example"
 cp docs/web/how-to/session-observations.md "$BUILD_DIR/usr/share/doc/transparent-tor-proxy/session-observations.md"
 cp docs/web/how-to/vpn.md "$BUILD_DIR/usr/share/doc/transparent-tor-proxy/vpn.md"
+install -m 0644 docs/web/how-to/apparmor.md "$BUILD_DIR/usr/share/doc/transparent-tor-proxy/apparmor.md"
 
 # Create the 'control' file inside the DEBIAN folder.
 # This is the most important metadata file. It tells apt what this package is,
@@ -145,7 +146,7 @@ Section: net
 Priority: optional
 Homepage: https://github.com/onyks-os/TransparentTorProxy
 License: MIT
-Depends: python3 (>= 3.12), python3-typer, python3-rich (>= 13.7.1), python3-stem, python3-transitions (>= 0.9.0), nftables, tor
+Depends: python3 (>= 3.12), python3-typer, python3-rich (>= 13.7.1), python3-stem, python3-transitions (>= 0.9.0), nftables, tor, apparmor
 Suggests: network-manager, wireguard-tools
 Description: Transparent Tor Proxy
  A Linux CLI tool that transparently routes all system traffic through the Tor network.

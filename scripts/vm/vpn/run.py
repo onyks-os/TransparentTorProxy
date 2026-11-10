@@ -10,6 +10,7 @@ import contextlib
 import hashlib
 import json
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
@@ -19,7 +20,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from qemu import Agent, inspect_capture, qmp
+from qemu import Agent, create_overlay, inspect_capture, qmp
 
 ROOT = Path(__file__).resolve().parents[3]
 MAC = bytes.fromhex("525400123402")
@@ -38,8 +39,54 @@ def free_port():
         return sock.getsockname()[1]
 
 
+def image_digest(base: Path, checksums: Path) -> str:
+    entries = [
+        parts[0]
+        for line in checksums.read_text().splitlines()
+        if len(parts := line.split()) == 2 and parts[1].lstrip("*") == base.name
+    ]
+    with base.open("rb") as source:
+        digest = hashlib.file_digest(source, "sha512").hexdigest()
+    if entries != [digest]:
+        raise ValueError(f"Image {base.name} does not match its SHA512 checksum")
+    return digest
+
+
+def copy_to_guest(vm, source: Path, destination: str):
+    subprocess.run(
+        [
+            "scp",
+            "-q",
+            "-i",
+            str(vm.key),
+            "-P",
+            str(vm.port),
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            str(source),
+            f"ttp@127.0.0.1:{destination}",
+        ],
+        check=True,
+        timeout=60,
+    )
+
+
 class VM:
-    def __init__(self, name: str, work: Path, control: Path, base: Path, key: Path, network: str):
+    def __init__(
+        self,
+        name: str,
+        work: Path,
+        control: Path,
+        base: Path,
+        key: Path,
+        network: str,
+        *,
+        memory: int = 1536,
+        firmware_code: Path | None = None,
+        firmware_vars: Path | None = None,
+    ):
         self.work = work / name
         self.work.mkdir()
         self.control = control / name
@@ -48,23 +95,13 @@ class VM:
         self.port = free_port()
         self.key = key
         self.process = None
-        run(
-            "qemu-img",
-            "create",
-            "-q",
-            "-f",
-            "qcow2",
-            "-F",
-            "qcow2",
-            "-b",
-            str(base),
-            str(self.work / "disk.qcow2"),
-            "8G",
-        )
+        create_overlay(base, self.work / "disk.qcow2")
         (self.work / "meta-data").write_text(
             f"instance-id: ttp-vpn-{name}-{time.time_ns()}\nlocal-hostname: vpn-{name}\n"
         )
-        packages = "qemu-guest-agent, network-manager, wireguard-tools, nftables, dnsmasq, tor, python3-venv, curl"
+        packages = (
+            "qemu-guest-agent, network-manager, wireguard-tools, nftables, dnsmasq, tor, apparmor, python3-venv, curl"
+        )
         (self.work / "user-data").write_text(f"""#cloud-config
 users:
   - name: ttp
@@ -100,7 +137,7 @@ runcmd:
             "-cpu",
             "host",
             "-m",
-            "1536",
+            str(memory),
             "-smp",
             "2",
             "-global",
@@ -130,6 +167,18 @@ runcmd:
             "-serial",
             f"file:{self.work}/console.log",
         ]
+        if (firmware_code is None) != (firmware_vars is None):
+            raise ValueError("Both firmware code and variable template are required")
+        if firmware_code is not None:
+            shutil.copyfile(firmware_vars, self.work / "firmware-vars.fd")
+            self.command.extend(
+                [
+                    "-drive",
+                    f"if=pflash,format=raw,unit=0,readonly=on,file={firmware_code}",
+                    "-drive",
+                    f"if=pflash,format=raw,unit=1,file={self.work}/firmware-vars.fd",
+                ]
+            )
 
     def boot(self):
         with (self.work / "qemu.log").open("w") as log:
@@ -219,7 +268,9 @@ systemd-run --unit=qualification-canary python3 -m http.server 8000 --bind 0.0.0
 
 CLIENT = r"""
 systemctl disable --now tor.service tor@default.service || true
-systemctl disable --now systemd-networkd.service systemd-networkd.socket
+if [ "$(systemctl show systemd-networkd.service -p LoadState --value)" = loaded ]; then
+    systemctl disable --now systemd-networkd.service systemd-networkd.socket
+fi
 systemctl start NetworkManager
 nmcli device set "$physical" managed yes
 nmcli con add type ethernet ifname "$physical" con-name qualification-underlay ipv4.method auto ipv6.method disabled
@@ -251,23 +302,45 @@ def main():
     parser.add_argument("--base", type=Path, required=True, help="Debian 13 genericcloud qcow2")
     parser.add_argument("--checksums", type=Path, required=True, help="Published SHA512SUMS matching the base")
     parser.add_argument("--work", type=Path, required=True, help="New directory, never reused")
+    parser.add_argument("--client-base", type=Path, help="Optional separately prepared client image")
+    parser.add_argument("--client-checksums", type=Path, help="SHA512SUMS of that prepared client image")
+    parser.add_argument(
+        "--client-os", choices=("debian", "parrot"), default="debian", help="Expected /etc/os-release ID"
+    )
+    parser.add_argument("--client-memory", type=int, default=2048, help="Client memory in MiB")
+    parser.add_argument("--client-firmware-code", type=Path, help="Optional read-only raw UEFI code image")
+    parser.add_argument("--client-firmware-vars", type=Path, help="Matching raw UEFI variable template, copied per run")
+    parser.add_argument(
+        "--client-deb", type=Path, help="Install this native TTP development DEB instead of a source venv"
+    )
+    parser.add_argument(
+        "--require-apparmor", action="store_true", help="Require active AppArmor and test real confinement loss"
+    )
     args = parser.parse_args()
     args.base = args.base.resolve()
-    expected = [
-        line.split()[0]
-        for line in args.checksums.read_text().splitlines()
-        if line.split()[-1].lstrip("*") == args.base.name
-    ]
-    with args.base.open("rb") as base:
-        digest = hashlib.file_digest(base, "sha512").hexdigest()
-    if expected != [digest]:
-        parser.error("Base image does not match its published SHA512 checksum")
+    if (args.client_base is None) != (args.client_checksums is None):
+        parser.error("--client-base requires its matching --client-checksums")
+    if (args.client_firmware_code is None) != (args.client_firmware_vars is None):
+        parser.error("UEFI code and variable template must be provided together")
+    if args.client_os == "parrot" and (args.client_base is None or args.client_deb is None):
+        parser.error("Parrot qualification requires a prepared client image and native --client-deb")
+    if args.client_memory < 1024:
+        parser.error("Client memory must be at least 1024 MiB")
+    try:
+        digest = image_digest(args.base, args.checksums)
+        client_base = args.client_base.resolve() if args.client_base else args.base
+        client_digest = image_digest(client_base, args.client_checksums or args.checksums)
+    except ValueError as exc:
+        parser.error(str(exc))
     work = args.work.resolve()
     work.mkdir(mode=0o700)  # refuse old disks, PIDs and stale evidence
     report = {
         "started": datetime.now(UTC).isoformat(),
         "commit": run("git", "rev-parse", "HEAD", cwd=ROOT),
         "base_sha512": digest,
+        "client_base_sha512": client_digest,
+        "client_os": args.client_os,
+        "install_mode": "native_deb" if args.client_deb else "source_venv",
         "topology": "IPv4 underlay and IPv4 tunnel, --no-ipv6",
         "checks": {},
     }
@@ -285,7 +358,17 @@ def main():
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key))
         port = free_port()
         peer = VM("peer", work, control, args.base, key, f"listen=127.0.0.1:{port}")
-        client = VM("client", work, control, args.base, key, f"connect=127.0.0.1:{port}")
+        client = VM(
+            "client",
+            work,
+            control,
+            client_base,
+            key,
+            f"connect=127.0.0.1:{port}",
+            memory=args.client_memory,
+            firmware_code=args.client_firmware_code,
+            firmware_vars=args.client_firmware_vars,
+        )
         stack.callback(peer.close)
         stack.callback(client.close)
         try:
@@ -303,6 +386,14 @@ def main():
             for vm in (peer, client):
                 print(f"Provisioning {vm.work.name}...", flush=True)
                 vm.ready()
+            info = json.loads(
+                client.agent.run(
+                    "python3 -c 'import json,platform; print(json.dumps(platform.freedesktop_os_release()))'"
+                )[1]
+            )
+            if info["ID"] != args.client_os:
+                raise RuntimeError(f"Expected {args.client_os}, found {info['ID']}")
+            report["client_os_release"] = info
             peer.agent.run(INTERFACES.replace("MAC_ADDRESS", "52:54:00:12:34:01") + PEER)
             # Transfer only tracked repository files; never copy local handoffs or VM images.
             archive = work / "source.tar.gz"
@@ -317,30 +408,28 @@ def main():
                 for name in ("run.py", "qemu.py")
             }
             # QGA carries commands during protection; SSH is used only for provisioning.
-            subprocess.run(
-                [
-                    "scp",
-                    "-q",
-                    "-i",
-                    str(key),
-                    "-P",
-                    str(client.port),
-                    "-o",
-                    "StrictHostKeyChecking=no",
-                    "-o",
-                    "UserKnownHostsFile=/dev/null",
-                    str(archive),
-                    "ttp@127.0.0.1:/tmp/source.tar.gz",
-                ],
-                check=True,
-                timeout=60,
-            )
-            client.agent.run(
-                "mkdir /opt/ttp; tar -xzf /tmp/source.tar.gz -C /opt/ttp; python3 -m venv /opt/ttp/venv\n"
-                "bash /opt/ttp/scripts/install_locked.sh /opt/ttp/venv/bin/python runtime /opt/ttp\n"
-                "ln -s /opt/ttp/venv/bin/ttp /usr/local/bin/ttp",
-                timeout=300,
-            )
+            if args.client_deb:
+                with args.client_deb.open("rb") as package:
+                    report["native_deb_sha256"] = hashlib.file_digest(package, "sha256").hexdigest()
+                copy_to_guest(client, args.client_deb, "/tmp/ttp.deb")
+                _, installation = client.agent.run(
+                    'test "$(dpkg-deb -f /tmp/ttp.deb Package)" = transparent-tor-proxy\n'
+                    "DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/ttp.deb\n"
+                    "dpkg-query -W transparent-tor-proxy python3 python3-typer python3-rich python3-stem "
+                    "python3-transitions nftables tor\npython3 -c 'import ttp; print(ttp.__file__)'",
+                    timeout=300,
+                )
+                (client.work / "package-install.txt").write_text(installation)
+                guest_python = "/usr/bin/python3"
+            else:
+                copy_to_guest(client, archive, "/tmp/source.tar.gz")
+                client.agent.run(
+                    "mkdir /opt/ttp; tar -xzf /tmp/source.tar.gz -C /opt/ttp; python3 -m venv /opt/ttp/venv\n"
+                    "bash /opt/ttp/scripts/install_locked.sh /opt/ttp/venv/bin/python runtime /opt/ttp\n"
+                    "ln -s /opt/ttp/venv/bin/ttp /usr/local/bin/ttp",
+                    timeout=300,
+                )
+                guest_python = "/opt/ttp/venv/bin/python"
             # Install and copy first: handing the interfaces from networkd to
             # NM deliberately removes the provisioning NIC's IP configuration.
             client.agent.run(INTERFACES.replace("MAC_ADDRESS", "52:54:00:12:34:02") + CLIENT)
@@ -382,7 +471,7 @@ method=disabled
                 "guest_versions",
                 client.agent.run(
                     "cat /etc/os-release\nuname -r\nNetworkManager --version\nwg --version\ntor --version\n"
-                    "/opt/ttp/venv/bin/python -c 'import ttp; print(ttp.__version__)'"
+                    f"{guest_python} -c 'import ttp; print(ttp.__version__)'"
                 )[1],
             )
 
@@ -424,9 +513,29 @@ method=disabled
                 "set -o pipefail\n" + verified_request + "ttp check\nttp status --json",
                 timeout=120,
             )
+            if args.require_apparmor:
+                client.agent.run(
+                    f"{guest_python} - <<'PY'\n"
+                    "from ttp.apparmor import active\n"
+                    "from ttp.session_report import observe_session\n"
+                    "assert active()\n"
+                    'assert observe_session()["apparmor"]["state"] == "enforced"\n'
+                    "PY"
+                )
             # New encrypted packets are required; silence alone cannot pass startup.
             if not report["checks"]["tor_dns"]["counts"].get("wireguard"):
                 raise RuntimeError("No encrypted traffic during real Tor/DNS request")
+            _, security = client.agent.run(
+                "set +e\ncat /sys/module/apparmor/parameters/enabled\n"
+                "systemctl is-active apparmor\n"
+                "pid=$(systemctl show ttp-tor -p MainPID --value)\n"
+                'printf "Tor PID %s confinement: " "$pid"\ncat "/proc/$pid/attr/current"\n'
+                "if command -v aa-status >/dev/null; then aa-status --json; fi\ntrue",
+                timeout=15,
+                check=False,
+            )
+            (client.work / "security-state.txt").write_text(security)
+            report["security_state_file"] = "client/security-state.txt"
             phase(
                 "dhcp_renewal",
                 "set -o pipefail\nsleep 135\n" + verified_request + "ttp status --json",
@@ -436,7 +545,7 @@ method=disabled
                 raise RuntimeError("No matching DHCP renewal request/ACK observed")
             # The physical fallback exists; a re-created WG link is a new identity.
             emergency = (
-                "/opt/ttp/venv/bin/python -c "
+                f"{guest_python} -c "
                 "'from ttp.session_report import observe_session; r=observe_session(); print(r); "
                 'assert r["health"] == "emergency_verified"; '
                 'assert r["emergency"]["requested"] and r["emergency"]["verified"]\'\n'
@@ -460,6 +569,19 @@ method=disabled
             evidence = phase("stop_control", route + canary, protected=False)
             if not evidence["violations"].get("198.51.100.7/proto6/port8000"):
                 raise RuntimeError("No direct path after explicit stop: observer inconclusive")
+            if args.require_apparmor:
+                phase(
+                    "apparmor_start",
+                    f"ttp start --require-vpn {UUID} --watchdog --no-lan-bypass --no-ipv6 --bootstrap-timeout 300",
+                    timeout=400,
+                )
+                phase(
+                    "apparmor_loss",
+                    "apparmor_parser --replace --skip-cache --Complain /run/ttp/ttp-tor.apparmor\n"
+                    + (ROOT / "scripts/vm/vpn/apparmor-check.sh").read_text(),
+                    timeout=65,
+                )
+                phase("apparmor_stop", "ttp stop", protected=False)
             report["finished"] = datetime.now(UTC).isoformat()
             record("result", "pass")
         except BaseException as exc:

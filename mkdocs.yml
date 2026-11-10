@@ -104,6 +104,7 @@ nav:
       - DNSSEC Policy: how-to/dnssec.md
       - Supervision and Notifications: how-to/session-observations.md
       - VPN before Tor (Requirements and Recovery): how-to/vpn.md
+      - Tor AppArmor Confinement: how-to/apparmor.md
       - Security and Quality Findings: how-to/security-quality.md
   - Explanation:
       - Architecture & Flow: explanation/architecture.md

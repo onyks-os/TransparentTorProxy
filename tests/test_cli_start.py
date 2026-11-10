@@ -112,14 +112,19 @@ def mock_base_start(tmp_path, monkeypatch):
 @patch("ttp.firewall.runner._run_nft")
 @patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
 @patch("ttp.state.write_lock")
+@pytest.mark.parametrize("confinement", [None, {"required": True, "profile": "ttp-tor"}])
 def test_start_happy_path(
     mock_write,
     mock_pwd,
     mock_run_nft,
     mock_nft_str,
     mock_base_start,
+    confinement,
 ):
     """start with all systems go -> session active, ruleset generated, lock written."""
+    from ttp import tor_install
+
+    tor_install.ensure_tor_ready.return_value["apparmor"] = confinement
     result = runner.invoke(app, ["start"])
     assert result.exit_code == 0, result.output
     assert "Session active" in result.output
@@ -140,6 +145,7 @@ def test_start_happy_path(
     assert lock_kwargs["interface"] == "eth0"
     assert lock_kwargs["external_daemon"] is False
     assert lock_kwargs["tor_uid"] == 110
+    assert lock_kwargs.get("apparmor") == confinement
 
 
 @pytest.mark.parametrize("condition", ["ready", "changed", "retained"])

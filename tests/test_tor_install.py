@@ -812,6 +812,33 @@ def test_ensure_tor_ready_starts_the_service_and_returns_the_detection() -> None
     assert start.call_args.kwargs["dns_port"] == 9053
 
 
+def test_ensure_tor_ready_returns_the_verified_confinement_requirement() -> None:
+    policy = {"required": True, "profile": "ttp-tor"}
+    with (
+        patch("ttp.tor_install.detect_tor", return_value={"is_installed": True, "tor_user": "tor"}),
+        patch("ttp.tor_install.start_tor_service", return_value=policy),
+    ):
+        assert ensure_tor_ready()["apparmor"] == policy
+
+
+def test_new_runtime_parent_is_searchable_with_restrictive_umask(tmp_path, monkeypatch):
+    runtime = tmp_path / "run/tor/ttp"
+    cache = tmp_path / "cache/tor/ttp"
+    cache.parent.mkdir(parents=True)
+    monkeypatch.setattr(tor_config, "TOR_RUNTIME_DIR", runtime)
+    monkeypatch.setattr(tor_config, "TOR_CACHE_DIR", cache)
+    monkeypatch.setattr("ttp.tor_detect.is_ipv6_supported", lambda: False)
+    with patch.object(tor_config.shutil, "chown"):
+        previous = os.umask(0o077)
+        try:
+            path = generate_torrc("tor")
+        finally:
+            os.umask(previous)
+    assert stat.S_IMODE(runtime.parent.stat().st_mode) == 0o755
+    assert stat.S_IMODE(runtime.stat().st_mode) == 0o700
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
 def test_ensure_tor_ready_defaults_the_tor_user() -> None:
     with (
         patch("ttp.tor_install.detect_tor", return_value={"is_installed": True}),

@@ -2,9 +2,13 @@
 # SPDX-License-Identifier: MIT
 """The external observer must fail closed on missing or ambiguous evidence."""
 
+import hashlib
 import importlib.util
+import json
+import shutil
 import socket
 import struct
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -140,3 +144,19 @@ def test_dhcp_renewal_needs_a_matching_ack(tmp_path):
 def test_initial_address_request_does_not_qualify_as_renewal(tmp_path):
     result = inspect(capture(tmp_path, dhcp(bound=False), dhcp(reply=True)))
     assert not result["counts"].get("dhcp_renewals_acknowledged")
+
+
+@pytest.mark.skipif(shutil.which("qemu-img") is None, reason="qemu-img is required for real disk checks")
+@pytest.mark.parametrize("size", [3 * 1024**3, 64 * 1024**3])
+def test_disposable_overlay_preserves_large_base_and_original_bytes(tmp_path, size):
+    base, overlay = tmp_path / "original.qcow2", tmp_path / "disposable.qcow2"
+    subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", str(base), str(size)], check=True)
+    original_digest = hashlib.sha256(base.read_bytes()).digest()
+    qemu.create_overlay(base, overlay)
+    response = subprocess.run(
+        ["qemu-img", "info", "--output=json", str(overlay)], check=True, capture_output=True, text=True
+    )
+    info = json.loads(response.stdout)
+    assert info["virtual-size"] >= size
+    assert Path(info["backing-filename"]) == base
+    assert hashlib.sha256(base.read_bytes()).digest() == original_digest

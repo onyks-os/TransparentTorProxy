@@ -112,6 +112,41 @@ def test_status_reports_optional_agent_response_without_changing_network(recorde
     assert value["session_exit_code"] == (9 if failure else 0)
 
 
+@pytest.mark.parametrize("enforced", [True, False])
+def test_required_apparmor_observation_is_passive(recorded, monkeypatch, enforced):
+    _, lock = recorded
+    lock.update(apparmor={"required": True, "profile": "ttp-tor"}, tor_uid=103)
+    state.LOCK_PATH.write_text(json.dumps(lock))
+    observation = {
+        "required": True,
+        "profile": "ttp-tor",
+        "state": "enforced" if enforced else "unknown",
+        "reason": "apparmor.test",
+    }
+    monkeypatch.setattr("ttp.apparmor.observe", Mock(return_value=observation))
+    contain = Mock(side_effect=AssertionError("passive observation requested containment"))
+    monkeypatch.setattr(report, "request_emergency", contain)
+    value = report.observe_session()
+    assert value["apparmor"] == observation
+    assert value["session_exit_code"] == (0 if enforced else 1)
+    contain.assert_not_called()
+
+
+def test_check_contains_missing_confinement_before_any_probe(recorded, monkeypatch):
+    _, lock = recorded
+    lock.update(apparmor={"required": True, "profile": "ttp-tor"}, tor_uid=103)
+    state.LOCK_PATH.write_text(json.dumps(lock))
+    monkeypatch.setattr("ttp.apparmor.observe", Mock(return_value={"state": "unknown"}))
+    probe = Mock(side_effect=AssertionError("probe ran without confinement"))
+    monkeypatch.setattr("ttp.probe.verify_session", probe)
+    contain = Mock(return_value=Result())
+    monkeypatch.setattr(report, "request_emergency", contain)
+    verification, _ = report.check_session()
+    assert verification.state is VerificationState.NOT_RUN
+    assert contain.call_args.args[1].component == "apparmor"
+    probe.assert_not_called()
+
+
 def test_valid_negative_requests_emergency_even_when_evidence_write_fails(recorded, monkeypatch):
     _, lock = recorded
     monkeypatch.setattr(RecordStore, "write", Mock(side_effect=StateError("disk full")))

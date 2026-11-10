@@ -89,6 +89,12 @@ def status_command(json_output: bool = typer.Option(False, "--json", help="Print
         f"{_PREFIX} Watchdog requested: {report['watchdog_requested']}; observation: {report['watchdog']['value']}"
     )
     verification = report["verification"]
+    if "apparmor" in report:
+        confinement = report["apparmor"]
+        console.print(
+            f"{_PREFIX} Tor AppArmor: {confinement['state']}; profile: {confinement['profile']} (local process evidence)",
+            markup=False,
+        )
     if "vpn" in report:
         vpn = report["vpn"]
         console.print(

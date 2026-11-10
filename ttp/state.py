@@ -163,6 +163,7 @@ def write_lock(
     settings_origins: dict[str, str] | None = None,
     notification_target: dict[str, Any] | None = None,
     vpn: dict[str, Any] | None = None,
+    apparmor: dict[str, Any] | None = None,
 ) -> None:
     """Write the session lock file with the current state.
 
@@ -211,6 +212,7 @@ def write_lock(
             "settings_origins": settings_origins,
             "notification_target": notification_target,
             "vpn": vpn,
+            "apparmor": apparmor,
             "pid": pid if pid is not None else os.getpid(),
             "timestamp": datetime.now(UTC).isoformat(),
             "dns_backup": dns_backup,

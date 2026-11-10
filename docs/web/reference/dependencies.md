@@ -59,6 +59,7 @@ the session starts.
 |---|---|---|
 | `dig` | `bind-utils` / `dnsutils` | DNS leak verification in `ttp check-leak`. |
 | `semodule` | `policycoreutils` | Loading the `ttp_tor_policy` SELinux module on Fedora/RHEL. |
+| `apparmor_parser` | `apparmor` | Required for managed Tor when AppArmor is active; see [confinement and limits](../how-to/apparmor.md). |
 
 ### Pluggable Transport Binaries (Censorship Circumvention)
 
@@ -83,7 +84,7 @@ CI installs every package in a clean container before a release is signed
 
     ```text
     Depends: python3 (>= 3.12), python3-typer, python3-rich (>= 13.7.1), python3-stem,
-             python3-transitions (>= 0.9.0), nftables, tor
+             python3-transitions (>= 0.9.0), nftables, tor, apparmor
     ```
 
     Tested on Debian 13 and Ubuntu 24.04.

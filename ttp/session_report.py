@@ -174,6 +174,21 @@ def observe_session() -> dict[str, Any]:
                 )
             )
     report["diagnostics"] = result.as_dict()["diagnostics"]
+    if lock.get("apparmor") is not None:
+        from ttp.apparmor import observe as observe_apparmor
+
+        report["apparmor"] = observe_apparmor(lock["apparmor"], lock.get("tor_uid"))
+        if report["apparmor"]["state"] != "enforced":
+            result = result.add(
+                Diagnostic(
+                    ExitCode.ERROR,
+                    report["apparmor"]["reason"],
+                    "apparmor",
+                    "observe",
+                    "Required Tor AppArmor confinement has no current evidence",
+                )
+            )
+        report["diagnostics"] = result.as_dict()["diagnostics"]
     if lock.get("vpn") is not None:
         from ttp.vpn import VPNPolicy, observe
 
@@ -228,6 +243,18 @@ def check_session() -> tuple[Verification, Result]:
         verification = Verification(VerificationState.NOT_RUN, "session.emergency_latched")
         report = observe_session()
         return verification, Result(tuple(Diagnostic.from_dict(item) for item in report["diagnostics"]))
+    if lock and lock.get("apparmor") is not None:
+        from ttp.apparmor import observe as observe_apparmor
+
+        if observe_apparmor(lock["apparmor"], lock.get("tor_uid"))["state"] != "enforced":
+            cause = Diagnostic(
+                ExitCode.ERROR,
+                "apparmor.confinement_unverified",
+                "apparmor",
+                "check",
+                "Required Tor AppArmor confinement is unavailable",
+            )
+            return Verification(VerificationState.NOT_RUN, cause.reason), request_emergency(lock, cause)
     if lock and lock.get("vpn") is not None:
         report = observe_session()
         if report["vpn"]["state"] != "constrained":

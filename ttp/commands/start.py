@@ -378,6 +378,8 @@ def start_command(
             kwargs_lock["bridges"] = bridge_lines
         if vpn_policy is not None:
             kwargs_lock["vpn"] = vpn_policy.snapshot()
+        if info.get("apparmor") is not None:
+            kwargs_lock["apparmor"] = info["apparmor"]
 
         state.write_lock(
             dns_backup=dns_backup,
