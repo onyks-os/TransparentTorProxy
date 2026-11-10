@@ -27,7 +27,7 @@ def run(*args, **kwargs):
         raise
 
 
-def server():
+def server(*, local=False):
     import socketserver
 
     class Echo(socketserver.BaseRequestHandler):
@@ -36,9 +36,13 @@ def server():
 
     socketserver.TCPServer.allow_reuse_address = True
     dual = os.environ.get("TTP_VPN_DUALSTACK") == "1"
-    if dual:
+    if dual and not local:
         socketserver.TCPServer.address_family = socket.AF_INET6
-    socketserver.TCPServer(("::" if dual else "0.0.0.0", 8000), Echo).serve_forever()
+    address = ("127.0.0.1", 9041) if local else ("::" if dual else "0.0.0.0", 8000)
+    with socketserver.TCPServer(address, Echo) as listener:
+        if local:
+            Path("/tmp/vpn-proof/local-ready").touch()
+        listener.serve_forever()
 
 
 def probe():
@@ -189,6 +193,40 @@ never-default=false
     assert not reaches("1.1.1.1", 101), "Guard must reject direct application traffic before TTP NAT exists"
     firewall.apply_rules("100", lan_bypass=False, disable_ipv6=not dual, vpn=policy.snapshot())
     assert reaches("1.1.1.1", 100), "Normal TTP table must permit WireGuard outer transport"
+    local = subprocess.Popen([sys.executable, __file__, "local"])
+    deadline = time.monotonic() + 5
+    while not work.joinpath("local-ready").exists():
+        assert time.monotonic() < deadline, "Controlled transparent listener did not start"
+        time.sleep(0.05)
+    try:
+        assert reaches("1.1.1.1", 101), "Non-exempt TCP must reach the redirected loopback listener"
+        # Reproduce the old bug using real packets: OUTPUT still sees the WG
+        # oif after DNAT; POSTROUTING must see the final loopback route.
+        wrong_hook = vpn_guard.specification(policy, 100)
+        wrong_hook[1]["chain"]["hook"] = "output"
+
+        def replace_guard(objects):
+            reply = vpn_guard._nft(
+                "-j",
+                "-f",
+                "-",
+                payload={
+                    "nftables": [
+                        {"delete": {"table": {"family": "inet", "name": "ttp_vpn"}}},
+                        *({"add": obj} for obj in objects),
+                    ]
+                },
+            )
+            assert reply.returncode == 0, reply.stderr
+
+        replace_guard(wrong_hook)
+        assert not reaches("1.1.1.1", 101), "Old OUTPUT hook mutation must block the redirected connection"
+        replace_guard(vpn_guard.specification(policy, 100))
+        vpn_guard.verify(policy, 100)
+        assert reaches("1.1.1.1", 101), "Restoring the actual egress hook must restore local redirection"
+    finally:
+        local.terminate()
+        local.wait(timeout=5)
     assert not reaches("192.0.2.1", 100), "Tor UID must not use a direct underlay route"
 
     # The route fallback is installed deliberately: a functioning kill switch
@@ -313,6 +351,6 @@ never-default=false
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        {"server": server, "probe": probe}[sys.argv[1]]()
+        {"server": server, "local": lambda: server(local=True), "probe": probe}[sys.argv[1]]()
     else:
         main()

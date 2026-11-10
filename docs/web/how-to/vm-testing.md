@@ -128,6 +128,9 @@ reconnection without reopening and explicit stop with guard removal.
 Each phase ends with a controlled ARP request so that even an isolated guest
 must produce observable link-layer traffic. This adds no IP exception. DHCP
 renewal requires a matching DHCPREQUEST/DHCPACK transaction, not just retries.
+The JSON report marks protected phases explicitly. Explicit stop ends the
+guarantee and checks guard/intent removal and zero Tor main/control PIDs;
+its capture may contain physical traffic from restored resolver services.
 
 The same scenarios run on relevant pull requests, weekly and on demand in
 `.github/workflows/vpn-vm.yml`; CI uploads reports and captures, excluding disks

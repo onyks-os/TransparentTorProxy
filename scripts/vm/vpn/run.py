@@ -375,7 +375,7 @@ method=disabled
                 + "PROFILE\nnmcli con load /etc/NetworkManager/system-connections/qualification.nmconnection\n"
                 + f"nmcli con up uuid {UUID}\n"
                 + 'ip link set $(for d in /sys/class/net/*; do [ "$(cat "$d/address")" != 52:54:00:12:34:10 ] || basename "$d"; done) down\n'
-                + "curl --fail --silent --show-error --max-time 30 https://check.torproject.org/api/ip"
+                + "curl --fail --silent --show-error --max-time 30 https://deb.debian.org/debian/README"
             )
             record("vpn_internet_positive_control", "pass")
             record(
@@ -395,7 +395,7 @@ method=disabled
                 finally:
                     client.stop_capture()
                 evidence = inspect_capture(path, client_mac=MAC, endpoint=ENDPOINT)
-                record(name, {"exitcode": code, **evidence})
+                record(name, {"protected": protected, "exitcode": code, **evidence})
                 if code or (protected and evidence["violations"]):
                     raise RuntimeError(f"{name} failed; see {client.work / (name + '.txt')}")
                 return evidence
@@ -450,7 +450,12 @@ method=disabled
             )
             phase(
                 "explicit_stop",
-                "ttp stop\nif nft list table inet ttp_vpn; then exit 1; fi\ntest ! -e /run/ttp/vpn-intent.json",
+                "ttp stop\nif nft list table inet ttp_vpn; then exit 1; fi\ntest ! -e /run/ttp/vpn-intent.json\n"
+                'test "$(systemctl show ttp-tor -p MainPID --value)" = 0\n'
+                'test "$(systemctl show ttp-tor -p ControlPID --value)" = 0',
+                # Explicit stop intentionally ends the guarantee. Restored
+                # resolver services can immediately emit physical LLMNR, etc.
+                protected=False,
             )
             evidence = phase("stop_control", route + canary, protected=False)
             if not evidence["violations"]:

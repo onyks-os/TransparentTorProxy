@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add disposable QEMU VPN qualification with real Tor/DNS, an external packet
+  observer, DHCP renewal and persistent containment across tunnel reconnection.
+  Keep ParrotOS, bridge and remaining IPv6/lifecycle release gates explicit.
 - Add required VPN-before-Tor mode for an active native NetworkManager WireGuard
   profile, with mandatory watchdog, frozen path identity, a kernel guard before
   Tor startup and explicit recovery. Reject bypass/restart and retain emergency
@@ -48,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Check the required VPN's final egress device after transparent rerouting,
+  avoiding blocked local Tor connections while retaining the same fail-closed
+  transport restrictions. Add a real-packet regression with the old hook mutation.
 - Keep the audit tool on Python 3.11+ with patched filelock, avoiding its
   vulnerable Python 3.10 fallback in the CI lock. Audit every locked version
   regardless of Python/platform markers, and make oldest-dependency inputs

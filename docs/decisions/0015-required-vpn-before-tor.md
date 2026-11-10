@@ -24,6 +24,9 @@ request NetworkManager GetSecrets or WireGuard secret-bearing dump output.
 Before managed Tor starts, publish private root recovery intent and install an
 independent kernel guard. Its drop policy permits loopback, the Tor UID only
 through the frozen tunnel, and narrowly scoped VPN transport/control traffic.
+Use a postrouting egress hook to inspect the final device after transparent
+redirection; an OUTPUT device match can retain the original route and block
+local TransPort traffic. Keep the independent forwarding drop hook.
 Normal transparent-proxy rules share the transport exceptions. Verify the guard
 against the expected specification, never against a hash first read from the
 kernel. Route samples aid diagnosis; packet constraints enforce the boundary.

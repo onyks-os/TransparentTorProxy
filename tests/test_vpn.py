@@ -109,10 +109,11 @@ def test_numeric_endpoint_validation(remote):
         vpn.endpoint(remote)
 
 
-def test_guard_cannot_be_adopted_from_a_tampered_kernel(monkeypatch):
+@pytest.mark.parametrize("field,value", [("policy", "accept"), ("hook", "output")])
+def test_guard_cannot_be_adopted_from_a_tampered_kernel(monkeypatch, field, value):
     expected = vpn_guard.specification(policy(), 100)
     changed = copy.deepcopy(expected)
-    changed[1]["chain"]["policy"] = "accept"
+    changed[1]["chain"][field] = value
     monkeypatch.setattr(
         vpn_guard, "_nft", lambda *a, **k: subprocess.CompletedProcess([], 0, json.dumps({"nftables": changed}), "")
     )
