@@ -14,6 +14,8 @@ on:
       - "ttp/commands/**"
       - "ttp/dns*.py"
       - "ttp/tor_service.py"
+      - "ttp/apparmor.py"
+      - "ttp/ttp-tor.apparmor"
       - "ttp/session_safety.py"
   schedule:
     - cron: "43 5 * * 2"

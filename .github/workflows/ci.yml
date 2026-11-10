@@ -152,6 +152,7 @@ jobs:
     name: Integration Tests (${{ matrix.label }})
     needs: unit-tests
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -165,8 +166,26 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Run ${{ matrix.label }} integration tests
-        run: make integration-${{ matrix.distro }}
+      - name: Prepare isolated kernel VM
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils genisoimage
+          sudo chmod 0666 /dev/kvm
+
+      - name: Run ${{ matrix.label }} userspace integration tests in VM
+        env:
+          VM_WORK: ${{ runner.temp }}/integration-vm
+        run: scripts/vm/run_integration_vm.sh ${{ matrix.distro }}
+
+      - name: Upload kernel and integration evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: integration-vm-${{ matrix.distro }}
+          path: |
+            ${{ runner.temp }}/integration-vm/*.txt
+            ${{ runner.temp }}/integration-vm/*.log
+          if-no-files-found: warn
 
   zero-leak:
     # The suite behind the README's strongest claim. Until now it ran nowhere:

@@ -41,7 +41,7 @@ debian)
     VM_SUMS_NAME="SHA512SUMS"
     VM_SUMS_TOOL="sha512sum"
     VM_SUMS_LINE=" $VM_IMAGE_NAME\$" # "<hash>  <name>"
-    VM_PACKAGES="nftables, tor, python3-venv, python3-pip, curl, rsync, iproute2"
+    VM_PACKAGES="nftables, tor, apparmor, python3-venv, python3-pip, curl, rsync, iproute2"
     ;;
 fedora)
     VM_IMAGE_URL="https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images"

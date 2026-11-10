@@ -27,7 +27,22 @@ the numeric addresses to the UDP containment probes. This avoids depending on
 the selected Tor exit to resolve AAAA records during a firewall test. Missing
 targets fail the setup; an inconclusive probe never counts as containment.
 
-The same three run in CI on every push and pull request. A container shares the host's kernel and has no real boot, so these cannot show lifecycle behaviour; section 3 covers that.
+The same three userspaces run in CI on every push and pull request, inside a
+disposable Fedora 44 kernel VM. This isolates privileged containers from the
+runner's kernel and AppArmor policy store. It does not measure native AppArmor
+or a Debian/Arch kernel. No kernel LSM is disabled to run the matrix. To reproduce:
+
+```bash
+VM_WORK=/tmp/ttp-integration-new scripts/vm/run_integration_vm.sh debian
+```
+
+The work directory must not exist. The VM needs KVM, QEMU, genisoimage, Python,
+OpenSSH and Internet access, uses 4 GiB RAM and a sparse 20 GiB disposable disk,
+and records the kernel/engine versions and integration log. Native AppArmor is
+qualified separately below. A container has no real boot, so these tests cannot
+show native lifecycle behaviour; section 3 covers that. Running the direct
+container commands on an AppArmor host refuses managed Tor: container policy
+namespace delegation is not implemented.
 
 ---
 
@@ -138,9 +153,65 @@ and seed images.
 
 Evidence is in `results.json`, guest version reports, phase logs and external
 `client/*.pcap` files. The current topology is IPv4 underlay/IPv4 tunnel with
-`--no-ipv6`. It does not qualify ParrotOS, Fedora, bridge transports, other
-IPv6 combinations or every lifecycle transition. Keep those gates pending in
+`--no-ipv6`. The default Debian run does not qualify ParrotOS, Fedora, bridge
+transports, other IPv6 combinations or every lifecycle transition. Keep those gates pending in
 the [VPN validation table](vpn.md#validation-limits-and-release-gate).
+
+### Native Parrot and AppArmor qualification
+
+The same two-VM harness also accepts a separately prepared Parrot client and a
+native development DEB. The Debian peer remains unchanged. Optional raw UEFI
+code is read-only; its matching variable template is copied per guest. Disks
+preserve the base image's virtual size, including Parrot's 64 GiB Btrfs image.
+
+```bash
+python3 scripts/vm/vpn/run.py \
+  --base /path/debian-13-genericcloud-amd64.qcow2 \
+  --checksums /path/debian/SHA512SUMS \
+  --client-base /path/parrot-prepared/disk.qcow2 \
+  --client-checksums /path/parrot-prepared/SHA512SUMS \
+  --client-os parrot --client-memory 3072 \
+  --client-firmware-code /path/OVMF_CODE.fd \
+  --client-firmware-vars /path/OVMF_VARS.fd \
+  --client-deb packaging/transparent-tor-proxy_0.4.11_all.deb \
+  --require-apparmor --work /path/new-parrot-run
+```
+
+The version in the DEB filename remains the development base version until a
+release is authorized. This command does not publish a package or tag. Build
+the current working tree with `packaging/build_deb.sh` first.
+
+Prepare the client in a disposable overlay of the official Home image, keeping
+the original read-only. Verify the original signed hashes and the signing key's
+full fingerprint using Parrot's [verification instructions](https://docs.parrotsec.org/docs/configuration/hash-and-key-verification/).
+For Home 7.4, the pinned primary fingerprint is
+`B711822346552E4D92DA02DF7A8286AF0E81EE4A`. Verify the signature and fingerprint
+before accepting the compressed image's SHA512, then decompress it. Preserve
+the overlay's backing image and directory relationship; a checksum of the
+overlay alone does not authenticate its backing chain.
+
+The prepared guest needs `cloud-init`, `openssh-server`, `sudo` and
+`qemu-guest-agent`, with SSH available for provisioning. Configure a headless
+`multi-user.target` if required by the image; preserve NetworkManager,
+AppArmor and distribution security settings. Install the current verified
+Parrot archive key if the image's packaged key has expired. Shut down the guest
+before hashing the prepared overlay with `sha512sum disk.qcow2 > SHA512SUMS`.
+The harness checks this derived checksum separately; retain the original
+signature evidence, image digest and preparation log alongside it.
+
+With `--require-apparmor`, an AppArmor-free guest cannot pass. In addition to
+the VPN scenarios, the harness requires actual `ttp-tor (enforce)` evidence,
+starts another protected session, changes the loaded policy to complain mode
+**inside the disposable guest**, and requires the watchdog's verified emergency
+to identify AppArmor as its cause. Returning to enforce mode must leave the
+emergency latched. The external capture checks this fault phase too.
+
+The November 2026 local qualification passed on headless Parrot Home 7.4 using
+the native DEB, NetworkManager 1.52.1, Tor 0.4.9.15, Python 3.13 and kernel
+7.1.13+parrot7. It covered public Tor/DNS, DHCP renewal, tunnel loss/reconnection,
+explicit stop and the AppArmor mutation. This does not qualify GUI interaction,
+Secure Boot, other editions, bridge transports or other IPv6 topologies.
+See [AppArmor's contract and limits](apparmor.md).
 
 Both QEMU processes are stopped on normal completion or an exception. The
 private work directory (mode `0700`) retains disks and captures for investigation;

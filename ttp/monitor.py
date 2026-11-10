@@ -101,6 +101,8 @@ class MonitorView:
         self._seen_sample = True
 
     def _record_changes(self, old: dict[str, Any], new: dict[str, Any], at: datetime) -> None:
+        if old.get("apparmor") != new.get("apparmor"):
+            self._record(at, f"Tor AppArmor: {new.get('apparmor', {}).get('state', 'unknown')}")
         old_vpn, new_vpn = old.get("vpn", {}), new.get("vpn", {})
         if tuple(old_vpn.get(key) for key in ("state", "reason", "guard_verified")) != tuple(
             new_vpn.get(key) for key in ("state", "reason", "guard_verified")
@@ -180,6 +182,14 @@ def render_monitor(view: MonitorView) -> Group:
         session_id = str(report.get("session_id") or "unknown")
         current.add_row("Session", _text(f"{report.get('phase', 'unknown')} · {session_id[:12]}"))
         current.add_row("Health assessment", _text(report.get("health", "unknown")))
+        if "apparmor" in report:
+            confinement = report["apparmor"]
+            current.add_row(
+                "Tor AppArmor",
+                _text(
+                    f"{confinement.get('state', 'unknown')} · {confinement.get('profile', 'unknown')} · local process evidence"
+                ),
+            )
         if "vpn" in report:
             vpn = report["vpn"]
             current.add_row(

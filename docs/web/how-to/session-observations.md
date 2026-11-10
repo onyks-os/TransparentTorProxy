@@ -9,6 +9,10 @@ Required-VPN sessions additionally mandate the watchdog and enforce a fixed
 VPN-before-Tor path. Read [VPN requirements, limits and recovery](vpn.md) before
 selecting that mode; it has its own release qualification gate.
 
+On AppArmor kernels, managed Tor also requires verified enforce-mode confinement.
+Read [AppArmor requirements, observations and recovery](apparmor.md) for the
+separate local evidence shown by status and monitor and checked by the watchdog.
+
 ## Select the capabilities you need
 
 ```bash

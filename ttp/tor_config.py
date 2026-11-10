@@ -205,6 +205,13 @@ def generate_torrc(
     Returns:
         Path: Absolute path to the generated ``torrc`` file.
     """
+    # mkdir's mode is filtered by the invoking root's umask.  A new /run/tor
+    # must remain searchable by the service account; the child carrying the
+    # configuration and cookie remains private.  Leave existing distro-owned
+    # parents alone.
+    if not TOR_RUNTIME_DIR.parent.exists():
+        TOR_RUNTIME_DIR.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(TOR_RUNTIME_DIR.parent, 0o755)
     TOR_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     try:
         shutil.chown(TOR_RUNTIME_DIR, user=tor_user, group=tor_user)

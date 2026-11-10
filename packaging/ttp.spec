@@ -143,7 +143,7 @@ fi
 %files
 %license LICENSE
 %doc assets/ttp.conf.example
-%doc docs/web/how-to/vpn.md docs/web/how-to/session-observations.md
+%doc docs/web/how-to/vpn.md docs/web/how-to/session-observations.md docs/web/how-to/apparmor.md
 %{_bindir}/ttp
 %{python3_sitelib}/ttp/
 %{python3_sitelib}/transparent_tor_proxy-*.dist-info/

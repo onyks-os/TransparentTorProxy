@@ -105,6 +105,9 @@ keeps nothing on disk.
   query therefore leaves through a Tor exit like any other connection, whoever
   the resolver is; no blocklist is involved
   ([ADR 0012](docs/decisions/0012-doh-dot-and-browser-leaks-are-out-of-scope.md)).
+* **AppArmor confinement (0.5.0 development)** - on AppArmor kernels, managed Tor
+  must have a verified `ttp-tor (enforce)` label. See [requirements, diagnosis and
+  limits](docs/web/how-to/apparmor.md); the watchdog contains loss of confinement.
 * **Coexists with your system Tor** - runs its own volatile `ttp-tor.service`
   on non-standard ports, leaving an existing Tor instance untouched.
 * **Bridges** - obfs4 and snowflake, with BYOD (bring your own daemon) mode.

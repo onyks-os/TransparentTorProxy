@@ -234,7 +234,7 @@ def ensure_tor_ready(
         before_start(tor_user)
 
     # Start Tor via the dedicated ttp-tor service
-    start_tor_service(
+    confinement = start_tor_service(
         tor_user,
         transport_port=transport_port,
         dns_port=dns_port,
@@ -244,4 +244,6 @@ def ensure_tor_ready(
         disable_ipv6=disable_ipv6,
     )
 
+    if isinstance(confinement, dict):
+        info["apparmor"] = confinement
     return info

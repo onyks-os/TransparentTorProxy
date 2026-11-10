@@ -23,6 +23,8 @@ on:
       - "ttp/dns_resolved.py"
       - "ttp/dns_policy.py"
       - "ttp/tor_service.py"
+      - "ttp/apparmor.py"
+      - "ttp/ttp-tor.apparmor"
       - "ttp/tor_config.py"
       - "ttp/watchdog/**"
       - "ttp/vpn.py"

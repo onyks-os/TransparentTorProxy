@@ -93,6 +93,12 @@ def check_system_integrity() -> tuple[Optional[str], Optional[str]]:
         e.g., ("dns", "overlay unmounted") or (None, None) if all is healthy.
     """
     lock = state.read_lock()
+    if lock and lock.get("apparmor") is not None:
+        from ttp.apparmor import observe as observe_apparmor
+
+        confinement = observe_apparmor(lock["apparmor"], lock.get("tor_uid"))
+        if confinement["state"] != "enforced":
+            return "apparmor", confinement["reason"]
     if lock and lock.get("vpn") is not None:
         from ttp.vpn import VPNPolicy, observe
 

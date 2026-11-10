@@ -46,6 +46,20 @@ def rendered(view: MonitorView) -> str:
     return stream.getvalue()
 
 
+def test_monitor_displays_confinement_loss_as_local_evidence():
+    view = MonitorView()
+    at = datetime(2026, 11, 10, 10, 0, tzinfo=UTC)
+    first = sample()
+    first["apparmor"] = {"state": "enforced", "profile": "ttp-tor"}
+    view.accept(first, at, boot_now=105.0)
+    assert "Tor AppArmor" in rendered(view)
+    assert "enforced · ttp-tor · local process evidence" in rendered(view)
+    second = copy.deepcopy(first)
+    second["apparmor"]["state"] = "unknown"
+    view.accept(second, at, boot_now=106.0)
+    assert any(event.message == "Tor AppArmor: unknown" for event in view.events)
+
+
 def test_historical_tor_measurement_and_heartbeat_do_not_create_events():
     view = MonitorView()
     first = sample()
