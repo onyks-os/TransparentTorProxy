@@ -89,6 +89,65 @@ purpose; it collects the sweep's log and exit code when the guest answers again.
 Both scripts run in CI from `.github/workflows/lifecycle.yml`. See
 `docs/security-assessment.md` section 4.3 for what it asserts and what it found.
 
+### Required VPN with real Tor
+
+`scripts/vm/vpn/run.py` provisions two fresh Debian 13 cloud VMs. One runs a
+WireGuard peer, DHCP and Internet forwarding; the other runs NetworkManager,
+the required VPN and TTP. Nothing changes the host's firewall or resolver.
+The client's provisioning NIC is disabled before measurements. QEMU Guest
+Agent controls the protected guest over virtio-serial, so the test needs no
+SSH exception in the VPN guard.
+
+Requirements: Python 3.12+, KVM access, `qemu-system-x86_64`, `qemu-img`,
+`genisoimage`, OpenSSH and Internet access from the guests. Supply the official
+Debian 13 genericcloud AMD64 image and its matching published `SHA512SUMS`:
+
+```bash
+mkdir -p target/vpn-qualification
+python3 scripts/vm/vpn/run.py \
+  --base /path/to/debian-13-genericcloud-amd64.qcow2 \
+  --checksums /path/to/SHA512SUMS \
+  --work target/vpn-qualification/debian-unique-run
+```
+
+The work directory must not exist. The base image is read-only and its checksum
+is checked before boot; this harness does not authenticate the checksum list's
+signature. Obtain both from the [Debian cloud image service](https://cloud.debian.org/images/cloud/).
+Source installation uses the repository's hashed dependency locks. Only tracked
+files are copied into the guest. Public network or Tor failures fail the run;
+there is no automatic fallback to an offline success.
+
+The peer also exposes a controlled HTTP server directly on the physical path.
+The external QEMU capture must detect that direct path before protection and
+after explicit stop. During protection it accepts only ARP, DHCP and UDP to
+the exact VPN endpoint. Unknown traffic, fragments, truncated evidence and
+empty captures fail visibly. A real non-exempt HTTPS request must resolve its
+hostname and return `IsTor=true`; encrypted tunnel packets must be observed.
+The harness also checks DHCP renewal, tunnel loss, verified emergency containment,
+reconnection without reopening and explicit stop with guard removal.
+Each phase ends with a controlled ARP request so that even an isolated guest
+must produce observable link-layer traffic. This adds no IP exception. DHCP
+renewal requires a matching DHCPREQUEST/DHCPACK transaction, not just retries.
+The JSON report marks protected phases explicitly. Explicit stop ends the
+guarantee and checks guard/intent removal and zero Tor main/control PIDs;
+its capture may contain physical traffic from restored resolver services.
+
+The same scenarios run on relevant pull requests, weekly and on demand in
+`.github/workflows/vpn-vm.yml`; CI uploads reports and captures, excluding disks
+and seed images.
+
+Evidence is in `results.json`, guest version reports, phase logs and external
+`client/*.pcap` files. The current topology is IPv4 underlay/IPv4 tunnel with
+`--no-ipv6`. It does not qualify ParrotOS, Fedora, bridge transports, other
+IPv6 combinations or every lifecycle transition. Keep those gates pending in
+the [VPN validation table](vpn.md#validation-limits-and-release-gate).
+
+Both QEMU processes are stopped on normal completion or an exception. The
+private work directory (mode `0700`) retains disks and captures for investigation;
+the guest disks contain throwaway WireGuard keys. Share the reports and captures,
+not VM disks or cloud-init material. Captures retain the first 768 bytes of
+each frame, sufficient to inspect the DHCP exchange; treat them as test data.
+
 ---
 
 ## 4. Executing Watchdog Chaos Monkey Testing

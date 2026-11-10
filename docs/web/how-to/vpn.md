@@ -92,11 +92,15 @@ discovery with hop limit 255 on the frozen underlay. They are network control
 traffic, not a general root exemption. ARP is outside the inet ruleset. Do not
 interpret this mode as a promise that no unencapsulated physical packet exists.
 
-The independent table uses explicit output/forward hooks, priorities and drop
+The independent table uses explicit postrouting/forward hooks, priorities and drop
 policies. Its verification compares kernel JSON against the expected frozen
 specification. An observed ruleset hash is not adopted as the specification.
 Interface names in the kernel response are resolved back to their indices, so
 recreating an interface with the same name does not inherit trust.
+The egress check runs after routing: in OUTPUT a redirected TCP connection can
+still expose its original tunnel interface even though its destination has
+become Tor's loopback listener. Checking the final device avoids blocking that
+connection without allowing application packets onto the tunnel or underlay.
 
 The protection does not depend on a polling check noticing a route change:
 Tor packets routed to the physical link are already forbidden. The required
@@ -181,8 +185,10 @@ autostart policy is separate.
 | Adversarial profile, CLI and recovery unit tests | Implemented |
 | Real NM/WireGuard, independent capture and guard-removal mutation | Implemented in offline container fixture |
 | IPv6 payload/outer transport, required watchdog and explicit stop | Implemented with `TTP_VPN_DUALSTACK=1` |
-| Public Tor startup, DNS and bridge transport through the required tunnel | Pending release qualification |
-| IPv6 combinations, DHCP renewal and suspend/reboot transitions | Pending release qualification |
+| Public Tor startup and DNS, IPv4 underlay/tunnel | Implemented in the external QEMU VM fixture |
+| DHCPv4 renewal with matching request/ACK and retained emergency across reconnect | Implemented in the external QEMU VM fixture |
+| Bridge transport through the required tunnel | Pending release qualification |
+| Remaining IPv6 combinations and suspend/reboot transitions | Pending release qualification |
 | ParrotOS VM installation and networking | Pending; mandatory before 0.5.0 publication |
 
 `scripts/check-vpn.sh` runs a real NetworkManager/WireGuard tunnel and local
@@ -200,6 +206,15 @@ DNS interception, IPv4/IPv6 underlay and tunnel combinations, transport failures
 watchdog loss, emergency latching, stop/recovery and reboot/suspend transitions
 with an observer outside the guest. Include ParrotOS package installation and
 its NetworkManager configuration; keep failures/inconclusive results visible.
+
+The [QEMU qualification recipe](vm-testing.md#required-vpn-with-real-tor) covers
+the first IPv4 underlay/tunnel path with real Tor, non-exempt hostname-based
+HTTPS verification, DHCP renewal, tunnel loss and emergency persistence after
+reconnection. It captures the client's physical path outside the guest. Cleartext
+controls must be reachable before protection and after explicit stop. The stop
+phase ends protection intentionally; restored resolver/network services may
+then emit ordinary physical traffic. This does not complete the remaining gates
+in the table above.
 
 The architecture follows [Whonix's VPN-before-Tor fail-closed principle](https://www.whonix.org/wiki/Tunnels/Connecting_to_a_VPN_before_Tor)
 and the [Qubes community VPN gateway design](https://www.qubes-os.org/doc/vpn/).

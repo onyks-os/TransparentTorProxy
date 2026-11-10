@@ -82,9 +82,12 @@ def specification(policy: VPNPolicy, tor_uid: int) -> list[dict[str, Any]]:
     if type(tor_uid) is not int or tor_uid <= 0:
         raise VPNError("VPN guard requires a non-root Tor UID")
     base = {"family": "inet", "table": TABLE}
+    # OUTPUT can still expose the pre-DNAT oif for a connection redirected to
+    # Tor's loopback listeners. Enforce the actual routed device at POSTROUTING;
+    # accepting loopback destinations on an arbitrary oif would weaken the guard.
     objects: list[dict[str, Any]] = [
         {"table": {"family": "inet", "name": TABLE}},
-        {"chain": {**base, "name": "output", "type": "filter", "hook": "output", "prio": 10, "policy": "drop"}},
+        {"chain": {**base, "name": "output", "type": "filter", "hook": "postrouting", "prio": 10, "policy": "drop"}},
         {"chain": {**base, "name": "forward", "type": "filter", "hook": "forward", "prio": 10, "policy": "drop"}},
     ]
     expressions = [
