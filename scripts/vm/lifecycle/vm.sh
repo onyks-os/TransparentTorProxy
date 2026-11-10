@@ -63,10 +63,12 @@ vm_log() { printf '[vm %s] %s\n' "$(date +%T)" "$*" >&2; }
 # published list. -L matters: both URLs redirect to a mirror.
 vm_fetch_image() {
     local base="$VM_WORK/$VM_IMAGE_NAME"
-    curl -fsSL -o "$VM_WORK/$VM_SUMS_NAME" "$VM_IMAGE_URL/$VM_SUMS_NAME"
+    curl --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 60 \
+        -fsSL -o "$VM_WORK/$VM_SUMS_NAME" "$VM_IMAGE_URL/$VM_SUMS_NAME"
     if [ ! -f "$base" ] || ! vm_image_verified --status; then
         vm_log "downloading $VM_IMAGE_NAME"
-        curl -fsSL -o "$base" "$VM_IMAGE_URL/$VM_IMAGE_NAME"
+        curl --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            -fsSL -o "$base" "$VM_IMAGE_URL/$VM_IMAGE_NAME"
     fi
     vm_image_verified >&2
 }

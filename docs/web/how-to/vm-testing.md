@@ -94,6 +94,8 @@ the distribution's published checksum list; the list's signature is not checked)
 installs TTP from the working tree, and writes `results.txt`, one capture per phase
 and state snapshots into `$VM_WORK`. `scripts/vm/lifecycle/egress.py <file.pcap>`
 summarises a capture by destination; it streams the file, so size is not a concern.
+Transient download errors receive up to three retries. Downloads remain bounded
+by connection/transfer timeouts; checksum mismatches still fail the run.
 Captures are header-only and only cover scenario phases, never provisioning.
 
 `scripts/vm/lifecycle/chaos.sh` runs the watchdog chaos sweep (`tests/chaos_monkey.py`,
