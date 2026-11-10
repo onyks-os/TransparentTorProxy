@@ -1,0 +1,71 @@
+# Real Internet Tor-over-VPN, with an observer outside the protected guest.
+name: Required VPN (VM)
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/vpn-vm.yml"
+      - "scripts/vm/vpn/**"
+      - "ttp/vpn.py"
+      - "ttp/vpn_guard.py"
+      - "ttp/firewall/**"
+      - "ttp/watchdog/**"
+      - "ttp/commands/**"
+      - "ttp/dns*.py"
+      - "ttp/tor_service.py"
+      - "ttp/session_safety.py"
+  schedule:
+    - cron: "43 5 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  required-vpn:
+    name: Real Tor through required WireGuard (Debian VM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Enable KVM for the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Install VM tools and fetch Debian cloud image
+        env:
+          BASE: ${{ runner.temp }}/vpn-base
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils genisoimage
+          mkdir -p "$BASE"
+          curl -fsSL https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS -o "$BASE/SHA512SUMS"
+          curl -fsSL https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2 \
+            -o "$BASE/debian-13-genericcloud-amd64.qcow2"
+
+      - name: Run public Tor, DNS, DHCP and failure scenarios
+        run: |
+          python3 scripts/vm/vpn/run.py \
+            --base "${{ runner.temp }}/vpn-base/debian-13-genericcloud-amd64.qcow2" \
+            --checksums "${{ runner.temp }}/vpn-base/SHA512SUMS" \
+            --work "${{ runner.temp }}/vpn-run"
+
+      - name: Upload reports and external captures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: required-vpn-debian-vm
+          path: |
+            ${{ runner.temp }}/vpn-run/results.json
+            ${{ runner.temp }}/vpn-run/*/*.pcap
+            ${{ runner.temp }}/vpn-run/*/*.txt
+            ${{ runner.temp }}/vpn-run/*/*.log
+          if-no-files-found: warn
