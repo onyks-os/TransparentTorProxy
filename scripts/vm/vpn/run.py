@@ -408,7 +408,7 @@ method=disabled
             # Force physical routing before/after protection for an honest leak control.
             route = "ip route replace 198.51.100.7/32 via 172.31.250.1\n"
             evidence = phase("clear_control", route + canary, protected=False)
-            if not evidence["violations"]:
+            if not evidence["violations"].get("198.51.100.7/proto6/port8000"):
                 raise RuntimeError("Capture did not detect the reachable direct canary")
             phase(
                 "tor_start",
@@ -458,7 +458,7 @@ method=disabled
                 protected=False,
             )
             evidence = phase("stop_control", route + canary, protected=False)
-            if not evidence["violations"]:
+            if not evidence["violations"].get("198.51.100.7/proto6/port8000"):
                 raise RuntimeError("No direct path after explicit stop: observer inconclusive")
             report["finished"] = datetime.now(UTC).isoformat()
             record("result", "pass")
