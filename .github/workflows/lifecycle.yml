@@ -138,4 +138,5 @@ jobs:
           path: |
             ${{ runner.temp }}/vm/chaos.log
             ${{ runner.temp }}/vm/*.log
+            ${{ runner.temp }}/vm/cloud-init.txt
           if-no-files-found: warn

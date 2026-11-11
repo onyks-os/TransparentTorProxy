@@ -98,7 +98,10 @@ Transient download errors receive up to three retries. Downloads remain bounded
 by connection/transfer timeouts; checksum mismatches still fail the run.
 Guest readiness requires successful `cloud-init` completion. A timeout or error
 stops provisioning and records `cloud-init.txt`, including guest diagnostics;
-SSH availability alone cannot declare the VM ready.
+SSH availability alone cannot declare the VM ready. The guest preserves its
+image hostname to avoid cloud-init warnings from a failed hostname change.
+The automated Debian downloads use the dated official build `20261103-2651`
+and matching dated QCOW2 filename, avoiding changes to the `latest` aliases.
 Captures are header-only and only cover scenario phases, never provisioning.
 
 `scripts/vm/lifecycle/chaos.sh` runs the watchdog chaos sweep (`tests/chaos_monkey.py`,

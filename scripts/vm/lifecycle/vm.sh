@@ -36,8 +36,8 @@ VM_DISTRO="${VM_DISTRO:-debian}"
 # signatures are not checked.
 case "$VM_DISTRO" in
 debian)
-    VM_IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/latest"
-    VM_IMAGE_NAME="debian-13-genericcloud-amd64.qcow2"
+    VM_IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/20261103-2651"
+    VM_IMAGE_NAME="debian-13-genericcloud-amd64-20261103-2651.qcow2"
     VM_SUMS_NAME="SHA512SUMS"
     VM_SUMS_TOOL="sha512sum"
     VM_SUMS_LINE=" $VM_IMAGE_NAME\$" # "<hash>  <name>"
@@ -94,6 +94,7 @@ local-hostname: ttp-lifecycle
 EOF
     cat >"$VM_WORK/seed/user-data" <<EOF
 #cloud-config
+preserve_hostname: true
 users:
   - name: ttp
     sudo: "ALL=(ALL) NOPASSWD:ALL"
