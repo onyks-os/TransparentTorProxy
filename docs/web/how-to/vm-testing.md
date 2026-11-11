@@ -99,7 +99,10 @@ by connection/transfer timeouts; checksum mismatches still fail the run.
 Guest readiness requires successful `cloud-init` completion. A timeout or error
 stops provisioning and records `cloud-init.txt`, including guest diagnostics;
 SSH availability alone cannot declare the VM ready. The guest preserves its
-image hostname to avoid cloud-init warnings from a failed hostname change.
+image hostname. A completed cloud-init run with code `2` is accepted only if
+its structured report has no fatal errors and its only recoverable warnings
+concern setting the hostname. Other warnings, malformed evidence, installation
+failures and timeouts are refused; Docker must also start and answer successfully.
 The automated Debian downloads use the dated official build `20261103-2651`
 and matching dated QCOW2 filename, avoiding changes to the `latest` aliases.
 Captures are header-only and only cover scenario phases, never provisioning.

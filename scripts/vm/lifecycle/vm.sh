@@ -90,7 +90,6 @@ vm_prepare() {
     mkdir -p "$VM_WORK/seed"
     cat >"$VM_WORK/seed/meta-data" <<EOF
 instance-id: ttp-lifecycle-$(date +%s)
-local-hostname: ttp-lifecycle
 EOF
     cat >"$VM_WORK/seed/user-data" <<EOF
 #cloud-config
@@ -165,7 +164,19 @@ vm_wait_ready() {
     done
     # As root: on Fedora `cloud-init status` cannot read its own state as an
     # ordinary user and `--wait` then waits forever. Bounded all the same.
-    if ! vm_ssh 'sudo timeout 900 cloud-init status --wait --long' >"$VM_WORK/cloud-init.txt" 2>&1; then
+    local status_code=0
+    vm_ssh 'sudo timeout 900 cloud-init status --wait --long' >"$VM_WORK/cloud-init.txt" 2>&1 || status_code=$?
+    # cloud-init uses code 2 for recoverable warnings too. Only the known
+    # hostname warning is harmless; verify completion and empty fatal errors.
+    if [ "$status_code" = 2 ]; then
+        local evidence_code=0
+        vm_ssh 'sudo cloud-init status --format json' >"$VM_WORK/cloud-init.json" 2>&1 || evidence_code=$?
+        if { [ "$evidence_code" = 0 ] || [ "$evidence_code" = 2 ]; } &&
+            python3 "$(dirname "${BASH_SOURCE[0]}")/readiness.py" "$VM_WORK/cloud-init.json"; then
+            status_code=0
+        fi
+    fi
+    if [ "$status_code" != 0 ]; then
         vm_ssh 'sudo journalctl -u cloud-final --no-pager -n 100; sudo tail -100 /var/log/cloud-init-output.log' \
             >>"$VM_WORK/cloud-init.txt" 2>&1 || true
         vm_log "guest provisioning failed; see cloud-init.txt"
