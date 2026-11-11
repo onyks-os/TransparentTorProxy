@@ -36,12 +36,12 @@ VM_DISTRO="${VM_DISTRO:-debian}"
 # signatures are not checked.
 case "$VM_DISTRO" in
 debian)
-    VM_IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/latest"
-    VM_IMAGE_NAME="debian-13-genericcloud-amd64.qcow2"
+    VM_IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/20261103-2651"
+    VM_IMAGE_NAME="debian-13-genericcloud-amd64-20261103-2651.qcow2"
     VM_SUMS_NAME="SHA512SUMS"
     VM_SUMS_TOOL="sha512sum"
     VM_SUMS_LINE=" $VM_IMAGE_NAME\$" # "<hash>  <name>"
-    VM_PACKAGES="nftables, tor, apparmor, python3-venv, python3-pip, curl, rsync, iproute2"
+    VM_PACKAGES="nftables, tor, apparmor, qemu-guest-agent, python3-venv, python3-pip, curl, rsync, iproute2"
     ;;
 fedora)
     VM_IMAGE_URL="https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images"
@@ -49,7 +49,7 @@ fedora)
     VM_SUMS_NAME="Fedora-Cloud-44-1.7-x86_64-CHECKSUM"
     VM_SUMS_TOOL="sha256sum"
     VM_SUMS_LINE="^SHA256 \\($VM_IMAGE_NAME\\) = " # BSD-style, inside a PGP-signed file
-    VM_PACKAGES="nftables, tor, python3, python3-pip, curl, rsync, iproute, NetworkManager"
+    VM_PACKAGES="nftables, tor, qemu-guest-agent, python3, python3-pip, curl, rsync, iproute, NetworkManager"
     ;;
 *)
     echo "VM_DISTRO must be debian or fedora, not '$VM_DISTRO'" >&2
@@ -63,10 +63,12 @@ vm_log() { printf '[vm %s] %s\n' "$(date +%T)" "$*" >&2; }
 # published list. -L matters: both URLs redirect to a mirror.
 vm_fetch_image() {
     local base="$VM_WORK/$VM_IMAGE_NAME"
-    curl -fsSL -o "$VM_WORK/$VM_SUMS_NAME" "$VM_IMAGE_URL/$VM_SUMS_NAME"
+    curl --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 60 \
+        -fsSL -o "$VM_WORK/$VM_SUMS_NAME" "$VM_IMAGE_URL/$VM_SUMS_NAME"
     if [ ! -f "$base" ] || ! vm_image_verified --status; then
         vm_log "downloading $VM_IMAGE_NAME"
-        curl -fsSL -o "$base" "$VM_IMAGE_URL/$VM_IMAGE_NAME"
+        curl --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+            -fsSL -o "$base" "$VM_IMAGE_URL/$VM_IMAGE_NAME"
     fi
     vm_image_verified >&2
 }
@@ -88,10 +90,10 @@ vm_prepare() {
     mkdir -p "$VM_WORK/seed"
     cat >"$VM_WORK/seed/meta-data" <<EOF
 instance-id: ttp-lifecycle-$(date +%s)
-local-hostname: ttp-lifecycle
 EOF
     cat >"$VM_WORK/seed/user-data" <<EOF
 #cloud-config
+preserve_hostname: true
 users:
   - name: ttp
     sudo: "ALL=(ALL) NOPASSWD:ALL"
@@ -100,6 +102,8 @@ users:
       - $(cat "$VM_WORK/id_vm.pub")
 package_update: true
 packages: [$VM_PACKAGES]
+runcmd:
+  - [systemctl, start, qemu-guest-agent]
 EOF
     genisoimage -quiet -output "$VM_WORK/seed.iso" -volid cidata -joliet -rock \
         "$VM_WORK/seed/user-data" "$VM_WORK/seed/meta-data"
@@ -111,7 +115,7 @@ EOF
 vm_boot() {
     VM_NETDEV=n0
     VM_BOOTS=$((${VM_BOOTS:-0} + 1)) # one console log per boot of this run
-    rm -f "${VM_WORK:?}/qemu.pid" "${VM_WORK:?}/monitor.sock"
+    rm -f "${VM_WORK:?}/qemu.pid" "${VM_WORK:?}/monitor.sock" "${VM_WORK:?}/agent.sock"
     qemu-system-x86_64 \
         -machine pc,accel=kvm -cpu host -m "$VM_MEM" -smp "$VM_CPUS" \
         -global PIIX4_PM.disable_s3=0 \
@@ -120,6 +124,9 @@ vm_boot() {
         -netdev user,id=n0,hostfwd=tcp:127.0.0.1:"$VM_SSH_PORT"-:22 \
         -device virtio-net-pci,netdev=n0,id=nic0 \
         -display none -serial file:"$VM_WORK/console-$VM_BOOTS.log" \
+        -device virtio-serial \
+        -chardev socket,path="$VM_WORK/agent.sock",server=on,wait=off,id=qga \
+        -device virtserialport,chardev=qga,name=org.qemu.guest_agent.0 \
         -monitor unix:"$VM_WORK/monitor.sock",server,nowait \
         -daemonize -pidfile "$VM_WORK/qemu.pid"
     vm_log "booted"
@@ -132,6 +139,22 @@ vm_ssh() {
         ttp@127.0.0.1 "$@"
 }
 
+# Control remains available when an injected fault deliberately blocks SSH.
+# Reuse the bounded QGA implementation already used by the VPN qualification.
+vm_guest() {
+    local module_dir
+    module_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../vpn" && pwd)
+    python3 - "$module_dir" "$VM_WORK/agent.sock" "$1" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from qemu import Agent
+code, output = Agent(Path(sys.argv[2])).run(sys.argv[3], timeout=30, check=False)
+print(output, end='')
+raise SystemExit(code)
+PY
+}
+
 # Wait until the guest answers over SSH and cloud-init has finished.
 vm_wait_ready() {
     local deadline=$((SECONDS + ${1:-300}))
@@ -141,7 +164,24 @@ vm_wait_ready() {
     done
     # As root: on Fedora `cloud-init status` cannot read its own state as an
     # ordinary user and `--wait` then waits forever. Bounded all the same.
-    vm_ssh 'sudo timeout 900 cloud-init status --wait >/dev/null 2>&1 || true'
+    local status_code=0
+    vm_ssh 'sudo timeout 900 cloud-init status --wait --long' >"$VM_WORK/cloud-init.txt" 2>&1 || status_code=$?
+    # cloud-init uses code 2 for recoverable warnings too. Only the known
+    # hostname warning is harmless; verify completion and empty fatal errors.
+    if [ "$status_code" = 2 ]; then
+        local evidence_code=0
+        vm_ssh 'sudo cloud-init status --format json' >"$VM_WORK/cloud-init.json" 2>&1 || evidence_code=$?
+        if { [ "$evidence_code" = 0 ] || [ "$evidence_code" = 2 ]; } &&
+            python3 "$(dirname "${BASH_SOURCE[0]}")/readiness.py" "$VM_WORK/cloud-init.json"; then
+            status_code=0
+        fi
+    fi
+    if [ "$status_code" != 0 ]; then
+        vm_ssh 'sudo journalctl -u cloud-final --no-pager -n 100; sudo tail -100 /var/log/cloud-init-output.log' \
+            >>"$VM_WORK/cloud-init.txt" 2>&1 || true
+        vm_log "guest provisioning failed; see cloud-init.txt"
+        return 1
+    fi
     vm_log "guest ready"
 }
 

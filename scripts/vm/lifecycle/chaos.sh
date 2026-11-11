@@ -9,7 +9,7 @@
 # the guest. The sweep runs detached inside it: two of its faults cut this
 # script's SSH session on purpose - the link flap takes the interface down, and
 # the emergency killswitch drops inbound traffic too - so it writes its log and
-# exit code to files, and this script collects them once the guest answers again.
+# exit code to files, collected through QGA independently of the guest network.
 #
 #   VM_WORK=~/.cache/ttp-lifecycle-vm [CHAOS_ARGS="--reset-between --no-bypass"] scripts/vm/lifecycle/chaos.sh
 #
@@ -42,17 +42,18 @@ vm_log "chaos sweep started in the guest (${CHAOS_ARGS:-default: one session, ca
 # --reset-between every fault also pays a Tor bootstrap. The deadline here only
 # has to outlast that plus cleanup.
 deadline=$((SECONDS + ${CHAOS_DEADLINE:-2700}))
-until vm_ssh 'test -f /var/tmp/chaos.rc' 2>/dev/null; do
+until vm_guest 'test -f /var/tmp/chaos.rc' 2>/dev/null; do
     if [ "$SECONDS" -ge "$deadline" ]; then
         vm_log "no result from the sweep within ${CHAOS_DEADLINE:-2700} s"
-        vm_ssh 'sudo cat /var/tmp/chaos.log' >"$VM_WORK/chaos.log" 2>/dev/null || true
+        vm_guest 'cat /var/tmp/chaos.log; systemctl status ttp-chaos --no-pager; journalctl -u ttp-chaos -n 40 --no-pager' \
+            >"$VM_WORK/chaos.log" 2>&1 || true
         exit 1
     fi
     sleep 15
 done
 
-vm_ssh 'sudo cat /var/tmp/chaos.log' >"$VM_WORK/chaos.log"
-rc="$(vm_ssh 'cat /var/tmp/chaos.rc')"
+vm_guest 'cat /var/tmp/chaos.log' >"$VM_WORK/chaos.log"
+rc="$(vm_guest 'cat /var/tmp/chaos.rc')"
 grep -E '^\[(INFO\] (Injecting|Bootstrapping)|AUDIT|ALERT|CANARY|PASS-VERDICT|PASS|FAIL|ERROR)' "$VM_WORK/chaos.log" || true
 vm_log "chaos sweep exited $rc"
 exit "$rc"

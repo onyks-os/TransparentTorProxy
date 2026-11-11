@@ -16,6 +16,7 @@ on:
     branches: ["main"]
     paths:
       - "scripts/vm/lifecycle/**"
+      - "scripts/vm/vpn/qemu.py"
       - ".github/workflows/lifecycle.yml"
       - "ttp/firewall/**"
       - "ttp/commands/**"
@@ -82,6 +83,7 @@ jobs:
           path: |
             ${{ runner.temp }}/vm/*.pcap
             ${{ runner.temp }}/vm/*.txt
+            ${{ runner.temp }}/vm/cloud-init.json
             ${{ runner.temp }}/vm/*.log
           if-no-files-found: warn
 
@@ -137,4 +139,6 @@ jobs:
           path: |
             ${{ runner.temp }}/vm/chaos.log
             ${{ runner.temp }}/vm/*.log
+            ${{ runner.temp }}/vm/cloud-init.txt
+            ${{ runner.temp }}/vm/cloud-init.json
           if-no-files-found: warn

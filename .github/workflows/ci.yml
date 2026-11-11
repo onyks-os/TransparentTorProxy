@@ -184,6 +184,7 @@ jobs:
           name: integration-vm-${{ matrix.distro }}
           path: |
             ${{ runner.temp }}/integration-vm/*.txt
+            ${{ runner.temp }}/integration-vm/cloud-init.json
             ${{ runner.temp }}/integration-vm/*.log
           if-no-files-found: warn
 

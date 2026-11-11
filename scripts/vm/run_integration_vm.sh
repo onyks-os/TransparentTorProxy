@@ -24,14 +24,14 @@ PY
 )
 # shellcheck source=scripts/vm/lifecycle/vm.sh disable=SC1091
 source "$ROOT/scripts/vm/lifecycle/vm.sh"
-export VM_PACKAGES="moby-engine, docker-cli, docker-buildx, rsync, python3, tar"
+export VM_PACKAGES="moby-engine, docker-cli, docker-buildx, qemu-guest-agent, rsync, python3, tar"
 trap 'vm_kill' EXIT
 vm_fetch_image
 vm_prepare
 qemu-img resize -q "$VM_WORK/disk.qcow2" 20G
 vm_boot
 vm_wait_ready 900
-vm_ssh 'sudo systemctl start docker; sudo docker info; uname -r; sudo cat /sys/kernel/security/lsm' \
+vm_ssh 'set -e; sudo systemctl start docker; sudo docker info; uname -r; sudo cat /sys/kernel/security/lsm' \
     >"$VM_WORK/kernel-and-engine.txt"
 # This matrix measures distribution userspaces on Fedora's actual kernel.
 # Native AppArmor enforcement is exercised separately in AppArmor-enabled VMs.

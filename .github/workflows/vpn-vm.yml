@@ -49,14 +49,14 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils genisoimage
           mkdir -p "$BASE"
-          curl -fsSL https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS -o "$BASE/SHA512SUMS"
-          curl -fsSL https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2 \
-            -o "$BASE/debian-13-genericcloud-amd64.qcow2"
+          curl --retry 3 --retry-delay 2 -fsSL https://cloud.debian.org/images/cloud/trixie/20261103-2651/SHA512SUMS -o "$BASE/SHA512SUMS"
+          curl --retry 3 --retry-delay 2 -fsSL https://cloud.debian.org/images/cloud/trixie/20261103-2651/debian-13-genericcloud-amd64-20261103-2651.qcow2 \
+            -o "$BASE/debian-13-genericcloud-amd64-20261103-2651.qcow2"
 
       - name: Run public Tor, DNS, DHCP and failure scenarios
         run: |
           python3 scripts/vm/vpn/run.py \
-            --base "${{ runner.temp }}/vpn-base/debian-13-genericcloud-amd64.qcow2" \
+            --base "${{ runner.temp }}/vpn-base/debian-13-genericcloud-amd64-20261103-2651.qcow2" \
             --checksums "${{ runner.temp }}/vpn-base/SHA512SUMS" \
             --work "${{ runner.temp }}/vpn-run"
 
