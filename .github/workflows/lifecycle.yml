@@ -16,6 +16,7 @@ on:
     branches: ["main"]
     paths:
       - "scripts/vm/lifecycle/**"
+      - "scripts/vm/vpn/qemu.py"
       - ".github/workflows/lifecycle.yml"
       - "ttp/firewall/**"
       - "ttp/commands/**"

@@ -96,12 +96,17 @@ and state snapshots into `$VM_WORK`. `scripts/vm/lifecycle/egress.py <file.pcap>
 summarises a capture by destination; it streams the file, so size is not a concern.
 Transient download errors receive up to three retries. Downloads remain bounded
 by connection/transfer timeouts; checksum mismatches still fail the run.
+Guest readiness requires successful `cloud-init` completion. A timeout or error
+stops provisioning and records `cloud-init.txt`, including guest diagnostics;
+SSH availability alone cannot declare the VM ready.
 Captures are header-only and only cover scenario phases, never provisioning.
 
 `scripts/vm/lifecycle/chaos.sh` runs the watchdog chaos sweep (`tests/chaos_monkey.py`,
 options through `CHAOS_ARGS`, e.g. `CHAOS_ARGS="--reset-between --no-bypass"`)
 in the same kind of guest, detached, because two of its faults cut the SSH session on
-purpose; it collects the sweep's log and exit code when the guest answers again.
+purpose. It collects the log and exit code through QEMU Guest Agent over
+virtio-serial, independently of SSH and the guest's firewall. Failure to retrieve
+the result remains an error; it never counts as containment.
 
 Both scripts run in CI from `.github/workflows/lifecycle.yml`. See
 `docs/security-assessment.md` section 4.3 for what it asserts and what it found.
