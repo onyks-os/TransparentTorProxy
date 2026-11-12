@@ -23,11 +23,10 @@ browser and handed to a web page through a JavaScript API. A firewall cannot see
 them, so TTP cannot prevent them, and a green result here says nothing about
 them. Those are mitigated in the browser. See ``docs/decisions/0012``.
 
-Unlike the DNS probe, this one is decisive in both directions: **any** reply is
-proof the datagram left the machine in cleartext, because nothing benign
-produces one. That makes it the suite's built-in negative control, and the
-reason its verdict mapping is ``ESCAPED -> LEAK`` rather than the DNS probe's
-``ANSWERED -> INCONCLUSIVE``.
+Containment tests consume externally captured, pre/post calibrated measurements
+from the disposable integration fixture. The optional public STUN socket probe
+below is diagnostic only: silence, socket errors and a reply alone do not
+identify the packet's actual path.
 """
 
 from __future__ import annotations
@@ -40,16 +39,15 @@ from pathlib import Path
 
 import pytest
 
-from tests.leak.oracle import Observation, Outcome, assert_contained, session_is_active
+from tests.leak.oracle import Observation, Outcome, assert_contained, measured_observation, session_is_active
 
 # Binding Request: type 0x0001, length 0, magic cookie 0x2112A442, zero txid.
 _STUN_BINDING_REQUEST = b"\x00\x01\x00\x00\x21\x12\xa4\x42" + (b"\x00" * 12)
 
 #: Public STUN servers, tried in order until one resolves.
 #:
-#: The target has to be a real STUN server and not an arbitrary routable
-#: address: this probe detects a leak by *receiving a reply*, so pointing it
-#: somewhere nothing answers would turn it into a test that cannot fail.
+#: These targets belong only to the optional diagnostic probe. Controlled
+#: containment measurements do not depend on a public STUN service.
 #:
 #: More than one of them, because resolution happens through Tor's DNSPort and
 #: therefore through whichever exit Tor has picked. One exit returning no AAAA
@@ -97,14 +95,14 @@ def _probe(family: int, hosts: Sequence[str], port: int, probe_name: str) -> Obs
     try:
         sock.sendto(_STUN_BINDING_REQUEST, addr)
         data, peer = sock.recvfrom(512)
-        outcome = Outcome.ESCAPED
+        outcome = Outcome.ANSWERED
         detail = f"STUN replied: {len(data)} bytes from {peer[0]}:{peer[1]}"
     except TimeoutError:
         outcome = Outcome.BLOCKED
-        detail = "no STUN reply within 5s: the datagram was dropped"
+        detail = "no STUN reply within 5s: path inconclusive"
     except OSError as exc:
         outcome = Outcome.BLOCKED
-        detail = f"socket error, i.e. an active refusal: {exc!r}"
+        detail = f"socket error, path inconclusive: {exc!r}"
     finally:
         sock.close()
 
@@ -120,18 +118,13 @@ def _probe(family: int, hosts: Sequence[str], port: int, probe_name: str) -> Obs
 @pytest.mark.leak
 def test_arbitrary_udp_to_wan_is_rejected():
     """A WAN-bound datagram must never be answered. STUN is just the payload."""
-    assert_contained(_probe(socket.AF_INET, _STUN_HOSTS, 19302, "udp_wan_egress_ipv4"))
+    assert_contained(measured_observation("udp_ipv4"))
 
 
 @pytest.mark.leak
 def test_arbitrary_udp_to_wan_is_rejected_over_ipv6():
     """The same over IPv6, where a missing drop rule is the classic leak."""
-    from ttp.tor_detect import is_ipv6_supported
-
-    if not is_ipv6_supported():
-        pytest.skip("IPv6 loopback not supported by the environment.")
-
-    assert_contained(_probe(socket.AF_INET6, _STUN_HOSTS, 19302, "udp_wan_egress_ipv6"))
+    assert_contained(measured_observation("udp_ipv6"))
 
 
 def prepare_targets(path: Path) -> None:

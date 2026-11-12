@@ -66,9 +66,14 @@ vm_fetch_image() {
     curl --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 60 \
         -fsSL -o "$VM_WORK/$VM_SUMS_NAME" "$VM_IMAGE_URL/$VM_SUMS_NAME"
     if [ ! -f "$base" ] || ! vm_image_verified --status; then
-        vm_log "downloading $VM_IMAGE_NAME"
-        curl --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
-            -fsSL -o "$base" "$VM_IMAGE_URL/$VM_IMAGE_NAME"
+        if [ -n "${VM_IMAGE_CACHE:-}" ]; then
+            vm_log "copying cached image; published checksum verification still required"
+            cp --reflink=auto -- "$VM_IMAGE_CACHE" "$base"
+        else
+            vm_log "downloading $VM_IMAGE_NAME"
+            curl --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900 \
+                -fsSL -o "$base" "$VM_IMAGE_URL/$VM_IMAGE_NAME"
+        fi
     fi
     vm_image_verified >&2
 }

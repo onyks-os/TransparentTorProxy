@@ -22,10 +22,13 @@ make integration-arch
 make integration-all
 ```
 
-The runner resolves IPv4 and IPv6 STUN targets before enabling TTP and passes
-the numeric addresses to the UDP containment probes. This avoids depending on
-the selected Tor exit to resolve AAAA records during a firewall test. Missing
-targets fail the setup; an inconclusive probe never counts as containment.
+These targets launch disposable VMs, with a fresh directory under
+`target/integration-vm/` for each run. The DNS/UDP containment gate uses
+[controlled receivers and external captures](leak-evidence.md), with calibrated
+IPv4 and IPv6 paths. It does not infer containment from public resolver/STUN
+timeouts or require an exit to resolve a diagnostic server's AAAA record.
+Inconclusive measurements fail; an integration failure is not automatically
+rerun into a green result.
 
 The same three userspaces run in CI on every push and pull request, inside a
 disposable Fedora 44 kernel VM. This isolates privileged containers from the
@@ -43,6 +46,13 @@ qualified separately below. A container has no real boot, so these tests cannot
 show native lifecycle behaviour; section 3 covers that. Running the direct
 container commands on an AppArmor host refuses managed Tor: container policy
 namespace delegation is not implemented.
+
+For local runs, `VM_IMAGE_CACHE=/path/to/official-image.qcow2` can reuse a cached
+base image. The fixture still fetches the distribution's checksum list and
+verifies the copied image before booting. A mismatched cache is refused.
+`scripts/vm/run_integration_tests.sh` is the internal VM-side runner; the
+controller explicitly marks that environment disposable before it may configure
+the private DNS/UDP test links.
 
 ---
 

@@ -101,6 +101,7 @@ nav:
       - Custom Firewalls (UFW/firewalld): how-to/custom-nftables.md
       - VM & Chaos Testing: how-to/vm-testing.md
       - Applications with Their Own DNS: how-to/apps-with-own-dns.md
+      - DNS and UDP Test Evidence: how-to/leak-evidence.md
       - DNSSEC Policy: how-to/dnssec.md
       - Supervision and Notifications: how-to/session-observations.md
       - VPN before Tor (Requirements and Recovery): how-to/vpn.md

@@ -11,21 +11,14 @@
         chaos-monkey test-leak-ip test-leak-dns test-leak-udp check-leak \
         test-nse packages clean-packages verify-full tarball testpypi pypi
 
-##@ Integration (Docker, privileged)
+##@ Integration (disposable VM with privileged containers)
 
-# Tor bootstrap is occasionally flaky in a cold container, so each suite is
-# retried once before it is reported as a failure.
-integration-debian: ## Run the integration suite on Debian
-	@echo "==> [$(PROJECT_SHORT)] Integration tests on Debian..."
-	@./scripts/vm/run_integration_tests.sh debian || (sleep 5 && ./scripts/vm/run_integration_tests.sh debian)
-
-integration-fedora: ## Run the integration suite on Fedora
-	@echo "==> [$(PROJECT_SHORT)] Integration tests on Fedora..."
-	@./scripts/vm/run_integration_tests.sh fedora || (sleep 5 && ./scripts/vm/run_integration_tests.sh fedora)
-
-integration-arch: ## Run the integration suite on Arch Linux
-	@echo "==> [$(PROJECT_SHORT)] Integration tests on Arch Linux..."
-	@./scripts/vm/run_integration_tests.sh arch || (sleep 5 && ./scripts/vm/run_integration_tests.sh arch)
+INTEGRATION_VM_ROOT ?= $(abspath target/integration-vm)
+integration-debian integration-fedora integration-arch: ## Run a distribution's integration suite in a fresh VM
+	@mkdir -p "$(INTEGRATION_VM_ROOT)"
+	@distro="$(@:integration-%=%)"; \
+	VM_WORK="$(INTEGRATION_VM_ROOT)/$$distro-$$(date +%s%N)-$$$$" \
+	./scripts/vm/run_integration_vm.sh "$$distro"
 
 integration-all: integration-debian integration-fedora integration-arch ## All three distributions in sequence
 
@@ -38,10 +31,10 @@ chaos-monkey: ## Watchdog chaos-monkey sweep: every fault once (~4min, requires 
 test-leak-ip: ## Offensive IP leak test
 	@$(PYTHON) -m pytest tests/leak/test_ip_leak.py -v -s
 
-test-leak-dns: ## Offensive DNS leak test
+test-leak-dns: ## Evaluate completed external DNS measurements (TTP_BOUNDARY_REPORT/RUN required)
 	@$(PYTHON) -m pytest tests/leak/test_dns_leak.py -v -s
 
-test-leak-udp: ## Offensive test that arbitrary UDP cannot reach the WAN
+test-leak-udp: ## Evaluate completed external UDP measurements (TTP_BOUNDARY_REPORT/RUN required)
 	@$(PYTHON) -m pytest tests/leak/test_udp_egress_leak.py -v -s
 
 check-leak: test-leak-ip test-leak-dns test-leak-udp ## The full leak suite

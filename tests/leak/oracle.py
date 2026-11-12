@@ -59,7 +59,7 @@ from pathlib import Path
 #: notice. A reader that does not recognise the value must report INCONCLUSIVE
 #: rather than parse what it can - a best-effort read of an unknown schema is
 #: how a green result gets manufactured from a format change.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 ARTIFACT_DIR = Path(os.environ.get("TTP_LEAK_ARTIFACT_DIR", "/tmp/ttp-leak-artifacts"))
 
@@ -75,24 +75,43 @@ class Verdict(str, Enum):
 class Outcome(str, Enum):
     """What the probe actually observed at the socket."""
 
-    #: The packet was refused or silently dropped - a timeout, ICMP unreachable,
-    #: or ECONNREFUSED. Decisive: something stopped it leaving.
+    #: A socket refusal/silence observation. It does not identify the path.
     BLOCKED = "blocked"
     #: A well-formed answer came back. NOT decisive - see the module docstring.
     ANSWERED = "answered"
-    #: An answer came back and carries positive proof it did not come from the
-    #: address the probe was sent to.
+    #: Legacy proxy-origin label; without boundary evidence it is inconclusive.
     ANSWERED_BY_PROXY = "answered_by_proxy"
-    #: An answer came back that only the addressed host could have produced, so
-    #: the packet left in cleartext. Decisive in the other direction. Applies to
-    #: protocols TTP does not redirect at all - STUN over UDP/19302, for
-    #: instance - where any reply is proof of escape.
+    #: Legacy reported egress label. It requires matching boundary evidence;
+    #: a label alone cannot certify either containment or a leak.
     ESCAPED = "escaped"
     #: The probe could not run: DNS resolution of its own target failed, the
     #: address family is unavailable, the interface is down.
     UNREACHABLE = "unreachable"
     #: The probe was never attempted.
     NOT_ATTEMPTED = "not_attempted"
+
+
+@dataclass(frozen=True)
+class BoundaryEvidence:
+    """Exact-flow measurements from outside the protected network namespace.
+
+    Counts refer to this probe's unique payload, not global firewall counters.
+    Missing/incomplete capture cannot establish absence. An observed packet
+    remains positive evidence even if the rest of the capture failed.
+    """
+
+    escaped: int
+    control_before: int
+    control_after: int
+    capture_complete: bool
+    stimulus_attempted: bool
+
+    def __post_init__(self):
+        for value in (self.escaped, self.control_before, self.control_after):
+            if type(value) is not int or value < 0:
+                raise ValueError("Invalid packet count")
+        if type(self.capture_complete) is not bool or type(self.stimulus_attempted) is not bool:
+            raise ValueError("Invalid capture evidence")
 
 
 @dataclass(frozen=True)
@@ -105,6 +124,7 @@ class Observation:
     session_active: bool
     detail: str = ""
     observed_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    boundary: BoundaryEvidence | None = None
 
 
 def verdict_for(observation: Observation) -> tuple[Verdict, str]:
@@ -121,14 +141,27 @@ def verdict_for(observation: Observation) -> tuple[Verdict, str]:
             "no active TTP session: this probe cannot attribute any outcome to TTP",
         )
 
-    if observation.outcome is Outcome.BLOCKED:
-        return Verdict.CONTAINED, "the packet was refused or dropped before leaving the host"
+    evidence = observation.boundary
+    if evidence is not None:
+        if evidence.escaped:
+            return Verdict.LEAK, "the external observer saw this probe's exact payload outside the protected namespace"
+        if (
+            evidence.capture_complete
+            and evidence.stimulus_attempted
+            and evidence.control_before > 0
+            and evidence.control_after > 0
+        ):
+            return (
+                Verdict.CONTAINED,
+                "complete external capture with successful pre/post controls saw no matching egress",
+            )
+        return Verdict.INCONCLUSIVE, "external capture, stimulus or positive controls are incomplete"
 
-    if observation.outcome is Outcome.ANSWERED_BY_PROXY:
-        return Verdict.CONTAINED, "the answer carries proof it was not produced by the addressed host"
+    if observation.outcome in (Outcome.BLOCKED, Outcome.ANSWERED_BY_PROXY):
+        return Verdict.INCONCLUSIVE, "socket refusal, silence or reply shape alone does not establish the network path"
 
     if observation.outcome is Outcome.ESCAPED:
-        return Verdict.LEAK, "the addressed host answered, so the packet left the machine in cleartext"
+        return Verdict.INCONCLUSIVE, "an egress label without a matching external observation is unproven"
 
     if observation.outcome is Outcome.ANSWERED:
         return (
@@ -187,9 +220,55 @@ def read_verdict(path: Path) -> tuple[Verdict, str]:
         )
 
     try:
-        return Verdict(payload["verdict"]), str(payload.get("reason", ""))
-    except (KeyError, ValueError):
+        saved = Verdict(payload["verdict"])
+        observation = observation_from_dict(payload)
+        derived, reason = verdict_for(observation)
+        if saved is not derived:
+            return Verdict.INCONCLUSIVE, "saved verdict differs from its measurement evidence"
+        return derived, reason
+    except (KeyError, TypeError, ValueError):
         return Verdict.INCONCLUSIVE, f"artifact carries no verdict this reader recognises: {payload.get('verdict')!r}"
+
+
+def observation_from_dict(payload: dict) -> Observation:
+    """Validate serialized evidence instead of trusting a saved green label."""
+    if type(payload["session_active"]) is not bool:
+        raise ValueError("Invalid session evidence")
+    for key in ("probe", "target", "detail", "observed_at"):
+        if not isinstance(payload[key], str):
+            raise ValueError("Invalid observation field")
+    boundary = payload.get("boundary")
+    return Observation(
+        probe=payload["probe"],
+        target=payload["target"],
+        outcome=Outcome(payload["outcome"]),
+        session_active=payload["session_active"],
+        detail=payload["detail"],
+        observed_at=payload["observed_at"],
+        boundary=BoundaryEvidence(**boundary) if boundary is not None else None,
+    )
+
+
+def measured_observation(probe: str) -> Observation:
+    """Read the completed external fixture's historical measurement.
+
+    The report is finalized only after explicit stop and successful post-stop
+    controls. It describes the protected window, not the current session state.
+    """
+    try:
+        report = json.loads(Path(os.environ["TTP_BOUNDARY_REPORT"]).read_text())
+        if (
+            report["schema"] != SCHEMA_VERSION
+            or report["run_id"] != os.environ["TTP_BOUNDARY_RUN"]
+            or report["complete"] is not True
+        ):
+            raise ValueError("Mismatched or unfinished boundary measurement")
+        observation = observation_from_dict(report["observations"][probe])
+        if observation.probe != probe or observation.boundary is None:
+            raise ValueError("Wrong measurement identity")
+        return observation
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        return Observation(probe, "unknown", Outcome.NOT_ATTEMPTED, False, f"Boundary evidence unavailable: {exc}")
 
 
 def assert_contained(observation: Observation) -> None:
@@ -229,8 +308,8 @@ def redirect_delta(before: int | None, after: int | None) -> int | None:
       The readings then belong to different rulesets, and their difference
       describes nothing.
 
-    Zero is a real answer and is reported as one: two good readings that agree
-    are evidence that the redirect did not fire.
+    Zero is a real counter difference, not per-query evidence. Neither zero nor
+    a positive difference establishes the path of an individual probe.
     """
     if before is None or after is None:
         return None

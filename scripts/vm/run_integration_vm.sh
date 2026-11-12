@@ -39,9 +39,12 @@ vm_ssh 'sudo mkdir -p /opt/ttp'
 (cd "$ROOT" && git ls-files -z | tar --null -T - -czf -) |
     vm_ssh 'sudo tar -C /opt/ttp -xzf -'
 set +e
-vm_ssh "cd /opt/ttp && sudo scripts/vm/run_integration_tests.sh $DISTRO" \
+vm_ssh "cd /opt/ttp && sudo TTP_DISPOSABLE_VM=1 scripts/vm/run_integration_tests.sh $DISTRO" \
     2>&1 | tee "$VM_WORK/integration.log"
 code=${PIPESTATUS[0]}
 set -e
+if ! vm_ssh 'sudo tar -C /var/tmp -czf - ttp-boundary' >"$VM_WORK/leak-boundary.tar.gz" 2>"$VM_WORK/leak-boundary-export.log"; then
+    if [ "$code" -eq 0 ]; then code=1; fi
+fi
 printf '%s\n' "$code" >"$VM_WORK/exit-code.txt"
 exit "$code"

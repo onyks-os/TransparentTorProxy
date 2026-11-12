@@ -53,6 +53,7 @@ CID=$(docker run -d \
     --tmpfs /run:rw,exec,suid \
     --tmpfs /run/lock:rw,exec,suid \
     ttp-integration-"$DISTRO")
+trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
 
 # Wait for systemd to initialize
 echo "==> Waiting for systemd to boot..."
@@ -71,12 +72,6 @@ echo "==> Caching container's unproxied public IPs (IPv4/IPv6)..."
 docker exec "$CID" sh -c "curl -s --connect-timeout 5 https://api.ipify.org > /tmp/real_public_ip.txt"
 docker exec "$CID" sh -c "curl -s -6 --connect-timeout 5 https://ipv6.icanhazip.com > /tmp/real_public_ipv6.txt || touch /tmp/real_public_ipv6.txt"
 
-echo "==> Resolving STUN probe targets before enabling TTP..."
-if ! docker exec "$CID" /venv/bin/python -m tests.leak.test_udp_egress_leak /tmp/ttp-stun-targets.json; then
-    docker rm -f "$CID"
-    exit 1
-fi
-
 echo "==> Running integration tests inside container..."
 set +e
 docker exec "$CID" /venv/bin/pytest /app/tests/test_integration.py /app/tests/test_nse_rules.py -m "integration or nse" -v -s
@@ -84,6 +79,9 @@ TEST_EXIT=$?
 set -e
 
 if [ $TEST_EXIT -eq 0 ]; then
+    mkdir -p /var/tmp/ttp-boundary
+    BOUNDARY_WORK=/var/tmp/ttp-boundary/$CID
+    python3 scripts/vm/leak_boundary.py before "$CID" "$BOUNDARY_WORK"
     echo "==> Starting TTP in container for offensive leak tests..."
     set +e
     docker exec "$CID" ttp start --watchdog --bootstrap-timeout 300
@@ -98,25 +96,38 @@ if [ $TEST_EXIT -eq 0 ]; then
     #
     # It is still not a state to run the leak suite against: `test_ip_leak`
     # asserts the exit IP is a Tor one, which is precisely what could not be
-    # confirmed. So it is surfaced as its own retryable outcome - `make
-    # integration-debian` already retries the script once - rather than being
-    # folded into the generic failure path.
+    # confirmed. It remains an inconclusive, failing outcome. A later manual
+    # rerun must not replace missing measurements with an automatic green.
     if [ $START_EXIT -eq 3 ]; then
         echo "==> TTP started and the host is fail-closed, but Tor could not be verified (exit 3)."
         echo "==> Not a start failure. Tearing down and reporting it as retryable."
         docker exec "$CID" ttp stop || true
         TEST_EXIT=$START_EXIT
     elif [ $START_EXIT -eq 0 ]; then
+        python3 scripts/vm/leak_boundary.py protected "$CID" "$BOUNDARY_WORK"
         echo "==> Running offensive anti-leak verification tests..."
         set +e
         REAL_IP=$(docker exec "$CID" cat /tmp/real_public_ip.txt)
         REAL_IPV6=$(docker exec "$CID" cat /tmp/real_public_ipv6.txt)
-        docker exec -e TTP_STUN_TARGETS=/tmp/ttp-stun-targets.json -e REAL_PUBLIC_IP="$REAL_IP" -e REAL_PUBLIC_IPV6="$REAL_IPV6" "$CID" /venv/bin/pytest /app/tests/leak/ -v -s
+        docker exec -e REAL_PUBLIC_IP="$REAL_IP" -e REAL_PUBLIC_IPV6="$REAL_IPV6" "$CID" /venv/bin/pytest /app/tests/leak/test_ip_leak.py -v -s
         TEST_EXIT=$?
         set -e
         
         echo "==> Stopping TTP..."
         docker exec "$CID" ttp stop
+        # Finalize external historical measurements only after the same direct
+        # paths have passed their post-stop positive controls.
+        python3 scripts/vm/leak_boundary.py after "$CID" "$BOUNDARY_WORK"
+        # Write through exec: docker cp can target the underlying rootfs rather
+        # than the container's mounted /tmp tmpfs on this systemd fixture.
+        docker exec -i "$CID" sh -c 'cat > /tmp/ttp-boundary-report.json' < "$BOUNDARY_WORK/report.json"
+        BOUNDARY_RUN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "$BOUNDARY_WORK/report.json")
+        set +e
+        docker exec -e TTP_BOUNDARY_REPORT=/tmp/ttp-boundary-report.json -e TTP_BOUNDARY_RUN="$BOUNDARY_RUN" \
+            "$CID" /venv/bin/pytest /app/tests/leak/test_dns_leak.py /app/tests/leak/test_udp_egress_leak.py -v -s
+        BOUNDARY_EXIT=$?
+        set -e
+        if [ "$BOUNDARY_EXIT" -ne 0 ]; then TEST_EXIT=$BOUNDARY_EXIT; fi
     else
         echo "==> Failed to start TTP inside the container (exit $START_EXIT)!"
         docker exec "$CID" ttp stop || true

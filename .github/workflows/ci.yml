@@ -186,6 +186,7 @@ jobs:
             ${{ runner.temp }}/integration-vm/*.txt
             ${{ runner.temp }}/integration-vm/cloud-init.json
             ${{ runner.temp }}/integration-vm/*.log
+            ${{ runner.temp }}/integration-vm/leak-boundary.tar.gz
           if-no-files-found: warn
 
   zero-leak:
