@@ -1743,9 +1743,9 @@ urllib3==2.8.0 \
     #   id
     #   requests
     #   twine
-wcmatch==12.0 \
-    --hash=sha256:46f7965313cfe65d8be049ab91095a5908be96ebb43e5d16da608b158825113c \
-    --hash=sha256:80ebfdf510d5fef580c4fc662b9eba76b331cff20d7913fc6e722edcb199cbe6
+wcmatch==12.0.1 \
+    --hash=sha256:0e11b0bf1700bc8222ad5e7dc79fb326d9e0304458c7e2c25419ab6d26d07d8e \
+    --hash=sha256:4ea6acef75b657bf71ac8fa9520165bf5ae55120c4e655895a5b7d4c69896c5e
     # via bump-my-version
 wcwidth==0.9.4 \
     --hash=sha256:093469e01d881bff3db93ff3f56c364dc87c441ea01f9f41c22de0c0bdf5c6ef \
