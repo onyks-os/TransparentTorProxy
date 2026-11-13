@@ -72,8 +72,8 @@ def main():
     run("ip", "link", "set", "wan", "up")
     run("ip", "route", "add", "default", "via", "192.0.2.1")
 
-    def peer(*args):
-        return run("nsenter", "--net=/run/netns/peer", "--", *args)
+    def peer(*args, **kwargs):
+        return run("nsenter", "--net=/run/netns/peer", "--", *args, **kwargs)
 
     peer("ip", "link", "set", "lo", "up")
     peer("ip", "addr", "add", "192.0.2.1/24", "dev", "remote")
@@ -88,25 +88,25 @@ def main():
     public = run("wg", "pubkey", input=private)
     remote_private = run("wg", "genkey")
     remote_public = run("wg", "pubkey", input=remote_private)
-    secret = work / "remote.key"
-    secret.write_text(remote_private)
-    secret.chmod(0o600)
     peer("ip", "link", "add", "wgpeer", "type", "wireguard")
     peer("ip", "addr", "add", "10.9.0.1/24", "dev", "wgpeer")
     if dual:
         peer("ip", "-6", "addr", "add", "fd00:9::1/64", "dev", "wgpeer", "nodad")
+    # Pass the ephemeral key through stdin: an nsenter confinement policy may
+    # deny opening the caller's /tmp path even though the network setup works.
     peer(
         "wg",
         "set",
         "wgpeer",
         "private-key",
-        str(secret),
+        "/dev/stdin",
         "listen-port",
         "51820",
         "peer",
         public,
         "allowed-ips",
         "10.9.0.2/32,fd00:9::2/128" if dual else "10.9.0.2/32",
+        input=remote_private,
     )
     peer("ip", "link", "set", "wgpeer", "up")
     echo = subprocess.Popen(["nsenter", "--net=/run/netns/peer", "--", sys.executable, __file__, "server"])

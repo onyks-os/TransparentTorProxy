@@ -30,6 +30,21 @@ updates:
       prefix-development: "deps-dev"
     labels:
       - "dependencies"
+    # These are compatibility fixtures, not deployment locks. Their runtime
+    # pins intentionally match the oldest supported distribution packages.
+    # The lock audit still checks every version, including these fixtures.
+    exclude-paths:
+      - "requirements/oldest.in"
+      - "requirements/oldest.txt"
     groups:
+      pydantic:
+        patterns:
+          - "pydantic"
+          - "pydantic-core"
+          - "pydantic-settings"
+      wcmatch:
+        patterns:
+          - "wcmatch"
+          - "bracex"
       dev-dependencies:
         dependency-type: "development"

@@ -102,7 +102,7 @@ Before introducing any new external dependency, contributors must evaluate the c
 
 We proactively scan and monitor our dependency graph:
 
-* **Dependabot:** Configured on GitHub to monitor dependencies daily. It automatically raises Pull Requests (PRs) when updates or security advisories (CVEs) are released for any direct or build dependency.
+* **Dependabot:** Weekly version updates, with related Pydantic and wcmatch packages grouped. Automatic updates exclude the oldest-dependency compatibility fixtures; their pins remain audited and must match supported distribution floors. See the [lock and audit workflow](docs/web/how-to/security-quality.md). Security alerts are handled separately from this version-update schedule.
 * **Vulnerability Scanning (`pip-audit`):** Developers should run `pip-audit` scoped to the **project directory only** to avoid false positives from unrelated system-level Python packages:
 
     ```bash
