@@ -33,9 +33,10 @@ vm_prepare
 vm_boot
 vm_wait_ready 600
 vm_install_ttp "$ROOT"
+VM_CAPTURE_MAXLEN=65535 vm_capture_start chaos
 
 vm_ssh 'sudo systemd-run --quiet --unit=ttp-chaos --property=Type=exec \
-    /bin/sh -c "python3 /opt/ttp/tests/chaos_monkey.py '"${CHAOS_ARGS:-}"' >/var/tmp/chaos.log 2>&1; echo \$? >/var/tmp/chaos.rc"'
+    /bin/sh -c "TTP_DISPOSABLE_VM=1 python3 -u /opt/ttp/tests/chaos_monkey.py --evidence-dir /var/tmp/chaos-boundary '"${CHAOS_ARGS:-}"' >/var/tmp/chaos.log 2>&1; echo \$? >/var/tmp/chaos.rc"'
 vm_log "chaos sweep started in the guest (${CHAOS_ARGS:-default: one session, canary})"
 
 # The sweep plans every fault once and caps itself at --duration; with
@@ -54,6 +55,25 @@ done
 
 vm_guest 'cat /var/tmp/chaos.log' >"$VM_WORK/chaos.log"
 rc="$(vm_guest 'cat /var/tmp/chaos.rc')"
-grep -E '^\[(INFO\] (Injecting|Bootstrapping)|AUDIT|ALERT|CANARY|PASS-VERDICT|PASS|FAIL|ERROR)' "$VM_WORK/chaos.log" || true
+vm_capture_stop
+mkdir -p "$VM_WORK/chaos-boundary"
+for file in events.jsonl stimulus.jsonl; do
+    # Bound every QGA reply; a long independent sweep can exceed the agent's
+    # single-command output buffer. Truncated evidence must never be accepted.
+    size=$(vm_guest "stat --printf=%s /var/tmp/chaos-boundary/$file")
+    [[ "$size" =~ ^[0-9]+$ ]] || { echo "Invalid evidence file size" >&2; exit 1; }
+    : >"$VM_WORK/chaos-boundary/$file"
+    for ((offset=0; offset<size; offset+=65536)); do
+        vm_guest "dd if=/var/tmp/chaos-boundary/$file bs=65536 skip=$((offset/65536)) count=1 status=none | base64 -w0" |
+            base64 --decode >>"$VM_WORK/chaos-boundary/$file"
+    done
+    [ "$(wc -c <"$VM_WORK/chaos-boundary/$file")" -eq "$size" ] || exit 1
+done
+observation_rc=0
+python3 "$HERE/chaos_capture.py" "$VM_WORK/chaos.pcap" "$VM_WORK/chaos-boundary" \
+    "$VM_WORK/chaos-boundary-report.json" >"$VM_WORK/chaos-boundary-summary.log" || observation_rc=$?
+cat "$VM_WORK/chaos-boundary-summary.log"
+grep -E '^\[(INFO\] (Injecting|Bootstrapping)|AUDIT|ALERT|CANARY|RECOVERY-VERDICT|PASS|FAIL|ERROR)' "$VM_WORK/chaos.log" || true
 vm_log "chaos sweep exited $rc"
+if [ "$observation_rc" -ne 0 ]; then exit "$observation_rc"; fi
 exit "$rc"

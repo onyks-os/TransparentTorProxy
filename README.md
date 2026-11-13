@@ -378,8 +378,10 @@ code changes, and weekly:
   (systemd-networkd) and Fedora 44 (NetworkManager, SELinux enforcing).
 * **The watchdog chaos sweep** - every fault once against a live session (Tor
   stopped or killed behind systemd's back, the table flushed or destroyed, the DNS
-  overlay unmounted, the link flapped), each audit paired with a canary that proves
-  it could have seen a leak.
+  overlay unmounted, the link flapped). The VM wrapper continuously samples TCP,
+  UDP and DNS during each fault, retaining calibrated external captures and
+  reporting initial enforcement exposure separately from subsequent recovery.
+  See [continuous fault evidence](docs/web/how-to/continuous-fault-evidence.md).
 
 What each asserts, and what it found, is in
 [section 4.3 of the security assessment](docs/security-assessment.md#43-lifecycle-transitions-what-is-measured-and-what-is-not).

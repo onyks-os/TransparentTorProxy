@@ -31,6 +31,10 @@ on:
       - "ttp/vpn.py"
       - "ttp/vpn_guard.py"
       - "tests/chaos_monkey.py"
+      - "tests/chaos_observation.py"
+      - "scripts/vm/leak_boundary.py"
+      - "tests/leak/oracle.py"
+      - "tests/test_chaos_capture.py"
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
@@ -138,6 +142,9 @@ jobs:
           name: chaos-vm-${{ matrix.variant }}
           path: |
             ${{ runner.temp }}/vm/chaos.log
+            ${{ runner.temp }}/vm/chaos.pcap
+            ${{ runner.temp }}/vm/chaos-boundary/**
+            ${{ runner.temp }}/vm/chaos-boundary-report.json
             ${{ runner.temp }}/vm/*.log
             ${{ runner.temp }}/vm/cloud-init.txt
             ${{ runner.temp }}/vm/cloud-init.json
