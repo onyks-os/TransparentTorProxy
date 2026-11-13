@@ -1,5 +1,8 @@
 # How-To Guides
 
+- [Onion addresses and LAN bypass](onion-addresses.md) — reserved virtual
+  ranges, LAN compatibility and calibrated E01 evidence.
+
 Goal-oriented recipes for users who already know the basics. Each guide assumes a working
 installation — if you do not have one, start with the [Quickstart](../tutorials/quickstart.md).
 

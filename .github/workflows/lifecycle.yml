@@ -16,6 +16,7 @@ on:
     branches: ["main"]
     paths:
       - "scripts/vm/lifecycle/**"
+      - "scripts/vm/automap/**"
       - "scripts/vm/vpn/qemu.py"
       - ".github/workflows/lifecycle.yml"
       - "ttp/firewall/**"
@@ -27,6 +28,7 @@ on:
       - "ttp/apparmor.py"
       - "ttp/ttp-tor.apparmor"
       - "ttp/tor_config.py"
+      - "ttp/virtual_addresses.py"
       - "ttp/watchdog/**"
       - "ttp/vpn.py"
       - "ttp/vpn_guard.py"
@@ -35,6 +37,7 @@ on:
       - "scripts/vm/leak_boundary.py"
       - "tests/leak/oracle.py"
       - "tests/test_chaos_capture.py"
+      - "tests/test_automap_capture.py"
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
@@ -43,6 +46,38 @@ permissions:
   contents: read
 
 jobs:
+  automap:
+    name: Onion automap and LAN precedence (VM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Enable KVM and install VM tools
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils genisoimage
+      - name: Exercise real onion mappings, both families and targeted regression
+        env:
+          VM_WORK: ${{ runner.temp }}/automap-vm
+        run: bash scripts/vm/automap/run.sh
+      - name: Retain E01 evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: automap-vm
+          path: |
+            ${{ runner.temp }}/automap-vm/*.pcap
+            ${{ runner.temp }}/automap-vm/*.json*
+            ${{ runner.temp }}/automap-vm/*.log
+            ${{ runner.temp }}/automap-vm/*.txt
+            ${{ runner.temp }}/automap-vm/*.diff
+          if-no-files-found: warn
+
   # Two guests, because they bring the network up differently: Debian's cloud
   # image with systemd-networkd, Fedora's with NetworkManager. Shutdown ordering
   # is where that can matter (#85).

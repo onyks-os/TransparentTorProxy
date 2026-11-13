@@ -687,6 +687,71 @@ def assert_contained(ns, loop, ruleset: str, stimulus, description: str) -> None
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("destination", ["10.192.0.7", "fc00::7"])
+@pytest.mark.parametrize("protocol", ["tcp", "udp"])
+def test_virtual_destinations_override_lan_with_targeted_mutation(ns_sandbox, resolved_ruleset, destination, protocol):
+    """Synthetic addresses are handoffs, not LAN; removing only the fix leaks."""
+    from scapy.layers.inet import IP, TCP, UDP
+    from scapy.layers.inet6 import IPv6
+
+    ns, loop = ns_sandbox
+    family = "AF_INET6" if ":" in destination else "AF_INET"
+    script = (
+        "import os, socket\n"
+        "os.setgroups([]); os.setgid(65534); os.setuid(65534)\n"
+        f"s = socket.socket(socket.{family}, socket.SOCK_{'STREAM' if protocol == 'tcp' else 'DGRAM'})\n"
+        "s.settimeout(0.5)\n"
+        + reporting_send(
+            f"s.connect(({destination!r}, 19302))"
+            if protocol == "tcp"
+            else f"s.sendto(b'automap-regression', ({destination!r}, 19302))"
+        )
+    )
+
+    def stimulus(name):
+        return _python_in_ns(name, script)
+
+    def seen(packets):
+        network, transport = (IPv6 if ":" in destination else IP), (TCP if protocol == "tcp" else UDP)
+        return [
+            packet
+            for packet in packets
+            if network in packet
+            and transport in packet
+            and packet[network].dst == destination
+            and packet[transport].dport == 19302
+        ]
+
+    engine = RuleEngine(use_nsenter=True)
+    _exec_in_ns(ns.name, "nft", "flush", "ruleset", check=True)
+    assert seen(observe(ns, loop, stimulus)), "Positive control could not observe the exact synthetic destination"
+    engine.load(resolved_ruleset, ns.name)
+    captured = observe_with_canary(ns, loop, stimulus)
+    assert canary_seen(captured, HOST_V4, CANARY_PORT)
+    assert not seen(captured), "Tor virtual destination escaped through LAN bypass"
+    mutant = "\n".join(line for line in resolved_ruleset.splitlines() if 'comment "ttp automap ' not in line)
+    assert mutant != resolved_ruleset.rstrip("\n")
+    _exec_in_ns(ns.name, "nft", "flush", "ruleset", check=True)
+    engine.load(mutant, ns.name)
+    assert seen(observe(ns, loop, stimulus)), "Targeted regression was not detected"
+
+
+@pytest.mark.parametrize("destination", ["10.0.2.7", "fd00:2::7"])
+def test_ordinary_lan_outside_virtual_reservations_remains_available(ns_sandbox, resolved_ruleset, destination):
+    """Reserving Tor mappings must not reserve all private IPv4 or all ULA."""
+    from scapy.layers.inet import IP, UDP
+    from scapy.layers.inet6 import IPv6
+
+    ns, loop = ns_sandbox
+    RuleEngine(use_nsenter=True).load(resolved_ruleset, ns.name)
+    packets = observe(ns, loop, udp_to(destination, 19302, uid=65534))
+    network = IPv6 if ":" in destination else IP
+    assert any(
+        network in packet and UDP in packet and packet[network].dst == destination and packet[UDP].dport == 19302
+        for packet in packets
+    )
+
+
 def test_dns_is_not_allowed_to_escape(ns_sandbox, ttp_ruleset) -> None:
     """Plain DNS must be redirected to Tor's DNSPort, never reaching the WAN."""
     ns, loop = ns_sandbox

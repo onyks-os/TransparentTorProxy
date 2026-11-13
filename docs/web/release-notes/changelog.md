@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reserve Tor's virtual destinations before LAN bypass, redirecting synthetic
+  TCP and rejecting unredirected traffic. Narrow IPv6 automapping to `fc00::/8`
+  so ordinary `fd00::/8` LANs remain available. Add a real-onion dual-stack VM
+  gate with reused mappings, external captures, pre/post controls and targeted
+  rule-removal regression, plus NSE checks and documented compatibility limits.
+
 - Continuously observe TCP, UDP and DNS during chaos injections instead of
   inferring containment from recovery audits after an 18-second wait. Retain
   calibrated full captures and separate privileged enforcement exposure from

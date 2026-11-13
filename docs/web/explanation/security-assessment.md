@@ -2,6 +2,12 @@
 
 This document outlines the security architecture, trust boundaries, STRIDE threat analysis, and non-goals of TTP.
 
+Managed Tor reserves `10.192.0.0/10` and `fc00::/8` ahead of LAN exceptions.
+The E01 VM gate combines real onion HTTP, external capture, pre/post controls
+and targeted rule removal. Ordinary `fd00::/8` ULA networks retain LAN bypass.
+See [onion addresses and LAN bypass](../how-to/onion-addresses.md) for the
+reproduced defect, cached-address/external-daemon limits and evidence scope.
+
 ---
 
 ## 1. Security Trust Boundaries

@@ -49,6 +49,15 @@ zero-latency guarantees. A privileged administrator can remove all protection.
 
 ## Table of Contents
 
+Managed Tor virtual destinations are reserved before LAN exemptions:
+`10.192.0.0/10` and `fc00::/8`. TCP is redirected to Tor and unredirected
+synthetic traffic is rejected. E01 reproduced direct virtual-address egress
+under the old LAN ordering with real onion mappings; the calibrated VM gate
+checks both families, working onion HTTP and a targeted rule-removal mutant.
+Ordinary `fd00::/8` ULA remains available. See
+[onion/LAN compatibility and evidence limits](web/how-to/onion-addresses.md),
+including explicit bypasses, external daemons and stale cached mappings.
+
 The 0.5.0 required-VPN mode adds a public-profile selection boundary and
 independent egress enforcement ([ADR 0015](decisions/0015-required-vpn-before-tor.md)).
 UUID, endpoint, marks and interface identities are validated before privileged
