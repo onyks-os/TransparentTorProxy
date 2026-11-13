@@ -26,6 +26,14 @@ before merging. The oldest-dependency profile keeps its explicit compatibility
 pins. A separate latest-dependency job deliberately resolves new packages to
 expose upcoming incompatibilities; it is not the release/install environment.
 
+Dependabot excludes `requirements/oldest.in` and `requirements/oldest.txt`
+from automatic updates: these are compatibility fixtures whose runtime pins
+must continue to match `packaging/oldest-supported.pins`. The lock audit still
+checks every pinned version in those files. Review any security finding there
+explicitly rather than silently raising the supported dependency floors.
+Pydantic/core/settings and wcmatch/bracex updates are grouped so related
+versions are resolved and validated together.
+
 ## Parser fuzzing
 
 Finding 32 did not recognize the existing Hypothesis workflow. Scorecard only

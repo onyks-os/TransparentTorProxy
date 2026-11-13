@@ -51,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resolve related Dependabot updates together, retain the oldest supported
+  dependency pins, and refresh CI/docs locks and pinned GitHub Actions.
+  Pass the offline WireGuard fixture's ephemeral peer key through stdin rather
+  than a file path denied by some namespace-entry confinement policies.
 - Require calibrated external packet evidence for DNS/UDP leak-test verdicts;
   socket errors, DNS error replies and aggregate counters no longer certify
   containment. Preserve per-flow captures and fail incomplete observations.
