@@ -72,6 +72,16 @@ jobs:
       - name: Run unit tests
         run: make test
 
+      # The dev environment already contains optional/transitive packages.
+      # It can hide a runtime lock missing a newly required dependency.
+      - name: Verify the isolated locked runtime and CLI
+        run: |
+          python -m venv "$RUNNER_TEMP/ttp-runtime"
+          bash scripts/install_locked.sh "$RUNNER_TEMP/ttp-runtime/bin/python" runtime
+          "$RUNNER_TEMP/ttp-runtime/bin/ttp" --help >/dev/null
+          "$RUNNER_TEMP/ttp-runtime/bin/ttp" start --help >/dev/null
+          "$RUNNER_TEMP/ttp-runtime/bin/ttp" config --help >/dev/null
+
       # The coverage floor lives in the Makefile, so `make coverage` locally and
       # this job cannot disagree about what "covered enough" means. Running it
       # on one interpreter is enough: the number does not vary by version.

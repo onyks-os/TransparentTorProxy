@@ -95,6 +95,11 @@ Before introducing any new external dependency, contributors must evaluate the c
 
 ### 2.2 Version Pinning & Range Rules
 
+The reviewed source runtime lock includes the complete transitive closure for
+its selected versions. Recent Typer releases require Pydantic; native packages
+let the distribution resolve the dependencies of its own Typer version. CI
+checks a clean locked runtime as well as the separate compatibility-floor profile.
+
 * **Direct Python Dependencies:** Specified in `pyproject.toml` using minimum version ranges (e.g., `typer>=0.9.0`). This prevents dependency resolution conflicts when installed alongside other libraries in user environments.
 * **Native & System Packages:** Managed by system package managers (`apt`, `dnf`, `pacman`). Version pinning is deferred to the OS package distribution mechanisms to ensure security patches are applied by the upstream distribution.
 

@@ -34,6 +34,11 @@ explicitly rather than silently raising the supported dependency floors.
 Pydantic/core/settings and wcmatch/bracex updates are grouped so related
 versions are resolved and validated together.
 
+The supported Python CI jobs also install the runtime lock into a separate,
+clean environment and exercise CLI help. A development environment can already
+contain newly required transitive packages, so passing its tests and `pip check`
+alone does not validate the runtime lock's dependency closure.
+
 ## Parser fuzzing
 
 Finding 32 did not recognize the existing Hypothesis workflow. Scorecard only
