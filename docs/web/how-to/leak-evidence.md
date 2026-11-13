@@ -66,7 +66,7 @@ managed session. It does not prove every Internet route, provider, browser,
 resolver, transport or IP packet layout is safe. Its synthetic destinations
 and bounded capture windows are explicit. It also does not observe the full
 startup, fault-response or teardown interval; continuous fault observation is
-separate work in the hardening plan.
+covered separately by [continuous fault observations](continuous-fault-evidence.md).
 
 The older public DNS/STUN socket helpers remain diagnostic: their socket-only
 results cannot produce a contained verdict. The calibrated receiver cases

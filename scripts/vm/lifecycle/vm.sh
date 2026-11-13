@@ -202,9 +202,9 @@ PY
 
 # Record the guest's traffic into $VM_WORK/<name>.pcap from now until
 # vm_capture_stop. Headers only (maxlen): enough to say where a packet went and
-# on what port, and it bounds the file whatever the guest sends.
+# on what port. Continuous fault evidence explicitly requests complete frames.
 vm_capture_start() {
-    vm_monitor "object_add filter-dump,id=cap,netdev=${VM_NETDEV:-n0},file=$VM_WORK/$1.pcap,maxlen=128" >/dev/null
+    vm_monitor "object_add filter-dump,id=cap,netdev=${VM_NETDEV:-n0},file=$VM_WORK/$1.pcap,maxlen=${VM_CAPTURE_MAXLEN:-128}" >/dev/null
     vm_log "capturing to $1.pcap"
 }
 

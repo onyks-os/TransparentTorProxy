@@ -115,7 +115,8 @@ concern setting the hostname. Other warnings, malformed evidence, installation
 failures and timeouts are refused; Docker must also start and answer successfully.
 The automated Debian downloads use the dated official build `20261103-2651`
 and matching dated QCOW2 filename, avoiding changes to the `latest` aliases.
-Captures are header-only and only cover scenario phases, never provisioning.
+Lifecycle captures are header-only; continuous chaos observations use full frames.
+Both cover scenario phases, never provisioning.
 
 `scripts/vm/lifecycle/chaos.sh` runs the watchdog chaos sweep (`tests/chaos_monkey.py`,
 options through `CHAOS_ARGS`, e.g. `CHAOS_ARGS="--reset-between --no-bypass"`)
@@ -253,4 +254,10 @@ The Watchdog Chaos Monkey suite simulates live system faults, abrupt process ter
 make chaos-monkey
 ```
 
-The sweep runs every fault once against a live session - Tor stopped, Tor killed behind systemd's back, the table flushed, the table destroyed, the DNS overlay unmounted, the link flapped - and audits containment after each, TCP and UDP. Every audit is paired with a canary, a bypassed user audited the same way, which must be seen: a pass means the audit could have shown a leak at that moment. It requires root and cuts the network on purpose, so run it on a disposable host, or in a VM with `scripts/vm/lifecycle/chaos.sh` as above.
+The VM wrapper observes all eight injections continuously on TCP, UDP and DNS
+in both families, including the interval before recovery audits. It retains
+full external captures and calibrated controls. Privileged removal of
+enforcement can expose traffic before repair; that exposure remains a leak in
+the report even when recovery succeeds. See [continuous fault evidence](continuous-fault-evidence.md)
+for the exact contract, sampled cadence and artifacts. The standalone
+`make chaos-monkey` recovery audits alone do not measure this initial interval.

@@ -6,8 +6,9 @@
 
 Injects system failures (Tor daemon crash, DNS unmount, firewall flush,
 firewall destroy, network link flap) and asserts that the TTP watchdog
-auto-heals the system or applies the emergency killswitch, preventing any
-cleartext network leaks.
+auto-heals the system or applies the emergency killswitch. Its delayed socket/IP
+audits measure recovery; the VM wrapper independently observes the full fault
+interval. Privileged removal of enforcement can expose traffic before recovery.
 
 Why the sweep is not random
 ---------------------------
@@ -387,7 +388,7 @@ def _report(result: AuditResult, reason: str, user: str, role: str, proto: str) 
         }[result]
     else:
         label = {
-            AuditResult.CONTAINED: "[AUDIT] CONTAINED",
+            AuditResult.CONTAINED: "[AUDIT] no direct-IP answer after response deadline",
             AuditResult.LEAK: "[ALERT] CRITICAL NET LEAK DETECTED",
             AuditResult.INCONCLUSIVE: "[ALERT] AUDIT INCONCLUSIVE",
         }[result]
@@ -636,11 +637,17 @@ def verdict(planned: int, executed: int, leaks: int, inconclusive: int) -> tuple
             "were never injected are untested, so this run cannot report success. "
             "Raise --duration or use --injection to run one at a time."
         )
-    return 0, f"[PASS] All {executed} planned injection(s) ran and the watchdog held with zero leaks."
+    return 0, (
+        f"[PASS] All {executed} planned injection(s) ran and the post-fault recovery audits passed. "
+        "These audits alone do not measure the initial exposure interval."
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(description="Chaos Monkey Watchdog stress test")
+    parser.add_argument(
+        "--evidence-dir", type=Path, help="Continuous VM stimulus and phase log (controller capture required)"
+    )
     parser.add_argument(
         "--duration",
         type=int,
@@ -719,6 +726,25 @@ def main():
     print(f"[INFO] Active network interface: {interface}")
 
     setup_test_user()
+    evidence = None
+    if args.evidence_dir is not None:
+        if os.environ.get("TTP_DISPOSABLE_VM") != "1":
+            cleanup_test_user()
+            raise RuntimeError("Continuous fault evidence requires the disposable VM controller")
+        # The same source tree is installed by the VM controller; this helper
+        # runs sockets as TEST_USER, never as the privileged injector.
+        sys.path.insert(0, str(project_root))
+        from tests.chaos_observation import Recorder
+
+        try:
+            evidence = Recorder(args.evidence_dir, interface, TEST_USER)
+            evidence.marker("plan", faults=plan)
+            evidence.control("before-first-session")
+        except BaseException:
+            if evidence:
+                evidence.stop()
+            cleanup_test_user()
+            raise
 
     # 1. Start TTP
     mode = "independent trials" if args.reset_between else "one session for the whole sweep"
@@ -727,6 +753,8 @@ def main():
         control = start_session(real_ip, targets, bypass)
     except RuntimeError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
+        if evidence:
+            evidence.stop()
         cleanup_test_user()
         sys.exit(1)
 
@@ -739,6 +767,8 @@ def main():
             file=sys.stderr,
         )
         subprocess.run(["ttp", "stop"], capture_output=True)
+        if evidence:
+            evidence.stop()
         cleanup_test_user()
         sys.exit(1)
 
@@ -762,6 +792,8 @@ def main():
             # The first reuses the session started above.
             if args.reset_between and failures_injected > 0:
                 subprocess.run(["ttp", "stop"], capture_output=True)
+                if evidence:
+                    evidence.control(f"before-session-{failures_injected + 1}")
                 try:
                     control = start_session(real_ip, targets, bypass)
                 except RuntimeError as exc:
@@ -780,7 +812,11 @@ def main():
                 time.sleep(1)
 
             print(f"[INFO] Injecting {failure_type} ({failures_injected + 1}/{len(plan)})...")
+            if evidence:
+                evidence.marker("fault-before", fault=failure_type)
             INJECTIONS[failure_type](interface)
+            if evidence:
+                evidence.marker("fault-after", fault=failure_type)
 
             failures_injected += 1
             last_injection = time.time()
@@ -798,7 +834,11 @@ def main():
                 result, reason = judge_pass(containment, canary, killswitch_engaged())
             else:
                 result, reason = judge_pass_without_canary(containment, control)
-            print(f"[PASS-VERDICT] {result.value}: {reason}")
+            print(f"[RECOVERY-VERDICT] {result.value}: {reason}")
+            if evidence:
+                evidence.marker("fault-hold", fault=failure_type)
+                time.sleep(3)
+                evidence.marker("fault-end", fault=failure_type)
             if result is AuditResult.LEAK:
                 leaks_found += 1
                 break
@@ -811,13 +851,19 @@ def main():
     finally:
         print("[INFO] Cleaning up TTP session and environment...")
         subprocess.run(["ttp", "stop"], capture_output=True)
+        if evidence:
+            try:
+                evidence.control("after-last-session")
+                evidence.marker("capture-close")
+            finally:
+                evidence.stop()
         cleanup_test_user()
 
     print("\n" + "=" * 50)
-    print("Chaos Monkey Stress Test Summary:")
+    print("Chaos Monkey Post-response Audit Summary:")
     print(f"  Injections Planned:   {len(plan)} ({', '.join(plan)})")
     print(f"  Failures Injected:    {failures_injected}")
-    print(f"  Leaks Detected:       {leaks_found}")
+    print(f"  Direct-IP answers after response deadline: {leaks_found}")
     print(f"  Inconclusive Audits:  {inconclusive_audits}")
     print("=" * 50)
 

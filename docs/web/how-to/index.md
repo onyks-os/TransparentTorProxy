@@ -17,5 +17,7 @@ installation — if you do not have one, start with the [Quickstart](../tutorial
   explicit interface requirements, refusal code `4` and restoration.
 - [Interpret DNS and UDP containment tests](leak-evidence.md) — external packet
   observations, positive controls, inconclusive socket results and scope.
+- [Observe faults continuously](continuous-fault-evidence.md) — initial exposure,
+  recovery, calibration and retained VM captures.
 - [Verify Tor's AppArmor confinement](apparmor.md) — mandatory enforce mode on
   AppArmor kernels, passive observations, emergency handling and deployment limits.

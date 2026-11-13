@@ -51,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Continuously observe TCP, UDP and DNS during chaos injections instead of
+  inferring containment from recovery audits after an 18-second wait. Retain
+  calibrated full captures and separate privileged enforcement exposure from
+  recovery, with missing evidence and persistent hold leaks failing the gate.
 - Regenerate the full runtime dependency closure for Typer 0.29.1, including
   its Pydantic dependencies, and refresh filelock. Validate a clean locked
   runtime and CLI in CI so development dependencies cannot hide missing pins.
