@@ -593,9 +593,9 @@ docutils==0.23 \
     --hash=sha256:25d013af9bf23bc1c7b2b093dff4208166c53a94786c9e447808335ef1185fea \
     --hash=sha256:746f5060322511280a1e50eb76846ed6bf2342984b2ac04dc42caa1a8d78799e
     # via readme-renderer
-filelock==4.2.8 \
-    --hash=sha256:23df640ac0c3351f8d15c9739072d63be9078758b7d102a2183277ceb96605a3 \
-    --hash=sha256:c2be657e2c279cb032af8e4ea8ce2e20aa982e540be77fcaa34910d068ac2510
+filelock==4.2.10 \
+    --hash=sha256:9479aaeb4db20b5a53e3da28493edd24720b66b8a0b84030aa56ccdf243d6857 \
+    --hash=sha256:fcc3c0cb8bfe7f4b3bb0e231c04b15dbad068cb3c2515f343d8fde4dce93bd5d
     # via
     #   -r requirements/ci-tools.in
     #   cachecontrol
