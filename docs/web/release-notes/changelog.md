@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Regenerate the full runtime dependency closure for Typer 0.29.1, including
+  its Pydantic dependencies, and refresh filelock. Validate a clean locked
+  runtime and CLI in CI so development dependencies cannot hide missing pins.
 - Resolve related Dependabot updates together, retain the oldest supported
   dependency pins, and refresh CI/docs locks and pinned GitHub Actions.
   Pass the offline WireGuard fixture's ephemeral peer key through stdin rather
