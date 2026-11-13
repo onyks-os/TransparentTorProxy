@@ -6,6 +6,7 @@
 import subprocess
 
 from ttp.paths import resolve
+from ttp.virtual_addresses import VIRTUAL_IPV4, VIRTUAL_IPV6
 
 
 def _has_cgroup_bypass_support() -> bool:
@@ -148,6 +149,21 @@ def _build_ruleset(
         else ""
     )
 
+    # A virtual address returned for an onion is a Tor handoff, never a LAN
+    # destination. Match it before LAN accepts, including in prerouting.
+    virtual_tcp_ipv4 = f'ip daddr {VIRTUAL_IPV4} {tcp_redirect_ipv4} comment "ttp automap TCP"'
+    virtual_tcp_ipv6 = (
+        f'ip6 daddr {VIRTUAL_IPV6} {tcp_redirect_ipv6.strip()} comment "ttp automap TCP"' if ipv6_avail else ""
+    )
+    # If DNAT was bypassed, or a protocol unsupported by Tor is attempted, do
+    # not let the LAN/local-address exemptions release the synthetic packet.
+    virtual_guard_ipv4 = f'ip daddr {VIRTUAL_IPV4} counter name "cleartext_rejected" reject comment "ttp automap guard"'
+    virtual_guard_ipv6 = (
+        f'ip6 daddr {VIRTUAL_IPV6} counter name "cleartext_rejected" reject comment "ttp automap guard"'
+        if ipv6_avail
+        else ""
+    )
+
     ipv6_leak_prevention = "" if ipv6_avail else "meta nfproto ipv6 drop"
 
     # DNS that reaches filter_out without having been redirected (#29). Keyed on
@@ -199,6 +215,8 @@ def _build_ruleset(
             # Redirect external DNS queries to local Tor DNSPort
             {dns_redirect_ipv4}
             {dns_redirect_ipv6}
+            {virtual_tcp_ipv4}
+            {virtual_tcp_ipv6}
             # Exempt LAN/local subnets from redirection
             {lan_rule}
             {lan6_rule}
@@ -223,6 +241,10 @@ def _build_ruleset(
             # Positioned before LAN bypass to prevent DNS leaking via local DNS servers.
             {dns_redirect_ipv4}
             {dns_redirect_ipv6}
+
+            # Tor virtual destinations take precedence over LAN exceptions.
+            {virtual_tcp_ipv4}
+            {virtual_tcp_ipv6}
 
             # 3. LAN Bypass: Allow direct local subnet communication (non-DNS) for printer/shares.
             {lan_rule}
@@ -279,6 +301,10 @@ def _build_ruleset(
             # bypass below and leave in cleartext. Must precede that bypass.
             {unredirected_dns_ipv4}
             {unredirected_dns_ipv6}
+
+            # Synthetic destinations must never leave as ordinary LAN traffic.
+            {virtual_guard_ipv4}
+            {virtual_guard_ipv6}
 
             # 3. LAN Bypass: Allow local subnet filter bypass.
             {lan_rule}

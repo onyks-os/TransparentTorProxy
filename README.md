@@ -95,8 +95,10 @@ keeps nothing on disk.
 * **Split tunnelling** - exempt users or groups (`--bypass-user`,
   `--bypass-group`) with native nftables UID/GID matching, or run a single
   command outside Tor with `ttp bypass <cmd>` via a cgroups v2 slice.
-* **LAN preserved** - RFC 1918 and link-local subnets stay reachable, so your
-  printer and NAS keep working.
+* **LAN preserved** - private and link-local subnets stay reachable, except
+  the [reserved Tor virtual ranges](docs/web/how-to/onion-addresses.md).
+  Onion mappings take precedence over LAN bypass; ordinary `fd00::/8` ULA
+  networks remain available.
 * **Dual-stack, or no stack** - IPv6 is routed through Tor when loopback
   routing is available, and dropped outright when it is not. There is no third
   option where it leaks.
