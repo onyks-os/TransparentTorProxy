@@ -56,6 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Require calibrated external packet evidence for DNS/UDP leak-test verdicts;
+  socket errors, DNS error replies and aggregate counters no longer certify
+  containment. Preserve per-flow captures and fail incomplete observations.
 - Check the required VPN's final egress device after transparent rerouting,
   avoiding blocked local Tor connections while retaining the same fail-closed
   transport restrictions. Add a real-packet regression with the old hook mutation.

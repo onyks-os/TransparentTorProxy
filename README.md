@@ -214,7 +214,8 @@ For more advanced setups and circumvention profiles, see the [Advanced Security 
 <details>
 <summary>Click to expand manual verification steps</summary>
 
-To confirm that the tunnel is working correctly and no leaks are present:
+For point-in-time functional checks, run these as an ordinary, non-bypassed
+user. They do not establish absence of leaks during faults or other traffic:
 
 1. **Verify Tor Exit IP:**
 
@@ -229,17 +230,22 @@ To confirm that the tunnel is working correctly and no leaks are present:
    dig +short A check.torproject.org
    ```
 
-3. **DNS Leak Test (Terminal):**
+3. **Additional DNS diagnostic:**
 
    ```bash
-   # This TXT query SHOULD return an EMPTY output
+   # Observe the response; empty output is not proof of containment
    dig +short TXT whoami.ipv4.akahelp.net
    ```
 
-   *Note: An empty output is the **expected** behavior under Tor. Tor's transparent resolver does not support TXT records; if this command returns your real ISP's IP, you have a DNS leak.*
+   Tor's DNSPort does not support arbitrary TXT queries. Empty output, timeout,
+   SERVFAIL, REFUSED and NOTIMP can also occur on a direct resolver path.
+   Neither those outcomes nor an aggregate redirect counter prove where this
+   query went. See [calibrated DNS/UDP measurements](docs/web/how-to/leak-evidence.md).
 
 4. **Web-based Verification:**
-   Always perform additional tests on [dnsleaktest.com](https://www.dnsleaktest.com) and [ipleak.net](https://ipleak.net).
+   Browser leak-test pages can provide additional diagnostics. Their results
+   apply to the browser and requests tested, not every application or the
+   interval between a fault and containment.
 
 </details>
 

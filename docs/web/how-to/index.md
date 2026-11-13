@@ -15,5 +15,7 @@ installation — if you do not have one, start with the [Quickstart](../tutorial
   per-link resolvers and containers: what happens to each under TTP, and how to check.
 - [Resolve a DNSSEC policy conflict](dnssec.md) — automatic session settings,
   explicit interface requirements, refusal code `4` and restoration.
+- [Interpret DNS and UDP containment tests](leak-evidence.md) — external packet
+  observations, positive controls, inconclusive socket results and scope.
 - [Verify Tor's AppArmor confinement](apparmor.md) — mandatory enforce mode on
   AppArmor kernels, passive observations, emergency handling and deployment limits.

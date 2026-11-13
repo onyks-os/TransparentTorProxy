@@ -21,6 +21,7 @@ import pytest
 
 from tests.leak.oracle import (
     SCHEMA_VERSION,
+    BoundaryEvidence,
     Observation,
     Outcome,
     Verdict,
@@ -31,8 +32,8 @@ from tests.leak.oracle import (
 )
 
 
-def _obs(outcome: Outcome, *, session: bool = True, probe: str = "probe") -> Observation:
-    return Observation(probe=probe, target="1.1.1.1:53", outcome=outcome, session_active=session)
+def _obs(outcome: Outcome, *, session: bool = True, probe: str = "probe", boundary=None) -> Observation:
+    return Observation(probe=probe, target="1.1.1.1:53", outcome=outcome, session_active=session, boundary=boundary)
 
 
 # ---------------------------------------------------------------------------
@@ -40,10 +41,10 @@ def _obs(outcome: Outcome, *, session: bool = True, probe: str = "probe") -> Obs
 # ---------------------------------------------------------------------------
 
 
-def test_a_blocked_packet_is_the_only_socket_outcome_that_proves_containment() -> None:
-    """A refusal or a drop is decisive: something stopped the packet leaving."""
+def test_a_socket_refusal_does_not_establish_containment() -> None:
+    """A socket error may also originate at a router or a remote endpoint."""
     verdict, _ = verdict_for(_obs(Outcome.BLOCKED))
-    assert verdict is Verdict.CONTAINED
+    assert verdict is Verdict.INCONCLUSIVE
 
 
 def test_a_well_formed_answer_does_not_prove_containment() -> None:
@@ -59,10 +60,10 @@ def test_a_well_formed_answer_does_not_prove_containment() -> None:
     assert "cannot tell them apart" in reason
 
 
-def test_an_answer_with_proof_of_its_origin_does_prove_containment() -> None:
-    """The outcome the DNS probe reaches when Tor refuses a TXT query."""
+def test_a_proxy_label_without_external_evidence_is_inconclusive() -> None:
+    """A response shape is not independent evidence of its origin."""
     verdict, _ = verdict_for(_obs(Outcome.ANSWERED_BY_PROXY))
-    assert verdict is Verdict.CONTAINED
+    assert verdict is Verdict.INCONCLUSIVE
 
 
 @pytest.mark.parametrize("outcome", list(Outcome))
@@ -80,17 +81,11 @@ def test_no_outcome_is_ever_containment_without_a_session(outcome: Outcome) -> N
     assert "no active TTP session" in reason
 
 
-def test_an_answer_only_the_target_could_have_sent_is_a_leak() -> None:
-    """`Verdict.LEAK` must be reachable.
-
-    A verdict no code path can produce is the same defect this module exists to
-    remove, one level smaller: an enum member that looks like a possible outcome
-    and never is. The STUN probe is what produces it - TTP does not redirect
-    UDP/19302 at all, so any reply proves the packet left the machine.
-    """
-    verdict, reason = verdict_for(_obs(Outcome.ESCAPED))
+def test_matching_external_egress_proves_a_leak_even_with_incomplete_capture() -> None:
+    """A positively observed packet survives missing controls/capture data."""
+    verdict, reason = verdict_for(_obs(Outcome.ESCAPED, boundary=BoundaryEvidence(1, 0, 0, False, True)))
     assert verdict is Verdict.LEAK
-    assert "left the machine" in reason
+    assert "outside the protected namespace" in reason
 
 
 def test_an_unreachable_probe_is_inconclusive_not_contained() -> None:
@@ -121,7 +116,7 @@ def test_the_artifact_records_what_was_observed_and_what_was_concluded(_artifact
     assert payload["schema"] == SCHEMA_VERSION
     assert payload["probe"] == "dns_v4"
     assert payload["outcome"] == "blocked"
-    assert payload["verdict"] == "contained"
+    assert payload["verdict"] == "inconclusive"
     assert payload["reason"]
     assert payload["observed_at"]  # when, not just what
 
@@ -183,7 +178,7 @@ def test_an_unrecognised_verdict_string_is_inconclusive(tmp_path) -> None:
 
 
 def test_assert_contained_passes_only_on_evidence(_artifacts_in_tmp) -> None:
-    assert_contained(_obs(Outcome.BLOCKED))  # does not raise
+    assert_contained(_obs(Outcome.BLOCKED, boundary=BoundaryEvidence(0, 1, 1, True, True)))
 
 
 @pytest.mark.parametrize(
@@ -215,7 +210,7 @@ def test_the_failure_message_names_the_artifact_it_read(_artifacts_in_tmp) -> No
 def test_assert_contained_fails_loudly_on_an_actual_leak(_artifacts_in_tmp) -> None:
     """The one case that is not a doubt but a finding."""
     with pytest.raises(AssertionError) as exc_info:
-        assert_contained(_obs(Outcome.ESCAPED, probe="stun_v4"))
+        assert_contained(_obs(Outcome.ESCAPED, probe="stun_v4", boundary=BoundaryEvidence(1, 0, 0, False, True)))
     assert "LEAK" in str(exc_info.value)
     assert "INCONCLUSIVE" not in str(exc_info.value)
 
@@ -252,19 +247,19 @@ def _sock_raising(exc: BaseException) -> MagicMock:
 @pytest.mark.parametrize(
     ("exc", "expected"),
     [
-        pytest.param(TimeoutError(), Outcome.BLOCKED, id="timeout-is-a-drop"),
-        pytest.param(ConnectionRefusedError(), Outcome.BLOCKED, id="refusal-is-a-reject"),
-        pytest.param(OSError("network unreachable"), Outcome.BLOCKED, id="unreachable-is-a-block"),
+        pytest.param(TimeoutError(), Outcome.UNREACHABLE, id="timeout-is-inconclusive"),
+        pytest.param(ConnectionRefusedError(), Outcome.UNREACHABLE, id="refusal-is-inconclusive"),
+        pytest.param(OSError("network unreachable"), Outcome.UNREACHABLE, id="unreachable-is-inconclusive"),
     ],
 )
-def test_the_dns_probe_reads_a_silent_socket_as_containment(exc, expected) -> None:
+def test_the_dns_probe_reads_socket_errors_as_inconclusive(exc, expected) -> None:
     with (
         patch("tests.leak.test_dns_leak.session_is_active", return_value=True),
         patch("socket.socket", return_value=_sock_raising(exc)),
     ):
         observation = dns_probe(socket.AF_INET, "1.1.1.1", "dns_test")
     assert observation.outcome is expected
-    assert verdict_for(observation)[0] is Verdict.CONTAINED
+    assert verdict_for(observation)[0] is Verdict.INCONCLUSIVE
 
 
 def _dns_reply(flags_lo: int, answers: int, txid: bytes = b"\xaa\xbb") -> bytes:
@@ -277,21 +272,21 @@ def _dns_reply(flags_lo: int, answers: int, txid: bytes = b"\xaa\xbb") -> bytes:
     [
         pytest.param(
             _dns_reply(0x84, 0),
-            Outcome.ANSWERED_BY_PROXY,
-            Verdict.CONTAINED,
+            Outcome.ANSWERED,
+            Verdict.INCONCLUSIVE,
             id="notimp-is-tor-refusing-txt",
         ),
         pytest.param(
             _dns_reply(0x85, 0),
-            Outcome.ANSWERED_BY_PROXY,
-            Verdict.CONTAINED,
+            Outcome.ANSWERED,
+            Verdict.INCONCLUSIVE,
             id="refused-is-tor-refusing-txt",
         ),
         pytest.param(
             _dns_reply(0x80, 2),
-            Outcome.ESCAPED,
-            Verdict.LEAK,
-            id="noerror-with-answers-is-a-recursive-resolver",
+            Outcome.ANSWERED,
+            Verdict.INCONCLUSIVE,
+            id="noerror-with-answers-does-not-establish-a-path",
         ),
         pytest.param(
             _dns_reply(0x80, 0),
@@ -307,9 +302,8 @@ def _dns_reply(flags_lo: int, answers: int, txid: bytes = b"\xaa\xbb") -> bytes:
         ),
     ],
 )
-def test_the_dns_probe_classifies_a_reply_by_what_only_one_responder_can_produce(reply, expected, verdict) -> None:
-    """The TXT discriminator: Tor's DNSPort handles A, AAAA and PTR only, so an
-    answered TXT query is proof the packet reached a real recursive resolver."""
+def test_dns_reply_shape_never_establishes_network_path(reply, expected, verdict) -> None:
+    """Recursive resolvers can also return errors; no response shape is proof."""
     sock = MagicMock()
     sock.recvfrom.return_value = (reply, ("1.1.1.1", 53))
     with (
@@ -330,7 +324,7 @@ def test_the_dns_probe_asks_for_a_record_type_tor_cannot_answer() -> None:
     assert _QUERY.endswith(b"\x00\x10\x00\x01"), "QTYPE must be TXT (16), class IN"
 
 
-def test_the_udp_probe_reads_any_reply_as_a_leak() -> None:
+def test_the_udp_socket_probe_does_not_infer_a_path_from_a_reply() -> None:
     sock = MagicMock()
     sock.recvfrom.return_value = (b"\x01\x01\x00\x0c" + b"\x00" * 20, ("74.125.0.1", 19302))
     with (
@@ -340,8 +334,8 @@ def test_the_udp_probe_reads_any_reply_as_a_leak() -> None:
     ):
         observation = udp_probe(socket.AF_INET, ("stun.example",), 19302, "stun_test")
 
-    assert observation.outcome is Outcome.ESCAPED
-    assert verdict_for(observation)[0] is Verdict.LEAK
+    assert observation.outcome is Outcome.ANSWERED
+    assert verdict_for(observation)[0] is Verdict.INCONCLUSIVE
 
 
 def test_the_udp_probe_reads_a_dns_failure_as_a_probe_that_could_not_run() -> None:
@@ -392,7 +386,7 @@ def test_the_udp_probe_moves_on_when_one_stun_host_has_no_record() -> None:
         observation = udp_probe(socket.AF_INET, ("no-aaaa.example", "works.example"), 19302, "stun_test")
 
     assert observation.outcome is Outcome.BLOCKED
-    assert verdict_for(observation)[0] is Verdict.CONTAINED
+    assert verdict_for(observation)[0] is Verdict.INCONCLUSIVE
 
 
 def test_the_udp_probe_names_every_host_it_could_not_resolve() -> None:
@@ -423,9 +417,8 @@ def test_every_probe_records_whether_a_session_was_live() -> None:
 # ---------------------------------------------------------------------------
 # The redirect counter delta
 #
-# The probe reads the DNS redirect counter around its query. Subtracting two
-# readings is where "could not measure" can quietly become a number, so the
-# subtraction is a function of its own rather than an expression inline.
+# Retained diagnostic arithmetic. No counter difference is used as proof of
+# the tested flow, even when unrelated DNS traffic increments the counter.
 # ---------------------------------------------------------------------------
 
 
@@ -487,8 +480,8 @@ def test_udp_cached_ipv6_target_does_not_need_tor_dns(tmp_path, monkeypatch):
     ):
         observation = udp_probe(socket.AF_INET6, _STUN_HOSTS, 19302, "cached_ipv6")
     lookup.assert_called_once_with(address, 19302, socket.AF_INET6, socket.SOCK_DGRAM, 0, socket.AI_NUMERICHOST)
-    assert observation.outcome is Outcome.ESCAPED
-    assert verdict_for(observation)[0] is Verdict.LEAK
+    assert observation.outcome is Outcome.ANSWERED
+    assert verdict_for(observation)[0] is Verdict.INCONCLUSIVE
 
 
 def test_udp_missing_cached_family_is_inconclusive(tmp_path, monkeypatch):

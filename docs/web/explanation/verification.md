@@ -65,8 +65,8 @@ Each of these is a path by which a transparent proxy is known to leak:
 | Arbitrary UDP | the catch-all reject holds |
 | IPv6, and routable ICMPv6 | the classic leak path when a proxy only reasons about IPv4 |
 
-Three of them are also checked for *which rule* handled the packet, read back from
-TTP's named counters: DNS by the DNS redirect, TCP by the TransPort redirect, ICMP
+Three of them are also checked for *which rule* handled the packet in the isolated
+ruleset fixture, using its trace and counter instrumentation: DNS by the DNS redirect, TCP by the TransPort redirect, ICMP
 by a reject. "Nothing leaked" alone cannot tell a redirect from an unrelated drop.
 
 The same ruleset is then tested against the situations real hosts create:
@@ -153,3 +153,11 @@ for the decision record and its amendment.
 It applies well beyond firewalls. Any check for the non-occurrence of something -
 no error logged, no file written, no request sent - has the same failure mode,
 and needs the same paired control.
+
+## DNS and UDP socket observations
+
+The integration gate uses externally captured, calibrated measurements; see
+[DNS and UDP evidence](../how-to/leak-evidence.md). A timeout, error rcode or
+global counter difference cannot establish an individual query's path.
+The fixture retains incomplete observations as failures and qualifies only its
+controlled destinations and protected windows, not every fault interval.
