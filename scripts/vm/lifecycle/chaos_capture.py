@@ -130,8 +130,9 @@ def read_stimulus(path):
 def evaluate(capture, stimulus, expected_events, *, observed_evidence=None):
     run_id, attempts = read_stimulus(stimulus)
     events = [json.loads(line) for line in Path(expected_events).read_text().splitlines()]
-    if not events or events[0].get("kind") != "capture-open" or events[-1].get("kind") != "capture-close":
+    if not events or events[0].get("kind") != "capture-open":
         raise ValueError("Missing capture phase boundaries")
+    events_complete = events[-1].get("kind") == "capture-close"
     if any(event.get("run_id") != run_id for event in events):
         raise ValueError("Phase run mismatch")
     mac = bytes.fromhex(events[0]["mac"])
@@ -181,6 +182,8 @@ def evaluate(capture, stimulus, expected_events, *, observed_evidence=None):
         escaped.append((index, stamp, (family, protocol), len(frame)))
     if [event for event, _, _ in observed] != events:
         raise ValueError("Missing, reordered or duplicated phase beacons")
+    if not events_complete:
+        raise ValueError("Missing final capture phase boundary")
     if not escaped:
         raise ValueError("No positive control was captured")
     controls, windows = [], []

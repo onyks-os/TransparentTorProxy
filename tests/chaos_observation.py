@@ -9,12 +9,14 @@ decide whether packets crossed the boundary. Run inside a disposable VM only.
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import json
 import os
 import pwd
 import secrets
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -24,6 +26,66 @@ from pathlib import Path
 DESTINATIONS = {4: "198.51.100.7", 6: "2001:db8:5444::7"}
 MARKER_PREFIX = b"TTP-CHAOS-PHASE:"
 INTERVAL = 0.1
+
+
+def control_paths(interface: str) -> dict | None:
+    """Read calibration readiness; never change routes, addresses or policy."""
+    paths = {}
+    for family, destination in DESTINATIONS.items():
+        result = subprocess.run(
+            ["ip", "-j", f"-{family}", "route", "get", destination],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        route = json.loads(result.stdout)[0]
+        source = route.get("prefsrc")
+        if route.get("dev") != interface or not source:
+            return None
+        address = ipaddress.ip_address(source)
+        if address.is_link_local or address.is_unspecified or address.is_multicast:
+            return None
+        if family == 6:
+            addresses = subprocess.run(
+                ["ip", "-j", "-6", "addr", "show", "dev", interface],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            configured = [
+                a for device in json.loads(addresses.stdout) for a in device["addr_info"] if a.get("local") == source
+            ]
+            if not configured or any(a.get("tentative") or a.get("dadfailed") for a in configured):
+                return None
+        paths[str(family)] = route
+    return paths
+
+
+def wait_control_paths(interface: str, timeout: float = 20) -> dict:
+    deadline = time.monotonic() + timeout
+    while True:
+        paths = control_paths(interface)
+        if paths is not None:
+            return paths
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Unprotected calibration paths did not become ready")
+        time.sleep(0.25)
+
+
+def solicit_control_router(interface: str, mac: bytes) -> None:
+    """Refresh native router discovery only after intentional unprotected stop."""
+    if len(mac) != 6:
+        raise ValueError("Invalid fixture MAC")
+    index = socket.if_nametoindex(interface)
+    # RFC 4861 router solicitation plus source link-layer address option.
+    # Linux computes the ICMPv6 checksum for this raw ICMPv6 socket.
+    request = struct.pack("!BBHI", 133, 0, 0, 0) + b"\x01\x01" + mac
+    with socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_ICMPV6) as sock:
+        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_IF, index)
+        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_HOPS, 255)
+        sock.sendto(request, ("ff02::2", 0, 0, index))
 
 
 def probe(run_id: str) -> None:
@@ -75,16 +137,19 @@ def probe(run_id: str) -> None:
                     socket.SOCK_STREAM if protocol == "tcp" else socket.SOCK_DGRAM,
                 ) as sock:
                     sock.setblocking(False)
-                    sock.bind(("0.0.0.0" if family == 4 else "::", 0))
-                    entry["source_port"] = sock.getsockname()[1]
                     try:
                         if protocol == "tcp":
                             entry["errno"] = sock.connect_ex((destination, port))
                         else:
-                            sock.sendto(payload, (destination, port))
+                            # Outbound clients: let connect select the concrete
+                            # local address/port, without a wildcard bind.
+                            sock.connect((destination, port))
+                            sock.send(payload)
                             entry["errno"] = 0
                     except OSError as exc:
                         entry["errno"] = exc.errno
+                    entry["source_port"] = sock.getsockname()[1]
+                    entry["source_address"] = sock.getsockname()[0]
                     entry["finished_ns"] = time.monotonic_ns()
                 emit(entry)
         sequence += 1
@@ -143,8 +208,19 @@ class Recorder:
         self.events.write(json.dumps(data) + "\n")
         self.events.flush()
 
-    def control(self, name: str):
-        self.marker("control-start", name=name)
+    def control(self, name: str, *, after_stop: bool = False):
+        # Link flap can leave SLAAC/DAD pending after intentional stop. Wait
+        # only before the unprotected calibration; never pause fault sampling
+        # or manufacture a route to turn a missing family into a clean result.
+        self.marker("control-settle", name=name)
+        if after_stop:
+            # Discovery attempts during a protected link flap can have been
+            # rejected. Ask the VM's actual router again after explicit release;
+            # do not install a route/address or alter protected fault sampling.
+            solicit_control_router(self.interface, self.mac)
+            self.marker("control-router-solicitation", name=name)
+        paths = wait_control_paths(self.interface)
+        self.marker("control-start", name=name, paths=paths)
         time.sleep(1)
         self.marker("control-end", name=name)
 

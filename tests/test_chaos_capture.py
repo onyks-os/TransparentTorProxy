@@ -9,6 +9,7 @@ import struct
 import pytest
 
 from scripts.vm.lifecycle.chaos_capture import evaluate, main, records
+from tests import chaos_observation
 from tests.chaos_observation import DESTINATIONS, MARKER_PREFIX
 
 MAC = bytes.fromhex("525400123456")
@@ -56,6 +57,8 @@ def fixture(tmp_path, *, fault="kill_tor", leak=False, hold_leak=False, defect=N
         event("control-end", 26, name="post"),
         event("capture-close", 27),
     ]
+    if defect == "missing_close":
+        events.pop()
     stimulus = [{"kind": "ready", "run_id": RUN, "uid": 65534, "gid": 65534, "cap_eff": 0}]
     packets = []
     for seq in range(270):
@@ -148,9 +151,11 @@ def test_persistent_exposure_fails_even_after_privileged_removal(tmp_path):
 
 
 @pytest.mark.parametrize("leak", [False, True])
-def test_later_capture_loss_cannot_erase_a_confirmed_fault_leak(tmp_path, monkeypatch, leak):
-    capture, _, _ = fixture(tmp_path, leak=leak)
-    capture.write_bytes(capture.read_bytes()[:-1])
+@pytest.mark.parametrize("damage", ["truncated", "missing_close"])
+def test_later_capture_loss_cannot_erase_a_confirmed_fault_leak(tmp_path, monkeypatch, leak, damage):
+    capture, _, _ = fixture(tmp_path, leak=leak, defect=damage)
+    if damage == "truncated":
+        capture.write_bytes(capture.read_bytes()[:-1])
     report = tmp_path / "report.json"
     monkeypatch.setattr("sys.argv", ["chaos_capture.py", str(capture), str(tmp_path), str(report)])
     assert main() == 1
@@ -201,3 +206,95 @@ def test_capture_corruption_is_not_absence_of_egress(tmp_path, damage):
     capture.write_bytes(data)
     with pytest.raises(ValueError):
         list(records(capture))
+
+
+@pytest.mark.parametrize("state", ["ready", "tentative", "dadfailed", "linklocal", "unreachable"])
+def test_calibration_waits_for_usable_ipv6_without_mutating_the_network(monkeypatch, state):
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        if "route" in args:
+            family = 4 if "-4" in args else 6
+            if family == 6 and state == "unreachable":
+                return chaos_observation.subprocess.CompletedProcess(args, 2, "", "unreachable")
+            source = "10.0.2.15" if family == 4 else "fec0::15"
+            if family == 6 and state == "linklocal":
+                source = "fe80::15"
+            data = [{"dev": "ens3", "prefsrc": source}]
+        else:
+            address = {"local": "fec0::15"}
+            if state in ("tentative", "dadfailed"):
+                address[state] = True
+            data = [{"addr_info": [address]}]
+        return chaos_observation.subprocess.CompletedProcess(args, 0, json.dumps(data), "")
+
+    monkeypatch.setattr(chaos_observation.subprocess, "run", run)
+    assert (chaos_observation.control_paths("ens3") is not None) is (state == "ready")
+    assert all("-j" in args and not {"add", "replace", "del", "set"}.intersection(args) for args in calls)
+
+
+def test_missing_calibration_path_times_out_instead_of_skipping_a_family(monkeypatch):
+    monkeypatch.setattr(chaos_observation, "control_paths", lambda interface: None)
+    ticks = iter([0, 21])
+    monkeypatch.setattr(chaos_observation.time, "monotonic", lambda: next(ticks))
+    with pytest.raises(RuntimeError, match="did not become ready"):
+        chaos_observation.wait_control_paths("ens3", timeout=20)
+
+
+def test_outbound_probe_records_the_ephemeral_port_assigned_by_connect(monkeypatch, capsys):
+    class Done:
+        stopped = False
+
+        def is_set(self):
+            return self.stopped
+
+        def wait(self, timeout):
+            self.stopped = True
+
+    class Client:
+        connected = False
+
+        def __init__(self, family, kind):
+            self.source = "10.0.2.15" if family == socket.AF_INET else "fec0::15"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def setblocking(self, value):
+            pass
+
+        def connect_ex(self, target):
+            self.connected = True
+            return 115
+
+        def connect(self, target):
+            self.connected = True
+
+        def send(self, payload):
+            assert self.connected
+            return len(payload)
+
+        def getsockname(self):
+            return (self.source, 23456 if self.connected else 0)
+
+    monkeypatch.setattr(chaos_observation.os, "geteuid", lambda: 65534)
+    monkeypatch.setattr(chaos_observation.os, "getegid", lambda: 65534)
+    real_read = chaos_observation.Path.read_text
+    monkeypatch.setattr(
+        chaos_observation.Path, "read_text", lambda p: "CapEff: 0\n" if str(p) == "/proc/self/status" else real_read(p)
+    )
+    monkeypatch.setattr(chaos_observation.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(chaos_observation.threading, "Event", Done)
+    monkeypatch.setattr(chaos_observation.socket, "socket", Client)
+    chaos_observation.probe(RUN)
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    attempts = [row for row in rows if row["kind"] == "attempt"]
+    assert {(row["family"], row["protocol"]) for row in attempts} == {
+        (f, p) for f in (4, 6) for p in ("dns", "udp", "tcp")
+    }
+    assert all(row["source_port"] == 23456 for row in attempts)
+    assert rows[-1]["kind"] == "finished" and rows[-1]["sequences"] == 1

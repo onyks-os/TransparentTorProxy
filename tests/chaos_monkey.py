@@ -850,10 +850,12 @@ def main():
 
     finally:
         print("[INFO] Cleaning up TTP session and environment...")
-        subprocess.run(["ttp", "stop"], capture_output=True)
+        stopped = subprocess.run(["ttp", "stop"], capture_output=True)
         if evidence:
             try:
-                evidence.control("after-last-session")
+                if stopped.returncode != 0:
+                    raise RuntimeError("Cannot calibrate an unprotected path after a failed stop")
+                evidence.control("after-last-session", after_stop=True)
                 evidence.marker("capture-close")
             finally:
                 evidence.stop()

@@ -36,6 +36,19 @@ exposure bounds; it never subtracts a guest clock from a host/QEMU clock.
 Successful unprotected controls must expose all six channels before and after
 the sweep. The same controls also run before each reset session.
 
+After a link flap, IPv6 address discovery and duplicate-address detection can
+still be pending when the intentional stop completes. Before unprotected
+controls, the harness waits at most 20 seconds for both routes and a usable
+non-tentative IPv6 source address. It records the chosen paths, changes no
+routes or addresses, and keeps the stimulus/capture running throughout. A
+missing family still fails; this wait does not shorten any fault window.
+After a confirmed intentional stop it sends a scoped IPv6 router solicitation
+to the VM's actual local router, since earlier discovery attempts may have
+been blocked during the fault. This is calibration after release, and does
+not establish automatic IPv6 availability recovery during protection.
+Client sockets use outbound connect with implicit local address selection,
+without binding a wildcard address or opening a listener.
+
 ## Containment and recovery are separate results
 
 | Fault family | Required result |
