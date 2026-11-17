@@ -56,6 +56,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Close every TCP connection redirected to Tor before `ttp stop` removes its
+  rules. An orphaned socket backing off between retransmissions could survive
+  the fixed 300 ms reject window and, once the rules were gone, send its FIN in
+  cleartext to the destination an application tried during the session; Tor's
+  orphaned TransPort end kept the host answering with RSTs that left the
+  physical link with a stale `::1` destination (IPv6, seen by the VPN VM's
+  external capture). Stop now destroys both ends of each connection found in
+  conntrack with `SOCK_DESTROY`, verifies they are gone, and otherwise exits 8
+  keeping rules, DNS and lock. No `conntrack` or `ss` binary is required.
 - Reserve Tor's virtual destinations before LAN bypass, redirecting synthetic
   TCP and rejecting unredirected traffic. Narrow IPv6 automapping to `fc00::/8`
   so ordinary `fd00::/8` LANs remain available. Add a real-onion dual-stack VM

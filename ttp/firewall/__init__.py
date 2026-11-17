@@ -21,6 +21,9 @@ from ttp.firewall.emergency import (
 from ttp.firewall.emergency import (
     apply_teardown_lockdown as apply_teardown_lockdown,
 )
+from ttp.firewall.redirected import (
+    close_redirected_sockets as close_redirected_sockets,
+)
 from ttp.firewall.runner import (
     RULES_TEMP_PATH as RULES_TEMP_PATH,
 )
@@ -58,6 +61,7 @@ __all__ = [
     "apply_emergency_killswitch",
     "apply_rules",
     "apply_teardown_lockdown",
+    "close_redirected_sockets",
     "destroy_rules",
     "pwd",
     "read_counters",

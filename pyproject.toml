@@ -67,6 +67,7 @@ markers = [
     "leak: marks tests as offensive leak verification tests",
     "nse: marks tests that require root, NSE, and network namespace privileges",
     "real_binary_lookup: use the real ttp.paths resolver instead of the deterministic test stub",
+    "real_redirected_sockets: exercise ttp.firewall.redirected instead of the no-op teardown stub",
 ]
 # --strict-markers: a typo in a marker name silently deselects the test it was
 # meant to tag, which is how a suite quietly stops running.

@@ -869,13 +869,30 @@ dns-search=~.;
                 'test "$(systemctl show ttp-tor -p MainPID --value)" = 0\n'
                 'test "$(systemctl show ttp-tor -p ControlPID --value)" = 0\n'
             )
-            phase(
+            # Teardown regression: connections redirected during the session
+            # must not reach their original destination after `ttp stop`.
+            phase("orphan_stimulus", orphan_script(topology), timeout=90)
+            orphans = int(report_line_prefix(client.work / "orphan_stimulus.txt", "ORPHANS "))
+            record("orphans_before_stop", orphans)
+            if orphans <= 0:
+                raise RuntimeError("No orphaned redirected socket before stop: teardown regression inconclusive")
+            evidence = phase(
                 "explicit_stop",
-                stopped,
+                # Orphans retransmit with backoff; observe well past the stop.
+                stopped + "sleep 60\nss -Htan '( dport = :8000 or sport = :9041 or dport = :9041 )'\n",
                 # Explicit stop intentionally ends the guarantee. Restored
                 # resolver services can immediately emit physical LLMNR, etc.
                 protected=False,
+                timeout=120,
             )
+            escaped = {
+                key: count
+                for key, count in evidence["violations"].items()
+                if key.split("/")[0] in {CANARY[4], CANARY[6], "::1"} or key.startswith("127.")
+            }
+            record("redirected_after_stop", escaped)
+            if escaped:
+                raise RuntimeError(f"Session-redirected connections left in cleartext after stop: {escaped}")
             evidence = phase("stop_control", routes + direct, protected=False)
             require_direct_paths("stop_control", evidence)
             if args.require_apparmor:
@@ -1067,6 +1084,53 @@ def transitions(
     )
     phase("restart_after_reboot", start + "\n" + verified_request + "ttp status --json", timeout=460)
     phase("restart_stop", stopped, protected=False)
+
+
+def orphan_script(t: Topology) -> str:
+    """Leave redirected connections behind as orphaned sockets.
+
+    During emergency Tor accepts on its TransPort but cannot forward, so a
+    client that queued unread data and closed keeps an orphan retransmitting
+    its FIN. These sockets once outlived `ttp stop` and reached their original
+    destination in cleartext. Prints how many orphans exist.
+    """
+    targets = [(f, CANARY[f]) for f in t.families]
+    # Both shapes seen to leave orphans: a timed-out HTTP client (the original
+    # observation) and a client that closes with unread data queued.
+    curls = "".join(f"for _ in 1 2 3 4; do {canary(f)} & done\n" for f in t.families)
+    return (
+        curls
+        + f"""python3 - <<'PY'
+import socket, subprocess, time
+for family, host in {[(4 if f == 4 else 6, h) for f, h in targets]!r}:
+    for _ in range(4):
+        client = socket.socket(socket.AF_INET if family == 4 else socket.AF_INET6)
+        client.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+        client.settimeout(3)
+        try:
+            client.connect((host, 8000))
+            client.setblocking(False)
+            for _ in range(256):
+                client.send(b"x" * 65536)
+        except OSError:
+            pass
+        client.close()
+time.sleep(5)  # the timed-out HTTP clients have closed by now
+out = subprocess.run(["ss", "-Htan", "( dport = :8000 )"], capture_output=True, text=True, check=True).stdout
+orphans = [line for line in out.splitlines() if line.split()[0] in ("FIN-WAIT-1", "CLOSING", "LAST-ACK")]
+print(out)
+print("ORPHANS", len(orphans))
+PY
+"""
+    )
+
+
+def report_line_prefix(path: Path, prefix: str) -> str:
+    """The value after the last line starting with prefix."""
+    lines = [line for line in path.read_text().splitlines() if line.startswith(prefix)]
+    if not lines:
+        raise RuntimeError(f"No {prefix.strip()} line in {path}")
+    return lines[-1][len(prefix) :].strip()
 
 
 def report_line(path: Path) -> str:

@@ -199,6 +199,14 @@ transaction ID. Direct canaries are checked in every underlay family. The guests
 public IPv6 route: IPv6 is qualified on the underlay and inside the tunnel, and
 Tor still reaches its relays over IPv4.
 
+Before explicit stop, while emergency containment holds the redirect, the
+harness leaves redirected connections behind as orphaned sockets (timed-out
+HTTP clients and clients closing with unread data) and requires at least one
+to exist. After `ttp stop` it observes for 60 seconds: any packet to a canary
+or to a loopback destination on the physical link fails the run, because it
+belongs to a connection redirected during the session. Without the teardown's
+socket closure, `v6-dual` reproduced this leak in every run.
+
 `--bridge` starts a private, unpublished obfs4 bridge on the peer and starts TTP
 with `--use-bridges` and that bridge line. Tor must verify `IsTor=true` while the
 peer counts bridge connections through the tunnel and **no** forwarded TCP: every
