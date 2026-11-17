@@ -224,7 +224,7 @@ def inspect_capture(path: Path, *, client_mac: bytes, endpoint: str, dhcp_server
                             and str(ipaddress.ip_address(ip[12:16])) == dhcp_server
                         ):
                             acknowledgements.add(xid)
-            # A DHCPv6 Reply proves a Renew only with the same transaction ID.
+            # A DHCPv6 Reply proves a Renew/Rebind only with the same transaction ID.
             if not outgoing and frame[12:14] == b"\x86\xdd" and len(frame) >= 14 + 40 + 12:
                 header, _, _, payload = _ipv6(frame)
                 if header == 17 and struct.unpack("!HH", payload[:4]) == (547, 546) and payload[8] == 7:
@@ -249,7 +249,9 @@ def inspect_capture(path: Path, *, client_mac: bytes, endpoint: str, dhcp_server
                         continue
                     if header == 17 and (sport, dport) == (546, 547):
                         counts["dhcpv6"] += 1
-                        if len(payload) >= 12 and payload[8] == 5:
+                        # Renew (5) or Rebind (6): both extend a bound lease
+                        # (RFC 8415 18.2.4/18.2.5); NetworkManager uses either.
+                        if len(payload) >= 12 and payload[8] in (5, 6):
                             renewals6.add(payload[9:12])
                         continue
                 elif header == 58:

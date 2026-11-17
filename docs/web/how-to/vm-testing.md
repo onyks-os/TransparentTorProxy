@@ -194,8 +194,8 @@ For an IPv6 underlay the observer additionally accepts exactly the VPN guard's
 IPv6 control exceptions: DHCPv6 546 → 547 and router/neighbor solicitation or
 advertisement with hop limit 255. Every other IPv6 frame, including MLD,
 extension headers, fragments and ICMPv6 errors, is a violation while protected.
-Renewal requires a DHCPv6 Renew answered by a Reply with the same transaction
-ID. Direct canaries are checked in every underlay family. The guests have no
+Renewal requires a DHCPv6 Renew or Rebind answered by a Reply with the same
+transaction ID. Direct canaries are checked in every underlay family. The guests have no
 public IPv6 route: IPv6 is qualified on the underlay and inside the tunnel, and
 Tor still reaches its relays over IPv4.
 

@@ -183,6 +183,9 @@ def test_dhcpv6_renewal_needs_a_matching_reply(tmp_path):
     assert not result["violations"]
     result = inspect6(capture(tmp_path, dhcp6(5), dhcp6(7, b"\x00\x00\x2b", reply=True)))
     assert result["counts"]["dhcpv6_renewals_acknowledged"] == 0
+    # A Rebind (sent when the server's unicast Renew went unanswered) counts.
+    result = inspect6(capture(tmp_path, dhcp6(6), dhcp6(7, reply=True)))
+    assert result["counts"]["dhcpv6_renewals_acknowledged"] == 1
     # A Solicit/Request is the initial lease, not a renewal of a bound one.
     result = inspect6(capture(tmp_path, dhcp6(1), dhcp6(7, reply=True)))
     assert "dhcpv6_renewals_acknowledged" not in result["counts"]
