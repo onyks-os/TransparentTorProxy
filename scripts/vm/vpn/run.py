@@ -346,6 +346,7 @@ table inet observe {
   chain forward {
     type filter hook forward priority -300; policy accept;
     iifname "wgpeer" meta l4proto tcp counter comment "forward_tcp"
+    iifname "wgpeer" tcp flags & (syn | ack) == syn counter comment "forward_syn"
   }
 }
 NFT
@@ -591,7 +592,7 @@ def main():
                 for expression in rule.get("expr", []):
                     if "counter" in expression and "comment" in rule:
                         values[rule["comment"]] = expression["counter"]["packets"]
-            if set(values) != {"tunnel4", "tunnel6", "bridge", "forward_tcp"}:
+            if set(values) != {"tunnel4", "tunnel6", "bridge", "forward_tcp", "forward_syn"}:
                 raise RuntimeError(f"Peer observation counters incomplete: {values}")
             return values
 
@@ -797,9 +798,11 @@ dns-search=~.;
             record("tor_start_counters", startup)
             if bridge_line:
                 # Every Tor connection must reach the private bridge, none a public relay.
-                if startup["bridge"] <= 0 or startup["forward_tcp"]:
+                # New connections, not stray segments: a late RST answering the
+                # pre-session positive control is not a relay connection.
+                if startup["bridge"] <= 0 or startup["forward_syn"]:
                     raise RuntimeError(f"Tor did not use only the bridge through the tunnel: {startup}")
-            elif startup["forward_tcp"] <= 0:
+            elif startup["forward_syn"] <= 0:
                 raise RuntimeError("Peer did not count Tor's relay traffic: forward counter inconclusive")
             if startup["tunnel4"] or startup["tunnel6"]:
                 raise RuntimeError(f"Cleartext application traffic entered the tunnel: {startup}")
@@ -1094,10 +1097,14 @@ def orphan_script(t: Topology) -> str:
     its FIN. These sockets once outlived `ttp stop` and reached their original
     destination in cleartext. Prints how many orphans exist.
     """
-    targets = [(f, CANARY[f]) for f in t.families]
+    # Only families TTP redirects can leave redirected orphans: IPv4 always,
+    # IPv6 only with a dual-stack tunnel (--no-ipv6 drops IPv6 instead).
+    redirected = t.tunnel_families
+    targets = [(f, CANARY[f]) for f in redirected]
     # Both shapes seen to leave orphans: a timed-out HTTP client (the original
-    # observation) and a client that closes with unread data queued.
-    curls = "".join(f"for _ in 1 2 3 4; do {canary(f)} & done\n" for f in t.families)
+    # observation) and a client that closes with unread data queued. curl binds
+    # the underlay address, so it runs only where that family exists.
+    curls = "".join(f"for _ in 1 2 3 4; do {canary(f)} & done\n" for f in redirected if f in t.families)
     return (
         curls
         + f"""python3 - <<'PY'

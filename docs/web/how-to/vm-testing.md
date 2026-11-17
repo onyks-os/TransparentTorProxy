@@ -173,7 +173,8 @@ its capture may contain physical traffic from restored resolver services.
 
 The peer also counts packets it receives, independently of any reply: cleartext
 requests arriving through the tunnel at an inner canary (`10.9.0.1:8000`, and
-`[fd09::1]:8000` for a dual-stack tunnel), TCP it forwards to the Internet, and
+`[fd09::1]:8000` for a dual-stack tunnel), new TCP connections (SYN) it forwards
+to the Internet, and
 connections to an optional private bridge. Before protection, a request through
 the tunnel must increment the inner counter; while protected, application
 requests into the tunnel must leave it at zero. Tor's own relay traffic must
@@ -202,15 +203,18 @@ Tor still reaches its relays over IPv4.
 Before explicit stop, while emergency containment holds the redirect, the
 harness leaves redirected connections behind as orphaned sockets (timed-out
 HTTP clients and clients closing with unread data) and requires at least one
-to exist. After `ttp stop` it observes for 60 seconds: any packet to a canary
+to exist. It targets the families TTP redirects: IPv4, and IPv6 only with a
+dual-stack tunnel, since `--no-ipv6` drops IPv6 instead. After `ttp stop` it observes for 60 seconds: any packet to a canary
 or to a loopback destination on the physical link fails the run, because it
 belongs to a connection redirected during the session. Without the teardown's
 socket closure, `v6-dual` reproduced this leak in every run.
 
 `--bridge` starts a private, unpublished obfs4 bridge on the peer and starts TTP
 with `--use-bridges` and that bridge line. Tor must verify `IsTor=true` while the
-peer counts bridge connections through the tunnel and **no** forwarded TCP: every
-relay connection went to the bridge. This qualifies the managed Tor's obfs4
+peer counts bridge connections through the tunnel and **no** forwarded TCP
+connection: every relay connection went to the bridge. All forwarded TCP
+segments are reported too; a stray segment of a connection opened before the
+session is not a relay connection. This qualifies the managed Tor's obfs4
 transport child under the VPN guard. It does not qualify snowflake, meek or the
 public bridge distribution.
 
