@@ -913,7 +913,11 @@ dns-search=~.;
             with contextlib.suppress(Exception):
                 _, output = client.agent.run(
                     "cat /tmp/ttp*log 2>/dev/null || true\n"
-                    "journalctl -u ttp-tor -u ttp-watchdog -n 100 --no-pager\n"
+                    # Separate journals: Tor's bootstrap must not crowd out the
+                    # watchdog's exact integrity reason.
+                    "echo '== ttp-watchdog'; journalctl -b -u ttp-watchdog -n 300 --no-pager\n"
+                    "echo '== ttp-tor'; journalctl -b -u ttp-tor -n 100 --no-pager\n"
+                    "echo '== inet ttp with counters'; nft list table inet ttp\n"
                     "nft list ruleset\nip route show table all\nip -6 route show table all\nip rule\nip -6 rule\n"
                     "ip addr\ncat /etc/resolv.conf\n"
                     "wg show wgtest latest-handshakes\nwg show wgtest transfer\nttp status --json",
