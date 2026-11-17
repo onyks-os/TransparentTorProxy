@@ -915,7 +915,10 @@ dns-search=~.;
                     "cat /tmp/ttp*log 2>/dev/null || true\n"
                     # Separate journals: Tor's bootstrap must not crowd out the
                     # watchdog's exact integrity reason.
+                    # TTP's own log carries the exact integrity reason.
+                    "echo '== /run/ttp/ttp.log'; tail -n 200 /run/ttp/ttp.log\n"
                     "echo '== ttp-watchdog'; journalctl -b -u ttp-watchdog -n 300 --no-pager\n"
+                    "echo '== resolver'; journalctl -b -u systemd-resolved -u NetworkManager -n 80 --no-pager\n"
                     "echo '== ttp-tor'; journalctl -b -u ttp-tor -n 100 --no-pager\n"
                     "echo '== inet ttp with counters'; nft list table inet ttp\n"
                     "nft list ruleset\nip route show table all\nip -6 route show table all\nip rule\nip -6 rule\n"
