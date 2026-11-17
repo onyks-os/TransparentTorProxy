@@ -144,17 +144,34 @@ def qmp(path: Path, command: str, arguments: dict | None = None):
             return reply["return"]
 
 
-def inspect_capture(path: Path, *, client_mac: bytes, endpoint: str) -> dict:
+def _ipv6(frame: bytes) -> tuple[int, int, str, bytes]:
+    """Return next header, hop limit, destination and payload of an IPv6 frame."""
+    ip = frame[14:]
+    if len(ip) < 40 or ip[0] >> 4 != 6:
+        raise ValueError("Truncated/invalid IPv6 header")
+    return ip[6], ip[7], str(ipaddress.ip_address(ip[24:40])), ip[40:]
+
+
+def inspect_capture(path: Path, *, client_mac: bytes, endpoint: str, dhcp_server: str | None = None) -> dict:
     """Fail on malformed/unknown client traffic, including empty/truncated pcaps.
 
-    Only ARP, exact WG endpoint UDP and DHCPv4 are accepted. This qualification
-    currently uses an IPv4-only underlay; IPv6 frames are failures, not ignored.
-    The destination canary is a real listening server on the peer.
+    Accepted outgoing frames mirror the VPN guard's underlay exceptions exactly:
+    ARP, UDP to the exact WireGuard endpoint (IPv4 or IPv6), DHCPv4 68 -> 67,
+    DHCPv6 546 -> 547 and router/neighbor solicitation/advertisement with hop
+    limit 255. Anything else, including IPv6 extension headers, fragments and
+    MLD, is a violation. The destination canary is a real listening server on
+    the peer. ``dhcp_server`` names the DHCPv4 server whose ACK proves a
+    renewal; it defaults to an IPv4 endpoint.
     """
+    endpoint = str(ipaddress.ip_address(endpoint))
+    if dhcp_server is None and ":" not in endpoint:
+        dhcp_server = endpoint
     counts: collections.Counter[str] = collections.Counter()
     violations: collections.Counter[str] = collections.Counter()
     renewals: set[bytes] = set()
     acknowledgements: set[bytes] = set()
+    renewals6: set[bytes] = set()
+    replies6: set[bytes] = set()
     with path.open("rb") as capture:
         header = capture.read(24)
         if len(header) != 24 or header[:4] != b"\xd4\xc3\xb2\xa1":
@@ -204,15 +221,47 @@ def inspect_capture(path: Path, *, client_mac: bytes, endpoint: str) -> dict:
                         elif (
                             not outgoing
                             and (sport, dport, msgtype) == (67, 68, 5)
-                            and str(ipaddress.ip_address(ip[12:16])) == endpoint
+                            and str(ipaddress.ip_address(ip[12:16])) == dhcp_server
                         ):
                             acknowledgements.add(xid)
+            # A DHCPv6 Reply proves a Renew/Rebind only with the same transaction ID.
+            if not outgoing and frame[12:14] == b"\x86\xdd" and len(frame) >= 14 + 40 + 12:
+                header, _, _, payload = _ipv6(frame)
+                if header == 17 and struct.unpack("!HH", payload[:4]) == (547, 546) and payload[8] == 7:
+                    replies6.add(payload[9:12])
             if not outgoing:
                 continue
             counts["outgoing"] += 1
             kind = struct.unpack("!H", frame[12:14])[0]
             if kind == 0x0806:
                 counts["arp"] += 1
+                continue
+            if kind == 0x86DD:
+                header, hops, dst, payload = _ipv6(frame)
+                port = ""
+                if header in (6, 17):
+                    if len(payload) < 8:
+                        raise ValueError("Truncated IPv6 transport header")
+                    sport, dport = struct.unpack("!HH", payload[:4])
+                    port = f"/port{dport}"
+                    if header == 17 and dst == endpoint and dport == 51820:
+                        counts["wireguard"] += 1
+                        continue
+                    if header == 17 and (sport, dport) == (546, 547):
+                        counts["dhcpv6"] += 1
+                        # Renew (5) or Rebind (6): both extend a bound lease
+                        # (RFC 8415 18.2.4/18.2.5); NetworkManager uses either.
+                        if len(payload) >= 12 and payload[8] in (5, 6):
+                            renewals6.add(payload[9:12])
+                        continue
+                elif header == 58:
+                    if not payload:
+                        raise ValueError("Truncated ICMPv6 header")
+                    if hops == 255 and payload[0] in (133, 135, 136):
+                        counts["ndp"] += 1
+                        continue
+                    port = f"/type{payload[0]}"
+                violations[f"{dst}/proto{header}{port}"] += 1
                 continue
             if kind != 0x0800 or len(frame) < 34:
                 violations[f"ethertype:{kind:#x}"] += 1
@@ -235,4 +284,6 @@ def inspect_capture(path: Path, *, client_mac: bytes, endpoint: str) -> dict:
         raise ValueError("No outgoing frames: observer is inconclusive")
     if renewals:
         counts["dhcp_renewals_acknowledged"] = len(renewals & acknowledgements)
+    if renewals6:
+        counts["dhcpv6_renewals_acknowledged"] = len(renewals6 & replies6)
     return {"counts": dict(counts), "violations": dict(violations)}

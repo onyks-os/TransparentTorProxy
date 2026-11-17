@@ -21,6 +21,7 @@ qemu = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(qemu)
 CLIENT = bytes.fromhex("525400123402")
 OTHER = bytes.fromhex("525400123401")
+ENDPOINT6 = "fd31:250::1"
 
 
 def packet(*, dst="172.31.250.1", port=51820, source=CLIENT, proto=17, fragment=0):
@@ -73,10 +74,121 @@ def test_forbidden_packets_are_detected(tmp_path, kwargs):
     assert result["violations"]
 
 
-def test_ipv6_and_unknown_ethernet_are_not_silently_skipped(tmp_path):
-    for kind in (b"\x86\xdd", b"\x81\x00"):
-        result = inspect(capture(tmp_path, OTHER + CLIENT + kind + bytes(40)))
-        assert result["violations"]
+def test_unknown_ethernet_is_not_silently_skipped(tmp_path):
+    result = inspect(capture(tmp_path, OTHER + CLIENT + b"\x81\x00" + bytes(40)))
+    assert result["violations"]
+
+
+def test_ipv6_payload_on_an_ipv4_endpoint_is_a_violation(tmp_path):
+    result = inspect(capture(tmp_path, packet(), packet6(dst="fd31:250::1")))
+    assert result["violations"] == {"fd31:250::1/proto17/port51820": 1}
+
+
+def packet6(*, dst=ENDPOINT6, header=17, hops=64, payload=None, source=CLIENT, dport=51820, sport=51820):
+    if payload is None:
+        payload = struct.pack("!HHHH", sport, dport, 8, 0) if header in (6, 17) else b""
+    ip = struct.pack(
+        "!IHBB16s16s",
+        6 << 28,
+        len(payload),
+        header,
+        hops,
+        socket.inet_pton(socket.AF_INET6, "fd31:250::20"),
+        socket.inet_pton(socket.AF_INET6, dst),
+    )
+    return OTHER + source + b"\x86\xdd" + ip + payload
+
+
+def inspect6(path):
+    return qemu.inspect_capture(path, client_mac=CLIENT, endpoint=ENDPOINT6, dhcp_server="172.31.250.1")
+
+
+def icmp6(kind):
+    return bytes([kind, 0]) + bytes(22)
+
+
+def test_ipv6_endpoint_and_guard_control_exceptions_are_accepted(tmp_path):
+    frames = (
+        packet6(),
+        packet6(dst="ff02::2", header=58, hops=255, payload=icmp6(133)),
+        packet6(dst="ff02::1:ff00:1", header=58, hops=255, payload=icmp6(135)),
+        packet6(dst="fe80::1", header=58, hops=255, payload=icmp6(136)),
+        packet6(dst="ff02::1:2", sport=546, dport=547),
+        dhcp(),
+    )
+    result = inspect6(capture(tmp_path, *frames))
+    assert result["violations"] == {}
+    assert result["counts"] == {
+        "outgoing": 6,
+        "wireguard": 1,
+        "ndp": 3,
+        "dhcpv6": 1,
+        "dhcp": 1,
+        "dhcp_renewals_acknowledged": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "key"),
+    [
+        ({"dst": "2001:db8:100::7", "header": 6, "dport": 8000}, "2001:db8:100::7/proto6/port8000"),
+        ({"dport": 53}, "fd31:250::1/proto17/port53"),
+        ({"dst": "fd31:250::2"}, "fd31:250::2/proto17/port51820"),
+        ({"header": 6}, "fd31:250::1/proto6/port51820"),
+        # A fragment header cannot masquerade as the WireGuard UDP header.
+        ({"header": 44, "payload": bytes([17, 0, 0, 1]) + bytes(12)}, "fd31:250::1/proto44"),
+        # MLD reports use hop-by-hop options and are outside the guard.
+        ({"dst": "ff02::16", "header": 0, "payload": bytes(8)}, "ff02::16/proto0"),
+        # Neighbor discovery is accepted only with hop limit 255, never echo.
+        ({"dst": "fe80::1", "header": 58, "hops": 64, "payload": icmp6(135)}, "fe80::1/proto58/type135"),
+        ({"dst": "fe80::1", "header": 58, "hops": 255, "payload": icmp6(128)}, "fe80::1/proto58/type128"),
+        ({"dst": "ff02::1:2", "sport": 547, "dport": 546}, "ff02::1:2/proto17/port546"),
+    ],
+)
+def test_forbidden_ipv6_packets_are_detected(tmp_path, kwargs, key):
+    result = inspect6(capture(tmp_path, packet6(), packet6(**kwargs)))
+    assert result["violations"] == {key: 1}
+
+
+def test_ipv4_wireguard_to_the_old_endpoint_fails_an_ipv6_underlay(tmp_path):
+    result = inspect6(capture(tmp_path, packet6(), packet()))
+    assert result["violations"] == {"172.31.250.1/proto17/port51820": 1}
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        OTHER + CLIENT + b"\x86\xdd" + bytes(40),  # version 0
+        OTHER + CLIENT + b"\x86\xdd" + bytes([0x60]) + bytes(20),  # truncated header
+        packet6(payload=b"\x00\x01"),  # truncated UDP header
+        packet6(header=58, payload=b""),  # missing ICMPv6 type
+    ],
+)
+def test_malformed_ipv6_is_inconclusive(tmp_path, frame):
+    with pytest.raises(ValueError):
+        inspect6(capture(tmp_path, packet6(), frame))
+
+
+def dhcp6(kind, xid=b"\x00\x00\x2a", *, reply=False):
+    message = bytes([kind]) + xid + bytes(8)
+    udp = struct.pack("!HHHH", *((547, 546) if reply else (546, 547)), 8 + len(message), 0) + message
+    destination = "fd31:250::20" if reply else "ff02::1:2"
+    frame = packet6(dst=destination, payload=udp, source=OTHER if reply else CLIENT)
+    return frame if not reply else CLIENT + frame[6:]
+
+
+def test_dhcpv6_renewal_needs_a_matching_reply(tmp_path):
+    result = inspect6(capture(tmp_path, dhcp6(5), dhcp6(7, reply=True)))
+    assert result["counts"]["dhcpv6_renewals_acknowledged"] == 1
+    assert not result["violations"]
+    result = inspect6(capture(tmp_path, dhcp6(5), dhcp6(7, b"\x00\x00\x2b", reply=True)))
+    assert result["counts"]["dhcpv6_renewals_acknowledged"] == 0
+    # A Rebind (sent when the server's unicast Renew went unanswered) counts.
+    result = inspect6(capture(tmp_path, dhcp6(6), dhcp6(7, reply=True)))
+    assert result["counts"]["dhcpv6_renewals_acknowledged"] == 1
+    # A Solicit/Request is the initial lease, not a renewal of a bound one.
+    result = inspect6(capture(tmp_path, dhcp6(1), dhcp6(7, reply=True)))
+    assert "dhcpv6_renewals_acknowledged" not in result["counts"]
 
 
 @pytest.mark.parametrize("content", [b"", b"invalid", b"\xd4\xc3\xb2\xa1" + bytes(20)])

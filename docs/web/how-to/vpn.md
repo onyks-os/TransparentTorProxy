@@ -2,9 +2,9 @@
 
 # Require a VPN before Tor
 
-This optional 0.5.0 feature is unreleased. Its release qualification, including
-ParrotOS VM testing, must complete before it is described as supported in a
-published release. See the validation limits below.
+This optional 0.5.0 feature is unreleased. Its VM qualification gates, listed
+in the validation limits below, have run; the final release candidate must still
+pass them before it is described as supported in a published release.
 
 The supported order is **user → VPN → Tor → destination**. TTP's Tor connects
 to its guards or bridges through the VPN; websites still see a Tor exit.
@@ -176,7 +176,18 @@ recovery: this mode can intentionally disconnect the host.
 
 The session does not survive reboot. TTP's Tor unit, runtime intent and tables
 are volatile; after reboot TTP makes no Tor or VPN guarantee. Your VPN's own
-autostart policy is separate.
+autostart policy is separate. During the shutdown itself the guard remains in
+the kernel: qualification observed no direct packet until the guest powered off,
+with a probe trying direct and tunnel paths throughout. A new session starts
+after boot without `--restore-only`.
+
+**Suspend ends the session in emergency.** On sleep, NetworkManager deactivates
+the physical connection and reactivates it on wake. The frozen path is then
+briefly unavailable, so the watchdog latches verified emergency containment
+even though the WireGuard device itself survives. Nothing leaves directly
+during sleep or resume, and the host stays offline until you run `sudo ttp stop`
+and start a new session. This is intentional fail-closed behavior, not a fault
+to work around; close sensitive applications before stopping.
 
 ## Validation limits and release gate
 
@@ -187,9 +198,11 @@ autostart policy is separate.
 | IPv6 payload/outer transport, required watchdog and explicit stop | Implemented with `TTP_VPN_DUALSTACK=1` |
 | Public Tor startup and DNS, IPv4 underlay/tunnel | Implemented in the external QEMU VM fixture |
 | DHCPv4 renewal with matching request/ACK and retained emergency across reconnect | Implemented in the external QEMU VM fixture |
-| Bridge transport through the required tunnel | Pending release qualification |
-| Remaining IPv6 combinations and suspend/reboot transitions | Pending release qualification |
-| ParrotOS VM installation and networking | Pending; mandatory before 0.5.0 publication |
+| IPv4, IPv6 and dual-stack underlays (DHCPv4, RA and stateful DHCPv6 renewal) with IPv4 or IPv6 endpoints, IPv4 or dual-stack tunnels | Qualified in Debian 13 VMs: six topologies, no cleartext application traffic into the tunnel |
+| Private obfs4 bridge through the tunnel, transport child confined by `ttp-tor` | Qualified in Debian 13 VMs; snowflake, meek and public bridges not qualified |
+| Suspend/resume and reboot with a continuous probe | Qualified in Debian 13 VMs: resume latches emergency; shutdown keeps the guard until power-off |
+| ParrotOS Home 7.4: native DEB, NetworkManager, AppArmor `enforce`, IPv4 underlay/tunnel | Qualified locally (November 2026); other topologies, bridges and transitions run on Debian only |
+| Real providers, Wi-Fi roaming, GUI sessions, Fedora | Not qualified |
 
 `scripts/check-vpn.sh` runs a real NetworkManager/WireGuard tunnel and local
 peer inside a disposable offline systemd container. Capture is on the peer's
@@ -198,23 +211,26 @@ the observer can detect the prohibited direct path. It also tests route fallback
 reconnection with changed identity, coexistence with the TTP table and retained
 protection while a systemd Tor test process is live.
 
-That fixture uses a controlled Tor UID probe, **not a public Tor circuit**. It
-does not establish real-provider compatibility, every IPv6 combination, DHCP renewal,
-Tor bridges, suspend/resume or ParrotOS support. Those require VM qualification
-before 0.5.0 release: actual TTP startup and Tor verification through the tunnel,
-DNS interception, IPv4/IPv6 underlay and tunnel combinations, transport failures,
-watchdog loss, emergency latching, stop/recovery and reboot/suspend transitions
-with an observer outside the guest. Include ParrotOS package installation and
-its NetworkManager configuration; keep failures/inconclusive results visible.
+That fixture uses a controlled Tor UID probe, **not a public Tor circuit**. The
+VM qualification below adds actual TTP startup and Tor verification through the
+tunnel, DNS interception, the IPv4/IPv6 combinations, bridges, transport
+failures, emergency latching, stop/recovery and suspend/reboot, with an
+observer outside the guest.
 
-The [QEMU qualification recipe](vm-testing.md#required-vpn-with-real-tor) covers
-the first IPv4 underlay/tunnel path with real Tor, non-exempt hostname-based
-HTTPS verification, DHCP renewal, tunnel loss and emergency persistence after
-reconnection. It captures the client's physical path outside the guest. Cleartext
-controls must be reachable before protection and after explicit stop. The stop
-phase ends protection intentionally; restored resolver/network services may
-then emit ordinary physical traffic. This does not complete the remaining gates
-in the table above.
+The [QEMU qualification recipe](vm-testing.md#required-vpn-with-real-tor) runs
+real Tor with non-exempt hostname-based HTTPS verification, DHCP/DHCPv6
+renewal, tunnel loss and emergency persistence after reconnection. It captures
+the client's physical path outside the guest and counts, at the peer, any
+cleartext application request that enters the tunnel. Cleartext controls must
+be reachable before protection and after explicit stop. The stop phase ends
+protection intentionally; restored resolver/network services may then emit
+ordinary physical traffic.
+
+Limits of that evidence: the guests have no public IPv6 route, so IPv6 is
+measured on the underlay and inside the tunnel while Tor reaches relays over
+IPv4; a successful Tor request over IPv6 is not demonstrated. The bridge is a
+private obfs4 bridge on the test peer. Suspend uses QEMU S3 with NetworkManager's
+default sleep handling. Each scenario observes only the intervals it ran.
 
 The architecture follows [Whonix's VPN-before-Tor fail-closed principle](https://www.whonix.org/wiki/Tunnels/Connecting_to_a_VPN_before_Tor)
 and the [Qubes community VPN gateway design](https://www.qubes-os.org/doc/vpn/).
