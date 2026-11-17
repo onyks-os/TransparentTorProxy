@@ -16,12 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add disposable QEMU VPN qualification with real Tor/DNS, an external packet
   observer, DHCP renewal and persistent containment across tunnel reconnection.
-  Keep ParrotOS, bridge and remaining IPv6/lifecycle release gates explicit.
+- Qualify the required VPN mode across six IPv4/IPv6/dual-stack underlay,
+  endpoint and tunnel topologies, a private obfs4 bridge, suspend/resume and
+  reboot. The observer accepts only the guard's IPv6 control exceptions; peer
+  counters detect cleartext application traffic entering the tunnel; a
+  continuous probe covers sleep and the whole shutdown. Resume latches
+  emergency by design and requires a new session. Run each gate as its own CI job.
 - Add required VPN-before-Tor mode for an active native NetworkManager WireGuard
   profile, with mandatory watchdog, frozen path identity, a kernel guard before
   Tor startup and explicit recovery. Reject bypass/restart and retain emergency
-  across reconnects. See the VPN guide for the restricted scope and pending VM
-  release qualification, including ParrotOS.
+  across reconnects. See the VPN guide for the restricted scope and the VM
+  qualification results, including ParrotOS.
 - Add `ttp monitor`: a passive, root-only terminal view of existing session
   evidence with a short in-memory timeline of changes seen while open. It does
   not run Tor/DNS probes or modify the session; Ctrl-C leaves TTP running.

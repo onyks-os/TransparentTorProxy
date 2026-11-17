@@ -171,15 +171,59 @@ The JSON report marks protected phases explicitly. Explicit stop ends the
 guarantee and checks guard/intent removal and zero Tor main/control PIDs;
 its capture may contain physical traffic from restored resolver services.
 
+The peer also counts packets it receives, independently of any reply: cleartext
+requests arriving through the tunnel at an inner canary (`10.9.0.1:8000`, and
+`[fd09::1]:8000` for a dual-stack tunnel), TCP it forwards to the Internet, and
+connections to an optional private bridge. Before protection, a request through
+the tunnel must increment the inner counter; while protected, application
+requests into the tunnel must leave it at zero. Tor's own relay traffic must
+increment the forwarding counter, which proves that counter can observe.
+
+Select the underlay and tunnel families with `--topology`:
+
+| Topology | Underlay | WireGuard endpoint | Tunnel and TTP flag |
+| --- | --- | --- | --- |
+| `v4-v4` (default) | IPv4, DHCPv4 | IPv4 | IPv4, `--no-ipv6` |
+| `v4-dual` | IPv4, DHCPv4 | IPv4 | IPv4 and IPv6 |
+| `v6-v4` | IPv6, RA and stateful DHCPv6 | IPv6 | IPv4, `--no-ipv6` |
+| `v6-dual` | IPv6, RA and stateful DHCPv6 | IPv6 | IPv4 and IPv6 |
+| `dual-v4` | Both | IPv4 | IPv4, `--no-ipv6` |
+| `dual-dual` | Both | IPv6 | IPv4 and IPv6 |
+
+For an IPv6 underlay the observer additionally accepts exactly the VPN guard's
+IPv6 control exceptions: DHCPv6 546 → 547 and router/neighbor solicitation or
+advertisement with hop limit 255. Every other IPv6 frame, including MLD,
+extension headers, fragments and ICMPv6 errors, is a violation while protected.
+Renewal requires a DHCPv6 Renew answered by a Reply with the same transaction
+ID. Direct canaries are checked in every underlay family. The guests have no
+public IPv6 route: IPv6 is qualified on the underlay and inside the tunnel, and
+Tor still reaches its relays over IPv4.
+
+`--bridge` starts a private, unpublished obfs4 bridge on the peer and starts TTP
+with `--use-bridges` and that bridge line. Tor must verify `IsTor=true` while the
+peer counts bridge connections through the tunnel and **no** forwarded TCP: every
+relay connection went to the bridge. This qualifies the managed Tor's obfs4
+transport child under the VPN guard. It does not qualify snowflake, meek or the
+public bridge distribution.
+
+`--transitions` adds suspend/resume and reboot. A continuous probe repeatedly
+requests the direct and tunnel canaries as root, as `nobody` and, on the direct
+route only, as Tor's UID; its unprotected control must produce visible direct
+packets and inner-tunnel arrivals. With protection active, the guest then
+suspends to RAM for longer than the DHCP lease and WireGuard's session limit,
+and the capture covers the whole sleep and resume. A second protected session
+is rebooted: QEMU pauses the guest at its reboot request, so the capture covers
+the entire shutdown sequence with the probe running. After boot the harness
+requires no retained session, guard, intent or table, then starts a new session.
+
 The same scenarios run on relevant pull requests, weekly and on demand in
-`.github/workflows/vpn-vm.yml`; CI uploads reports and captures, excluding disks
-and seed images.
+`.github/workflows/vpn-vm.yml`, as one job per topology plus bridge and
+transition jobs. CI uploads reports and captures, excluding disks and seed images.
 
 Evidence is in `results.json`, guest version reports, phase logs and external
-`client/*.pcap` files. The current topology is IPv4 underlay/IPv4 tunnel with
-`--no-ipv6`. The default Debian run does not qualify ParrotOS, Fedora, bridge
-transports, other IPv6 combinations or every lifecycle transition. Keep those gates pending in
-the [VPN validation table](vpn.md#validation-limits-and-release-gate).
+`client/*.pcap` files. Debian runs do not qualify ParrotOS, Fedora, GUI
+sessions, Wi-Fi roaming or real provider networks. See the
+[VPN validation table](vpn.md#validation-limits-and-release-gate) for each gate.
 
 ### Native Parrot and AppArmor qualification
 

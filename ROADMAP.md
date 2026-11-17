@@ -89,14 +89,13 @@ They exclude decision waiting time and are not a release-date commitment.
 | 2 | **Degraded-state contract:** distinguish inconclusive Tor verification, requested versus live watchdog, and killswitch requested/applied/verified. Correct claims of isolation only after defining what evidence supports them. | Approved in ADR 0013; implemented: frozen budgets, typed checks, useful-progress watchdog, independent termination handler and verified persistent emergency. | Complete; release validation below. |
 | 3 | **Delivered desktop notifications:** define recipients, events, delivery evidence and the privilege boundary between the system service and desktop sessions before choosing an implementation. | Approved in ADR 0013; implemented: optional unprivileged recipient agent, authenticated IPC, D-Bus acceptance evidence and CLI/journal fallback. | Complete; release validation below. |
 | 4 | **`ttp monitor`:** passive terminal view of existing session, watchdog and containment evidence, with changes seen since opening. | Approved in ADR 0014; implemented for 0.5.0. | Complete; release validation below. |
-| 5 | **Required VPN before Tor:** active native NM WireGuard full tunnel, one numeric peer, mandatory watchdog, independent kernel guard before Tor and retained emergency. | Approved in ADR 0015; implementation and qualification in progress. [Scope and release gates](docs/web/how-to/vpn.md). | VM qualification pending, including ParrotOS. |
+| 5 | **Required VPN before Tor:** active native NM WireGuard full tunnel, one numeric peer, mandatory watchdog, independent kernel guard before Tor and retained emergency. | Approved in ADR 0015; implemented. VM gates qualified: six IPv4/IPv6 topologies, private obfs4 bridge, suspend/resume and reboot on Debian 13; IPv4 path on ParrotOS Home 7.4. [Scope, results and limits](docs/web/how-to/vpn.md). | Complete; release validation below. |
 | Release | **Integration and release validation:** unit/NSE tests, resolver compatibility, VM lifecycle, packaging, documentation and regression review across supported distributions. | Required before publishing 0.5.0. | 2–3 days |
 
-The VPN contract is now approved. Its original 5–10 day implementation estimate
-must be reassessed after controlled-tunnel and VM qualification; integration and
-release validation remains required. NSE changes needed for future scenarios
-must be scoped separately; these estimates do
-not authorize changes to NSE.
+The VPN feature work and its VM gates are complete; integration and release
+validation remains required on the final candidate. NSE changes needed for
+future scenarios must be scoped separately; these estimates do not authorize
+changes to NSE.
 
 Supply-chain verification and reproducible builds already shipped in 0.4.10;
 they remain release checks rather than unfinished 0.5.0 feature work.

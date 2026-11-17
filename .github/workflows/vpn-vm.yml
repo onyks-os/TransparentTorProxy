@@ -28,9 +28,23 @@ permissions:
 
 jobs:
   required-vpn:
-    name: Real Tor through required WireGuard (Debian VM)
+    name: Real Tor through required WireGuard (Debian VM, ${{ matrix.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      # One job per release gate in docs/web/how-to/vpn.md. Every topology
+      # keeps the external observer, positive controls and fault scenarios.
+      matrix:
+        include:
+          - { name: "v4-v4", args: "--topology v4-v4", timeout: 40 }
+          - { name: "v4-dual", args: "--topology v4-dual", timeout: 40 }
+          - { name: "v6-v4", args: "--topology v6-v4", timeout: 40 }
+          - { name: "v6-dual", args: "--topology v6-dual", timeout: 40 }
+          - { name: "dual-v4", args: "--topology dual-v4", timeout: 40 }
+          - { name: "dual-dual", args: "--topology dual-dual", timeout: 40 }
+          - { name: "obfs4-bridge", args: "--topology v4-v4 --bridge", timeout: 50 }
+          - { name: "suspend-reboot", args: "--topology v4-v4 --transitions", timeout: 70 }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -56,17 +70,21 @@ jobs:
             -o "$BASE/debian-13-genericcloud-amd64-20261103-2651.qcow2"
 
       - name: Run public Tor, DNS, DHCP and failure scenarios
+        env:
+          SCENARIO: ${{ matrix.args }}
         run: |
+          # SCENARIO comes from the fixed matrix above, never from event input.
+          # shellcheck disable=SC2086
           python3 scripts/vm/vpn/run.py \
             --base "${{ runner.temp }}/vpn-base/debian-13-genericcloud-amd64-20261103-2651.qcow2" \
             --checksums "${{ runner.temp }}/vpn-base/SHA512SUMS" \
-            --work "${{ runner.temp }}/vpn-run"
+            --work "${{ runner.temp }}/vpn-run" $SCENARIO
 
       - name: Upload reports and external captures
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: required-vpn-debian-vm
+          name: required-vpn-debian-vm-${{ matrix.name }}
           path: |
             ${{ runner.temp }}/vpn-run/results.json
             ${{ runner.temp }}/vpn-run/*/*.pcap
