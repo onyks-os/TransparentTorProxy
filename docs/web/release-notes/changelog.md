@@ -56,6 +56,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ttp check` no longer latches emergency containment on a healthy session by
+  sampling the required watchdog mid-evaluation. A live watchdog reports itself
+  as evaluating during each periodic check and after each nftables or DNS-file
+  event; one sample in that window counted as "no operational evidence" (2 of
+  ~56 CI VPN VM runs, whose watchdog then reported the emergency table as a
+  firewall integrity failure). `check` and watchdog startup now wait for the
+  supervisor's next completed observation, bounded by its own deadline (25 s by
+  default); stopped, stale or foreign evidence still contains at once.
 - Close every TCP connection redirected to Tor before `ttp stop` removes its
   rules. An orphaned socket backing off between retransmissions could survive
   the fixed 300 ms reject window and, once the rules were gone, send its FIN in

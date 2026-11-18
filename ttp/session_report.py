@@ -270,9 +270,10 @@ def check_session() -> tuple[Verification, Result]:
     verification = verify_session(timeout=settings.verification.timeout, lock=lock)
     result = record_verification(lock, verification) if lock else verification.result
     if lock and lock.get("watchdog_requested"):
-        from ttp.watchdog.service import watchdog_observation
+        from ttp.watchdog.service import settled_watchdog_observation
 
-        if watchdog_observation()["value"] not in ("healthy", "emergency"):
+        # Containment decision: never on a sample taken mid-evaluation.
+        if settled_watchdog_observation(settings.watchdog)["value"] not in ("healthy", "emergency"):
             result = Result(
                 result.diagnostics
                 + request_emergency(
