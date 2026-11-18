@@ -495,6 +495,26 @@ PY
 """
 
 
+# Protection begins when the guard exists, not when `ttp start` is invoked:
+# before that the kernel may emit its own link-local control (MLD, IGMP).
+PROTECTION_MARKER = "172.31.250.99"
+GUARD_MARK = ARP_TICK.replace('socket.inet_aton("172.31.250.1")', f'socket.inet_aton("{PROTECTION_MARKER}")')
+
+
+def guarded(start: str) -> str:
+    """Run `ttp start`, sending the protection marker once its guard is in the kernel.
+
+    The marker follows the guard by one `nft list` poll (milliseconds); frames
+    in that gap are reported before the marker, never discarded.
+    """
+    return (
+        f"{start} > /tmp/ttp-start.log 2>&1 &\nstarting=$!\n"
+        "until nft list table inet ttp_vpn >/dev/null 2>&1; do\n"
+        '    kill -0 "$starting" 2>/dev/null || break\n'
+        "done\n" + GUARD_MARK + 'set +e\nwait "$starting"\ncode=$?\nset -e\ncat /tmp/ttp-start.log\nexit "$code"\n'
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", type=Path, required=True, help="Debian 13 genericcloud qcow2")
@@ -726,7 +746,7 @@ dns-search=~.;
                 )[1],
             )
 
-            def phase(name, script=None, *, action=None, protected=True, timeout=60, tick=True):
+            def phase(name, script=None, *, action=None, protected=True, timeout=60, tick=True, marker=None):
                 path = client.capture(name)
                 try:
                     if action is not None:
@@ -738,7 +758,9 @@ dns-search=~.;
                         client.agent.run(ARP_TICK, timeout=5)
                 finally:
                     client.stop_capture()
-                evidence = inspect_capture(path, client_mac=MAC, endpoint=endpoint, dhcp_server=dhcp_server)
+                evidence = inspect_capture(
+                    path, client_mac=MAC, endpoint=endpoint, dhcp_server=dhcp_server, marker=marker
+                )
                 record(name, {"protected": protected, "exitcode": code, **evidence})
                 if code or (protected and evidence["violations"]):
                     raise RuntimeError(f"{name} failed; see {client.work / (name + '.txt')}")
@@ -771,7 +793,7 @@ dns-search=~.;
             if any(arrived[f"tunnel{f}"] <= 0 for f in topology.tunnel_families):
                 raise RuntimeError("Peer did not count cleartext tunnel requests: observer inconclusive")
             before = counters()
-            phase("tor_start", start, timeout=400)
+            phase("tor_start", guarded(start), timeout=400, marker=PROTECTION_MARKER)
             # A public Tor circuit can fail a TLS request (EOF, broken pipe)
             # without any containment fault. Up to three attempts, each logged
             # with its address family; leak verdicts come only from captures
@@ -861,7 +883,15 @@ dns-search=~.;
                 'assert r["emergency"]["requested"] and r["emergency"]["verified"]\'\n'
             )
             denied_direct = "".join(denied(canary(f)) for f in topology.families)
-            phase("tunnel_loss", f"nmcli con down uuid {UUID}\n" + denied_direct + "sleep 35\n" + emergency, timeout=65)
+            phase(
+                "tunnel_loss",
+                f"nmcli con down uuid {UUID}\n"
+                + (orphan_script(topology) if orphan_families(topology) else "")
+                + denied_direct
+                + "sleep 35\n"
+                + emergency,
+                timeout=100,
+            )
             phase(
                 "reconnect_latched",
                 f"nmcli con up uuid {UUID}\nsleep 5\n" + all_denied + emergency,
@@ -874,11 +904,15 @@ dns-search=~.;
             )
             # Teardown regression: connections redirected during the session
             # must not reach their original destination after `ttp stop`.
-            phase("orphan_stimulus", orphan_script(topology), timeout=90)
-            orphans = int(report_line_prefix(client.work / "orphan_stimulus.txt", "ORPHANS "))
-            record("orphans_before_stop", orphans)
-            if orphans <= 0:
-                raise RuntimeError("No orphaned redirected socket before stop: teardown regression inconclusive")
+            regression = bool(orphan_families(topology))
+            if regression:
+                phase("orphan_count", ORPHAN_COUNT, timeout=30)
+                orphans = int(report_line_prefix(client.work / "orphan_count.txt", "ORPHANS "))
+                record("orphans_before_stop", orphans)
+                if orphans <= 0:
+                    raise RuntimeError("No orphaned redirected socket before stop: teardown regression inconclusive")
+            else:
+                record("orphans_before_stop", "not applicable: no redirected family on the physical link")
             evidence = phase(
                 "explicit_stop",
                 # Orphans retransmit with backoff; observe well past the stop.
@@ -899,7 +933,7 @@ dns-search=~.;
             evidence = phase("stop_control", routes + direct, protected=False)
             require_direct_paths("stop_control", evidence)
             if args.require_apparmor:
-                phase("apparmor_start", start, timeout=400)
+                phase("apparmor_start", guarded(start), timeout=400, marker=PROTECTION_MARKER)
                 phase(
                     "apparmor_loss",
                     "apparmor_parser --replace --skip-cache --Complain /run/ttp/ttp-tor.apparmor\n"
@@ -1003,7 +1037,7 @@ def transitions(
     if any(seen[f"tunnel{f}"] <= 0 for f in topology.tunnel_families):
         raise RuntimeError("Probe did not reach the tunnel canary without protection: probe inconclusive")
 
-    phase("suspend_start", start, timeout=400)
+    phase("suspend_start", guarded(start), timeout=400, marker=PROTECTION_MARKER)
     before = counters()
 
     def suspend():
@@ -1039,7 +1073,7 @@ def transitions(
     # A fresh session for reboot. Reactivation runs unprotected: between the
     # old tunnel's removal and the new one, the host routes physically.
     phase("reboot_prepare", f"nmcli con up uuid {UUID}\nsleep 3\n", protected=False)
-    phase("reboot_start", start + "\n" + verified_request, timeout=460)
+    phase("reboot_start", guarded(start) + verified_request, timeout=460, marker=PROTECTION_MARKER)
     before = counters()
 
     def reboot():
@@ -1085,26 +1119,41 @@ def transitions(
         protected=False,
         timeout=150,
     )
-    phase("restart_after_reboot", start + "\n" + verified_request + "ttp status --json", timeout=460)
+    phase(
+        "restart_after_reboot",
+        guarded(start) + verified_request + "ttp status --json",
+        timeout=460,
+        marker=PROTECTION_MARKER,
+    )
     phase("restart_stop", stopped, protected=False)
+
+
+def orphan_families(t: Topology) -> list[int]:
+    """Families where a redirected orphan could reach the physical link.
+
+    TTP redirects IPv4 always and IPv6 only with a dual-stack tunnel
+    (--no-ipv6 drops IPv6). The family must also exist on the underlay: with
+    the tunnel down there is no other route, and no leak path. Empty only
+    for v6-v4, where the regression is not applicable.
+    """
+    return [f for f in t.tunnel_families if f in t.families]
 
 
 def orphan_script(t: Topology) -> str:
     """Leave redirected connections behind as orphaned sockets.
 
-    During emergency Tor accepts on its TransPort but cannot forward, so a
-    client that queued unread data and closed keeps an orphan retransmitting
-    its FIN. These sockets once outlived `ttp stop` and reached their original
-    destination in cleartext. Prints how many orphans exist.
+    Run right after the tunnel drops: the redirect still holds until the
+    watchdog latches emergency (whose table has no NAT chain), and Tor accepts
+    on its TransPort but cannot forward. A client that times out, or closes
+    with unread data queued, keeps an orphan retransmitting its FIN. Such
+    sockets once outlived `ttp stop` and reached their original destination
+    in cleartext. See ORPHAN_COUNT for the positive control.
     """
-    # Only families TTP redirects can leave redirected orphans: IPv4 always,
-    # IPv6 only with a dual-stack tunnel (--no-ipv6 drops IPv6 instead).
-    redirected = t.tunnel_families
+    redirected = orphan_families(t)
     targets = [(f, CANARY[f]) for f in redirected]
     # Both shapes seen to leave orphans: a timed-out HTTP client (the original
-    # observation) and a client that closes with unread data queued. curl binds
-    # the underlay address, so it runs only where that family exists.
-    curls = "".join(f"for _ in 1 2 3 4; do {canary(f)} & done\n" for f in redirected if f in t.families)
+    # observation) and a client that closes with unread data queued.
+    curls = "".join(f"for _ in 1 2 3 4; do {canary(f)} & done\n" for f in redirected)
     return (
         curls
         + f"""python3 - <<'PY'
@@ -1122,14 +1171,20 @@ for family, host in {[(4 if f == 4 else 6, h) for f, h in targets]!r}:
         except OSError:
             pass
         client.close()
-time.sleep(5)  # the timed-out HTTP clients have closed by now
+PY
+"""
+    )
+
+
+ORPHAN_COUNT = """sleep 1
+python3 - <<'PY'
+import subprocess
 out = subprocess.run(["ss", "-Htan", "( dport = :8000 )"], capture_output=True, text=True, check=True).stdout
 orphans = [line for line in out.splitlines() if line.split()[0] in ("FIN-WAIT-1", "CLOSING", "LAST-ACK")]
 print(out)
 print("ORPHANS", len(orphans))
 PY
 """
-    )
 
 
 def report_line_prefix(path: Path, prefix: str) -> str:
