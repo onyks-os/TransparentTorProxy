@@ -152,7 +152,9 @@ def _ipv6(frame: bytes) -> tuple[int, int, str, bytes]:
     return ip[6], ip[7], str(ipaddress.ip_address(ip[24:40])), ip[40:]
 
 
-def inspect_capture(path: Path, *, client_mac: bytes, endpoint: str, dhcp_server: str | None = None) -> dict:
+def inspect_capture(
+    path: Path, *, client_mac: bytes, endpoint: str, dhcp_server: str | None = None, marker: str | None = None
+) -> dict:
     """Fail on malformed/unknown client traffic, including empty/truncated pcaps.
 
     Accepted outgoing frames mirror the VPN guard's underlay exceptions exactly:
@@ -162,6 +164,10 @@ def inspect_capture(path: Path, *, client_mac: bytes, endpoint: str, dhcp_server
     MLD, is a violation. The destination canary is a real listening server on
     the peer. ``dhcp_server`` names the DHCPv4 server whose ACK proves a
     renewal; it defaults to an IPv4 endpoint.
+
+    ``marker`` names the target address of an ARP request the client sends
+    once the protection under test exists. Frames before it are reported as
+    ``before_marker`` instead of violations; a missing marker is inconclusive.
     """
     endpoint = str(ipaddress.ip_address(endpoint))
     if dhcp_server is None and ":" not in endpoint:
@@ -172,6 +178,9 @@ def inspect_capture(path: Path, *, client_mac: bytes, endpoint: str, dhcp_server
     acknowledgements: set[bytes] = set()
     renewals6: set[bytes] = set()
     replies6: set[bytes] = set()
+    before: collections.Counter[str] = collections.Counter()
+    marked = marker is None
+    sink = violations if marked else before
     with path.open("rb") as capture:
         header = capture.read(24)
         if len(header) != 24 or header[:4] != b"\xd4\xc3\xb2\xa1":
@@ -235,6 +244,8 @@ def inspect_capture(path: Path, *, client_mac: bytes, endpoint: str, dhcp_server
             kind = struct.unpack("!H", frame[12:14])[0]
             if kind == 0x0806:
                 counts["arp"] += 1
+                if not marked and len(frame) >= 42 and str(ipaddress.ip_address(frame[38:42])) == marker:
+                    marked, sink = True, violations
                 continue
             if kind == 0x86DD:
                 header, hops, dst, payload = _ipv6(frame)
@@ -261,10 +272,10 @@ def inspect_capture(path: Path, *, client_mac: bytes, endpoint: str, dhcp_server
                         counts["ndp"] += 1
                         continue
                     port = f"/type{payload[0]}"
-                violations[f"{dst}/proto{header}{port}"] += 1
+                sink[f"{dst}/proto{header}{port}"] += 1
                 continue
             if kind != 0x0800 or len(frame) < 34:
-                violations[f"ethertype:{kind:#x}"] += 1
+                sink[f"ethertype:{kind:#x}"] += 1
                 continue
             ip = frame[14:]
             ihl = (ip[0] & 15) * 4
@@ -279,11 +290,16 @@ def inspect_capture(path: Path, *, client_mac: bytes, endpoint: str, dhcp_server
             elif proto == 17 and not fragmented and sport == 68 and dport == 67:
                 counts["dhcp"] += 1
             else:
-                violations[f"{dst}/proto{proto}/port{dport}"] += 1
+                sink[f"{dst}/proto{proto}/port{dport}"] += 1
     if not counts["outgoing"]:
         raise ValueError("No outgoing frames: observer is inconclusive")
     if renewals:
         counts["dhcp_renewals_acknowledged"] = len(renewals & acknowledgements)
     if renewals6:
         counts["dhcpv6_renewals_acknowledged"] = len(renewals6 & replies6)
-    return {"counts": dict(counts), "violations": dict(violations)}
+    if not marked:
+        raise ValueError("Protection marker missing: observer is inconclusive")
+    result = {"counts": dict(counts), "violations": dict(violations)}
+    if marker is not None:
+        result["before_marker"] = dict(before)
+    return result

@@ -167,13 +167,19 @@ reconnection without reopening and explicit stop with guard removal.
 Each phase ends with a controlled ARP request so that even an isolated guest
 must produce observable link-layer traffic. This adds no IP exception. DHCP
 renewal requires a matching DHCPREQUEST/DHCPACK transaction, not just retries.
-The JSON report marks protected phases explicitly. Explicit stop ends the
+The JSON report marks protected phases explicitly. A protected start phase
+counts violations from the moment the guard exists: the harness polls for
+`inet ttp_vpn` and then sends an ARP marker, and frames before it (for example
+the kernel's own MLD reports) are reported as `before_marker`. The marker
+trails the guard by one `nft` poll, a few milliseconds; a missing marker is
+inconclusive. Explicit stop ends the
 guarantee and checks guard/intent removal and zero Tor main/control PIDs;
 its capture may contain physical traffic from restored resolver services.
 
 The peer also counts packets it receives, independently of any reply: cleartext
 requests arriving through the tunnel at an inner canary (`10.9.0.1:8000`, and
-`[fd09::1]:8000` for a dual-stack tunnel), TCP it forwards to the Internet, and
+`[fd09::1]:8000` for a dual-stack tunnel), new TCP connections (SYN) it forwards
+to the Internet, and
 connections to an optional private bridge. Before protection, a request through
 the tunnel must increment the inner counter; while protected, application
 requests into the tunnel must leave it at zero. Tor's own relay traffic must
@@ -199,10 +205,23 @@ transaction ID. Direct canaries are checked in every underlay family. The guests
 public IPv6 route: IPv6 is qualified on the underlay and inside the tunnel, and
 Tor still reaches its relays over IPv4.
 
+Right after the tunnel drops, before the watchdog latches emergency (whose
+table has no NAT chain), the redirect still holds and Tor cannot forward. The
+harness opens redirected connections there and leaves them as orphaned sockets
+(timed-out HTTP clients and clients closing with unread data). It targets the
+families TTP redirects: IPv4, and IPv6 only with a dual-stack tunnel, since
+`--no-ipv6` drops IPv6 instead. Before explicit stop at least one orphan must
+still exist. After `ttp stop` it observes for 60 seconds: any packet to a canary
+or to a loopback destination on the physical link fails the run, because it
+belongs to a connection redirected during the session. Without the teardown's
+socket closure, `v6-dual` reproduced this leak in every run.
+
 `--bridge` starts a private, unpublished obfs4 bridge on the peer and starts TTP
 with `--use-bridges` and that bridge line. Tor must verify `IsTor=true` while the
-peer counts bridge connections through the tunnel and **no** forwarded TCP: every
-relay connection went to the bridge. This qualifies the managed Tor's obfs4
+peer counts bridge connections through the tunnel and **no** forwarded TCP
+connection: every relay connection went to the bridge. All forwarded TCP
+segments are reported too; a stray segment of a connection opened before the
+session is not a relay connection. This qualifies the managed Tor's obfs4
 transport child under the VPN guard. It does not qualify snowflake, meek or the
 public bridge distribution.
 

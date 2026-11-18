@@ -59,6 +59,9 @@ def stop_command(
 
         tor_control.graceful_shutdown(timeout=10)
         tor_install.stop_tor_service()
+        from ttp.commands.lifecycle import close_redirected_or_retain
+
+        close_redirected_or_retain(state.read_lock())
         firewall.destroy_rules()
 
         lock = state.read_lock()

@@ -394,7 +394,13 @@ def test_stop_graceful_teardown_sequence(
     mock_restore.side_effect = lambda *args, **kwargs: call_order.append("restore")
     mock_delete.side_effect = lambda *args, **kwargs: call_order.append("delete")
 
-    result = runner.invoke(app, ["stop"])
+    def close_sockets(port):
+        assert port == 9041
+        call_order.append("close_sockets")
+        return 0
+
+    with patch("ttp.firewall.close_redirected_sockets", side_effect=close_sockets):
+        result = runner.invoke(app, ["stop"])
     assert result.exit_code == 0
 
     assert mock_run.call_args[0][0] == ["/usr/sbin/conntrack", "-F"]
@@ -411,6 +417,9 @@ def test_stop_graceful_teardown_sequence(
         "unlabel",
         "slaughter",
         "sleep",
+        # Redirected sockets die while the lockdown and redirect still hold,
+        # before conntrack loses their mapping and the rules are removed.
+        "close_sockets",
         "run",
         "destroy",
         "restore",
@@ -547,3 +556,37 @@ def test_signal_handler_tears_down_and_exits_zero():
 
     do_stop.assert_called_once()
     assert exc.value.code == 0
+
+
+@pytest.mark.parametrize("restore", [False, True])
+def test_surviving_redirected_sockets_keep_the_rules_and_the_session(monkeypatch, restore):
+    """A redirected socket that cannot be closed would leave in cleartext once the rules go."""
+    from ttp.firewall.redirected import RedirectedSocketsRemain
+
+    monkeypatch.setattr("ttp.state.read_lock", lambda **kw: {"tor_uid": 100, "transport_port": 9141})
+    with (
+        patch("ttp.watchdog.stop_watchdog"),
+        patch("ttp.tor_control.graceful_shutdown"),
+        patch("ttp.tor_install.stop_tor_service"),
+        patch("ttp.tor_install.unlabel_ports_selinux"),
+        patch("ttp.firewall.apply_teardown_lockdown"),
+        patch("ttp.firewall.apply_active_socket_slaughter"),
+        patch(
+            "ttp.firewall.close_redirected_sockets",
+            side_effect=RedirectedSocketsRemain("1 redirected TCP connection(s) could not be closed"),
+        ) as close,
+        patch("ttp.firewall.destroy_rules") as destroy,
+        patch("ttp.dns.restore_dns") as restore_dns,
+        patch("ttp.state.delete_lock") as delete,
+        patch("ttp.commands.lifecycle.resolve_optional", return_value="/usr/sbin/conntrack"),
+        patch("ttp.commands.lifecycle.subprocess.run") as flush,
+        patch("ttp.commands.lifecycle.time.sleep"),
+    ):
+        result = runner.invoke(app, ["stop", *(["--restore-only"] if restore else [])])
+    assert result.exit_code == 8, result.output
+    close.assert_called_once_with(9141)
+    assert "could not be closed" in result.output
+    destroy.assert_not_called()
+    restore_dns.assert_not_called()
+    delete.assert_not_called()
+    flush.assert_not_called()

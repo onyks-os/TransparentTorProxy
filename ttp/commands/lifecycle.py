@@ -20,6 +20,34 @@ from ttp.commands._common import (
 from ttp.paths import resolve_optional
 
 
+def close_redirected_or_retain(lock: dict | None) -> None:
+    """Close redirected TCP sockets while the rules still hold them; else keep the rules.
+
+    A socket of a connection redirected to the TransPort can outlive Tor and
+    retransmit to its original destination once the rules are gone. The 300 ms
+    reject window above only catches sockets that happen to transmit in it.
+    Exits with code 8 (containment unconfirmed) before any rule, conntrack
+    entry, DNS change or lock is removed, so `ttp stop` can be run again.
+    """
+    from ttp.firewall.redirected import RedirectedSocketsRemain
+
+    port = lock.get("transport_port", 9041) if lock else 9041
+    if type(port) is not int or not 0 < port < 65536:
+        port = 9041
+    console.print(f"{_PREFIX} Closing redirected connections before removing rules...")
+    try:
+        closed = firewall.close_redirected_sockets(port)
+    except RedirectedSocketsRemain as exc:
+        import typer
+
+        from ttp.commands._common import print_error
+
+        print_error("Teardown Retained", str(exc))
+        raise typer.Exit(code=8)
+    if closed:
+        logger.info("Closed %d redirected TCP connection(s) before teardown.", closed)
+
+
 def do_stop() -> None:
     """Internal stop logic - shared by ``stop`` command and signal handler."""
     lock = state.read_lock()
@@ -90,6 +118,7 @@ def do_stop() -> None:
     firewall.apply_active_socket_slaughter()
     console.print(f"{_PREFIX} Waiting 300ms for pending connections to crash...")
     time.sleep(0.3)
+    close_redirected_or_retain(lock)
 
     conntrack_path = resolve_optional("conntrack")
     if conntrack_path:

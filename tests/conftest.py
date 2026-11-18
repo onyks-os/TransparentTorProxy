@@ -188,6 +188,16 @@ def isolated_apparmor_kernel(request, monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def no_kernel_socket_teardown(request, monkeypatch):
+    """Teardown tests never enumerate or destroy the host's real sockets."""
+    if request.node.get_closest_marker("real_redirected_sockets"):
+        return
+    import ttp.firewall
+
+    monkeypatch.setattr(ttp.firewall, "close_redirected_sockets", lambda port: 0)
+
+
+@pytest.fixture(autouse=True)
 def fresh_counter_baseline():
     """The watchdog remembers counter readings between checks; no test inherits another's."""
     from ttp.watchdog import integrity

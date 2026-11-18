@@ -272,3 +272,24 @@ def test_disposable_overlay_preserves_large_base_and_original_bytes(tmp_path, si
     assert info["virtual-size"] >= size
     assert Path(info["backing-filename"]) == base
     assert hashlib.sha256(base.read_bytes()).digest() == original_digest
+
+
+def arp(target: str) -> bytes:
+    body = struct.pack("!HHBBH", 1, 0x0800, 6, 4, 1) + CLIENT + socket.inet_aton("172.31.250.20")
+    return b"\xff" * 6 + CLIENT + b"\x08\x06" + body + bytes(6) + socket.inet_aton(target)
+
+
+def test_only_frames_after_the_protection_marker_are_violations(tmp_path):
+    # Kernel MLD before the guard exists is not a leak of the protected phase.
+    mld = packet6(dst="ff02::16", header=0, payload=bytes(8))
+    leak = packet(dst="198.51.100.7", proto=6, port=8000)
+    path = capture(tmp_path, mld, arp("172.31.250.1"), arp("172.31.250.99"), leak)
+    result = qemu.inspect_capture(path, client_mac=CLIENT, endpoint="172.31.250.1", marker="172.31.250.99")
+    assert result["before_marker"] == {"ff02::16/proto0": 1}
+    assert result["violations"] == {"198.51.100.7/proto6/port8000": 1}
+
+
+def test_a_missing_protection_marker_is_inconclusive(tmp_path):
+    path = capture(tmp_path, packet(), arp("172.31.250.1"))
+    with pytest.raises(ValueError, match="marker"):
+        qemu.inspect_capture(path, client_mac=CLIENT, endpoint="172.31.250.1", marker="172.31.250.99")
