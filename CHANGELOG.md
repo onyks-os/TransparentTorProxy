@@ -160,6 +160,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Record the 0.5.0 qualification status: ROADMAP lists the defects found and
+  fixed during qualification (#132, #149, #150, #152, #154) and what release
+  validation still requires, including ParrotOS re-qualification of the final
+  candidate; ADR 0015 and the README no longer describe VM gates as pending.
 - Document the approved DNSSEC policy, manual resolution of explicit interface
   conflicts and the internal systemd state-format compatibility dependency.
 - Separate completed, approved and undecided 0.5.0 roadmap work, with indicative
