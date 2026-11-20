@@ -134,6 +134,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- Require network-sandbox-engine 2.2.0 for the zero-leak suite. Its captures
+  return from `start()` only once the kernel socket is bound and filtering, so
+  the fixed 0.2 s sleep after it is gone (NSE measured 2.1.2 without the sleep
+  missing about one stimulus in 25). Every capture now also fails when its
+  report says the window was incomplete (kernel drops or limits), and the
+  gateway listener confirms its bind instead of a fixed 0.5 s wait.
 - Cover monitor incident transitions, stale historical evidence, failed
   observations, terminal control sanitization and non-mutating exit signals.
 - Add isolated real systemd/nftables tests for SIGSTOP/SIGKILL, independent
