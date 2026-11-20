@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Document the post-0.5.0 leak-testing and hardening plan, with scenario matrices,
+  evidence gaps, positive/mutation controls, continuous fault observation and
+  release acceptance criteria. Prioritize core hardening before application
+  isolation; retain existing 0.5.0 VPN qualification gates.
 - Add disposable QEMU VPN qualification with real Tor/DNS, an external packet
   observer, DHCP renewal and persistent containment across tunnel reconnection.
   Keep ParrotOS, bridge and remaining IPv6/lifecycle release gates explicit.

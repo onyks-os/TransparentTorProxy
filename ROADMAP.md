@@ -108,14 +108,38 @@ they remain release checks rather than unfinished 0.5.0 feature work.
 
 ---
 
-## v0.6.0 — Isolation Model (Q2 2027+)
+## v0.6.0 — Hardening & Leak-Test Evidence (planned)
 
-**Goal:** Optional per-application isolation instead of (or alongside) system-wide routing.
+**Goal:** Close current evidence gaps and measure containment throughout faults
+and transitions before expanding the isolation model.
+
+The [leak-testing and hardening plan](docs/security/leak-testing-plan.md) defines
+the existing coverage, scenario IDs, priorities, controls, artifacts and release
+acceptance criteria. It adapts Whonix-style dependency removal and packet
+observation to TTP's host boundary. This is planned testing work, not a claim
+that the new matrix has run or approval for changing runtime defaults.
+
+| Order | Work | Completion evidence |
+| :--- | :--- | :--- |
+| 1 | Correct optimistic DNS verdicts and reconcile public claims; investigate LAN/virtual-address overlap. | Timeout/error/counter-only results cannot certify containment; candidate behavior reproduced before assigning impact. |
+| 2 | Extend the existing observer and chaos/lifecycle fixtures with continuous traffic and external capture. | No initial fault window omitted; controls, phase boundaries and capture completeness verified. |
+| 3 | Extend DNS, FIN/RST, IPv6, startup/rollback, route changes, bypass and local-service tests. | Required P0/P1 combinations have targeted mutation controls and separate allowed-path checks. |
+| 4 | Add real browser/WebRTC tests and extend required-VPN fault observation. | Application traffic and initial failure intervals measured; network and browser-privacy findings distinguished. |
+| 5 | Qualify the release candidate and seek focused independent human review. | Traceable matrix and artifacts, explicit residual limits and no missing required evidence. |
+
+Confirmed current in-scope leaks and false-positive test logic enter the earliest
+applicable release; the plan does not defer them automatically to 0.6.0. Existing
+0.5.0 VPN qualification gates remain required before publication. NSE changes
+must be scoped separately. No calendar commitment is made for this work.
+
+### Isolation model — deferred until core hardening is qualified
+
+Optional per-application isolation remains a later design track:
 
 | Item | Description |
-| :--- | :---------- |
+| :--- | :--- |
 | **`ttp run <app>`** | Transient network namespaces routed through Tor via veth pairs. |
-| **Zero system leaks mode** | Host stays on clearnet; only sandboxed apps use Tor. |
+| **Application-scoped routing** | Host stays on clearnet; only selected sandboxed apps use Tor. Requires its own threat model and evidence. |
 
 *Research / long-term (no committed date):*
 
