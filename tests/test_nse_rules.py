@@ -40,6 +40,7 @@ import asyncio
 import contextlib
 import os
 import re
+import shutil
 import socket
 import subprocess
 import threading
@@ -69,7 +70,7 @@ REQUIRE_NSE = os.environ.get("TTP_REQUIRE_NSE") == "1"
 
 try:
     import nse
-    from nse.core.mock_listener import start_mock_listener
+    from nse.core.mock_listener import start_listener
     from nse.core.netns_controller import NetnsController
     from nse.core.rule_engine import RuleEngine
     from nse.core.scapy_injector import _get_mac_address
@@ -83,9 +84,11 @@ except ImportError as exc:  # pragma: no cover - environment-dependent
 IS_ROOT = os.geteuid() == 0
 
 #: Below this, the NSE runner could report PASSED having observed nothing and the
-#: trace monitor could stop reading mid-run without saying so. Verdicts from an
-#: older engine are not evidence, so refuse to produce them.
-MIN_NSE_VERSION = (2, 1, 2)
+#: trace monitor could stop reading mid-run without saying so (< 2.1.0), and a
+#: capture could start without listening, drop packets unreported or open
+#: unfiltered on a bad filter (< 2.2.0). Verdicts from an older engine are not
+#: evidence, so refuse to produce them.
+MIN_NSE_VERSION = (2, 2, 0)
 
 
 def _nse_version() -> tuple[int, ...]:
@@ -112,8 +115,8 @@ if _nse_version() < MIN_NSE_VERSION:
     raise RuntimeError(
         f"network-sandbox-engine {nse.__version__} is installed, but TTP requires "
         f">= {'.'.join(map(str, MIN_NSE_VERSION))}. Earlier versions could report a "
-        f"clean result from an oracle that observed nothing, which would make this "
-        f"suite green against an instrument that was not measuring."
+        f"clean result from an oracle or a capture that observed nothing, which would "
+        f"make this suite green against an instrument that was not measuring."
     )
 
 pytestmark = [pytest.mark.nse, pytest.mark.real_binary_lookup]
@@ -480,12 +483,29 @@ def canary_stimulus():  # type: ignore[no-untyped-def]
 def observe(ns, loop, stimulus, settle: float = 0.4) -> list:  # type: ignore[no-untyped-def]
     """Run *stimulus* with the sniffer armed on the host veth; return what it saw."""
     asserter = PCAPAsserter(iface=ns.ext_iface)
+    # start() returns once the kernel socket is bound and filtering.
     loop.run_until_complete(asserter.start())
-    # Give AsyncSniffer's thread time to attach before generating traffic.
-    loop.run_until_complete(asyncio.sleep(0.2))
     stimulus(ns.name)
     loop.run_until_complete(asyncio.sleep(settle))
-    return loop.run_until_complete(asserter.stop())
+    return finish_capture(asserter, loop)
+
+
+def finish_capture(asserter, loop) -> list:  # type: ignore[no-untyped-def]
+    """Stop *asserter*; refuse a capture that cannot vouch for its window.
+
+    ``stop()`` raises ``CaptureError`` for an unhealthy instrument. Kernel drops
+    are only reported, and a dropped packet reads exactly like a contained one,
+    so an incomplete window fails here. ``None`` means the kernel counters were
+    unavailable; the canaries and positive controls still cover that case.
+    """
+    report = loop.run_until_complete(asserter.stop_report())
+    packets = loop.run_until_complete(asserter.stop())
+    assert report.window_complete is not False, (
+        f"HARNESS FAILED: the capture on {report.iface} was incomplete "
+        f"(kernel drops {report.kernel_drops}, limits {report.limits_reached}); "
+        f"an absence in it would mean nothing."
+    )
+    return packets
 
 
 def observe_with_canary(ns, loop, stimulus, settle: float = 0.4) -> list:  # type: ignore[no-untyped-def]
@@ -504,11 +524,10 @@ def observe_with_canary(ns, loop, stimulus, settle: float = 0.4) -> list:  # typ
     """
     asserter = PCAPAsserter(iface=ns.ext_iface)
     loop.run_until_complete(asserter.start())
-    loop.run_until_complete(asyncio.sleep(0.2))
     stimulus(ns.name)
     canary_stimulus()(ns.name)
     loop.run_until_complete(asyncio.sleep(settle))
-    return loop.run_until_complete(asserter.stop())
+    return finish_capture(asserter, loop)
 
 
 #: Enables tracing for locally generated packets. See observe_trace.
@@ -1299,6 +1318,7 @@ GATEWAY_PORT = 9999
 def gateway_sandbox() -> Iterator[object]:
     """host <-> router <-> server, with a listener answering in the server."""
     controller = NetnsController()
+    loop = asyncio.new_event_loop()
     listener = None
     try:
         controller.create_gateway_topology(
@@ -1311,14 +1331,17 @@ def gateway_sandbox() -> Iterator[object]:
         )
         # Let the veth carriers come up before anything tries to route over them.
         time.sleep(0.5)
-        listener = start_mock_listener(GATEWAY_SERVER_NS, "tcp", GATEWAY_PORT, host="0.0.0.0", use_nsenter=True)
-        time.sleep(0.5)
+        identity = controller.namespace_identity(GATEWAY_SERVER_NS)
+        assert identity is not None, f"{GATEWAY_SERVER_NS} was not created"
+        prefix = [shutil.which("nsenter") or "nsenter", f"--net=/var/run/netns/{GATEWAY_SERVER_NS}", "--"]
+        # Returns once the listener has confirmed its bind; raises otherwise.
+        listener = loop.run_until_complete(start_listener(prefix, identity, "tcp", GATEWAY_PORT, host="0.0.0.0"))
         yield controller
     finally:
         if listener is not None:
-            listener.terminate()
             with contextlib.suppress(Exception):
-                listener.wait(timeout=5)
+                loop.run_until_complete(listener.terminate())
+        loop.close()
         with contextlib.suppress(Exception):
             controller.destroy_netns(GATEWAY_SERVER_NS)
         with contextlib.suppress(Exception):
