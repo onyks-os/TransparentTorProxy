@@ -60,6 +60,7 @@ CTA_PROTO_NUM, CTA_PROTO_SRC_PORT, CTA_PROTO_DST_PORT = 1, 2, 3
 _ADDRESS_ATTRS = {1: "src", 2: "dst", 3: "src", 4: "dst"}  # CTA_IP_V4_*, CTA_IP_V6_*
 IPS_DST_NAT = 1 << 5
 TCP_TIME_WAIT = 6
+TCP_LISTEN = 10
 _ALL_STATES = 0xFFFFFFFF
 _NO_COOKIE = 0xFFFFFFFF
 
@@ -170,6 +171,84 @@ def _dump_flows(ports: Collection[int]) -> list[Flow]:
     return flows_from_dump(messages, set(ports))
 
 
+class Socket(NamedTuple):
+    """One TCP socket from a sock_diag dump."""
+
+    family: int
+    state: int
+    local: str
+    local_port: int
+    remote: str
+    remote_port: int
+
+
+def sockets_from_dump(messages: list[tuple[int, bytes]]) -> list[Socket]:
+    """Parse struct inet_diag_msg replies; refuse an error or a missing end."""
+    sockets: list[Socket] = []
+    for kind, payload in messages:
+        if kind == NLMSG_DONE:
+            return sockets
+        if kind == NLMSG_ERROR:
+            _raise_on_error(payload)
+            continue
+        if kind != SOCK_DIAG_BY_FAMILY:
+            raise ValueError("Unexpected socket diagnostic message")
+        sockets.append(_socket(payload))
+    raise ValueError("Socket diagnostic dump ended without NLMSG_DONE")
+
+
+def _socket(payload: bytes) -> Socket:
+    """Parse one struct inet_diag_msg."""
+    if len(payload) < 52:
+        raise ValueError("Truncated socket diagnostic message")
+    family, state = payload[0], payload[1]
+    size = 16 if family == socket.AF_INET6 else 4
+    local_port, remote_port = struct.unpack_from("!HH", payload, 4)
+    local = str(ipaddress.ip_address(payload[8 : 8 + size]))
+    remote = str(ipaddress.ip_address(payload[24 : 24 + size]))
+    return Socket(family, state, local, local_port, remote, remote_port)
+
+
+def _live(item: Socket) -> bool:
+    """LISTEN and TIME-WAIT sockets never carry the redirected stream."""
+    return item.state not in (TCP_LISTEN, TCP_TIME_WAIT)
+
+
+def transport_flows(sockets: list[Socket], ports: Collection[int]) -> list[Flow]:
+    """Tor's accepted TransPort sockets and the application sockets they serve.
+
+    Conntrack forgets a closing connection within seconds (LAST-ACK/CLOSE
+    timeouts) while the kernel socket keeps retransmitting for minutes, so
+    conntrack alone missed orphaned Tor ends in CI. Only Tor listens on the
+    loopback TransPort; after Tor stops, any connected socket there is its
+    orphan, and its peer address names the application's socket.
+    """
+
+    tor = [
+        item
+        for item in sockets
+        if _live(item) and item.local_port in ports and ipaddress.ip_address(item.local).is_loopback
+    ]
+    peers = {(item.family, item.remote, item.remote_port) for item in tor}
+    flows = [Flow(item.family, item.local, item.local_port, item.remote, item.remote_port) for item in tor]
+    flows += [
+        Flow(item.family, item.local, item.local_port, item.remote, item.remote_port)
+        for item in sockets
+        if _live(item) and (item.family, item.local, item.local_port) in peers and item.local_port not in ports
+    ]
+    return flows
+
+
+def _dump_transport_flows(ports: Collection[int]) -> list[Flow]:
+    sockets: list[Socket] = []
+    for family in (socket.AF_INET, socket.AF_INET6):
+        request = struct.pack("=BBBBI", family, socket.IPPROTO_TCP, 0, 0, _ALL_STATES) + bytes(48)
+        sockets += sockets_from_dump(
+            _exchange(NETLINK_SOCK_DIAG, SOCK_DIAG_BY_FAMILY, NLM_F_REQUEST | NLM_F_DUMP, request)
+        )
+    return transport_flows(sockets, set(ports))
+
+
 def _address(family: int, value: str) -> bytes:
     return socket.inet_pton(family, value).ljust(16, b"\0")
 
@@ -194,7 +273,12 @@ def _destroy(flow: Flow) -> None:
 
 
 def _exists(flow: Flow) -> bool:
-    """A live socket for the flow; TIME-WAIT never transmits on its own."""
+    """A live socket with exactly the flow's tuple.
+
+    The kernel's single-socket lookup falls back to a listener on the local
+    port, so once Tor's accepted end is gone a request for it may return
+    Tor's TransPort listener instead; that socket is not the flow.
+    """
     kind, payload = _exchange(NETLINK_SOCK_DIAG, SOCK_DIAG_BY_FAMILY, NLM_F_REQUEST, socket_request(flow))[0]
     if kind == NLMSG_ERROR:
         try:
@@ -202,7 +286,11 @@ def _exists(flow: Flow) -> bool:
         except FileNotFoundError:
             return False
         raise OSError(errno.EPROTO, "Unexpected socket diagnostic acknowledgement")
-    return payload[1] != TCP_TIME_WAIT
+    if kind != SOCK_DIAG_BY_FAMILY:
+        raise ValueError("Unexpected socket diagnostic message")
+    found = _socket(payload)
+    same = (found.family, found.local, found.local_port, found.remote, found.remote_port) == tuple(flow)
+    return same and _live(found)
 
 
 def close_redirected_sockets(transport_port: int) -> int:
@@ -214,7 +302,9 @@ def close_redirected_sockets(transport_port: int) -> int:
     keep its rules.
     """
     try:
-        flows = _dump_flows({transport_port})
+        # Conntrack names both ends while it remembers the connection; the
+        # socket table still finds Tor's orphaned ends after it has forgotten.
+        flows = list(dict.fromkeys(_dump_flows({transport_port}) + _dump_transport_flows({transport_port})))
     except (OSError, ValueError, KeyError, IndexError) as exc:
         raise RedirectedSocketsRemain(
             f"Redirected connections cannot be enumerated ({exc}); protection retained"
