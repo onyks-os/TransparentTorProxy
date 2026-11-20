@@ -32,7 +32,7 @@ Most commands require root privileges (`sudo`). Exceptions are noted in the tabl
 | Command               | Requires Root | Description                                                                                                                                                  |
 | :-------------------- | :-----------: | :----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ttp start`           |       ✅       | Activates the transparent Tor proxy: installs Tor if missing, applies nftables rules, mounts DNS overlay, waits for Tor bootstrap, and verifies the exit IP. |
-| `ttp stop`            |       ✅       | Zero-leak teardown: stops watchdog, resolves Tor UID, applies teardown lockdown, sends `SHUTDOWN` to Tor, stops Tor service, applies active socket slaughter (TCP RST & reject), waits 300ms, flushes connection tracking via `conntrack -F`, removes nftables rules, unmounts DNS overlay, and deletes the session lock. |
+| `ttp stop`            |       ✅       | Zero-leak teardown: stops watchdog, resolves Tor UID, applies teardown lockdown, sends `SHUTDOWN` to Tor, stops Tor service, applies active socket slaughter (TCP RST & reject), waits 300ms, destroys and verifies closed every redirected TCP socket (exit 8 and nothing removed if one remains), flushes connection tracking via `conntrack -F`, removes nftables rules, unmounts DNS overlay, and deletes the session lock. |
 | `ttp restart`         |       ✅       | Shortcut for `ttp stop` followed by `ttp start`. Accepts all `start` options.                                                                                |
 | `ttp refresh`         |       ✅       | Requests a new Tor circuit via `NEWNYM` signal. All active streams are rotated for a new exit IP.                                                            |
 | `ttp status [--json]` | Recommended | Read-only evidence with session health separated from command success; no HTTP probe. Root is needed to read private session evidence. |
@@ -179,6 +179,7 @@ TTP creates a dedicated, isolated nftables table that does not interfere with an
 | **Application method** | Atomic load, the ruleset piped to `nft -f -` on stdin (all-or-nothing; no file in `/run/ttp` is read back) |
 | **Teardown Lockdown**  | `nft insert rule inet ttp filter_out [meta skuid != <tor_uid>] oifname != "lo" drop` (applied at stop start) |
 | **Socket Slaughter**   | `nft insert rule inet ttp filter_out meta l4proto tcp counter reject with tcp reset` and `nft insert rule inet ttp filter_out meta l4proto udp counter reject` (applied before final cleanup) |
+| **Redirected socket closure** | Netlink conntrack dump (TCP, destination NAT, reply from the loopback TransPort) plus a sock_diag dump of IPv4/IPv6 TCP sockets (connected ends on the loopback TransPort and their peers), `SOCK_DESTROY` for the application's and Tor's end of each, lookup to verify (live state and exact tuple); applied before the flush |
 | **Conntrack Flush**    | `conntrack -F` (atomic flush of Netfilter tracked streams)      |
 | **Cleanup method**     | `nft flush table inet ttp` followed by `nft delete table inet ttp`; an absent table is treated as already cleaned up |
 

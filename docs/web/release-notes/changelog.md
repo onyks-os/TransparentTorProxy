@@ -15,12 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   isolation; retain existing 0.5.0 VPN qualification gates.
 - Add disposable QEMU VPN qualification with real Tor/DNS, an external packet
   observer, DHCP renewal and persistent containment across tunnel reconnection.
-  Keep ParrotOS, bridge and remaining IPv6/lifecycle release gates explicit.
+- Qualify the required VPN mode across six IPv4/IPv6/dual-stack underlay,
+  endpoint and tunnel topologies, a private obfs4 bridge, suspend/resume and
+  reboot. The observer accepts only the guard's IPv6 control exceptions; peer
+  counters detect cleartext application traffic entering the tunnel; a
+  continuous probe covers sleep and the whole shutdown. Resume latches
+  emergency by design and requires a new session. Run each gate as its own CI job.
 - Add required VPN-before-Tor mode for an active native NetworkManager WireGuard
   profile, with mandatory watchdog, frozen path identity, a kernel guard before
   Tor startup and explicit recovery. Reject bypass/restart and retain emergency
-  across reconnects. See the VPN guide for the restricted scope and pending VM
-  release qualification, including ParrotOS.
+  across reconnects. See the VPN guide for the restricted scope and the VM
+  qualification results, including ParrotOS.
 - Add `ttp monitor`: a passive, root-only terminal view of existing session
   evidence with a short in-memory timeline of changes seen while open. It does
   not run Tor/DNS probes or modify the session; Ctrl-C leaves TTP running.
@@ -55,6 +60,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ttp check` no longer latches emergency containment on a healthy session by
+  sampling the required watchdog mid-evaluation. A live watchdog reports itself
+  as evaluating during each periodic check and after each nftables or DNS-file
+  event; one sample in that window counted as "no operational evidence" (2 of
+  ~56 CI VPN VM runs, whose watchdog then reported the emergency table as a
+  firewall integrity failure). `check` and watchdog startup now wait for the
+  supervisor's next completed observation, bounded by its own deadline (25 s by
+  default); stopped, stale or foreign evidence still contains at once.
+- Close every TCP connection redirected to Tor before `ttp stop` removes its
+  rules. An orphaned socket backing off between retransmissions could survive
+  the fixed 300 ms reject window and, once the rules were gone, send its FIN in
+  cleartext to the destination an application tried during the session; Tor's
+  orphaned TransPort end kept the host answering with RSTs that left the
+  physical link with a stale `::1` destination (IPv6, seen by the VPN VM's
+  external capture). Stop now destroys both ends of each connection with
+  `SOCK_DESTROY`, verifies they are gone, and otherwise exits 8 keeping rules,
+  DNS and lock. Connections come from conntrack and from the kernel socket
+  table, because conntrack forgets a closing connection within seconds while
+  Tor's orphaned end in LAST-ACK keeps retransmitting for minutes (21 RSTs to
+  `::1` in a dual-stack VM run). No `conntrack` or `ss` binary is required.
 - Reserve Tor's virtual destinations before LAN bypass, redirecting synthetic
   TCP and rejecting unredirected traffic. Narrow IPv6 automapping to `fc00::/8`
   so ordinary `fd00::/8` LANs remain available. Add a real-onion dual-stack VM
@@ -124,6 +149,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- Require network-sandbox-engine 2.2.0 for the zero-leak suite. Its captures
+  return from `start()` only once the kernel socket is bound and filtering, so
+  the fixed 0.2 s sleep after it is gone (NSE measured 2.1.2 without the sleep
+  missing about one stimulus in 25). Every capture now also fails when its
+  report says the window was incomplete (kernel drops or limits), and the
+  gateway listener confirms its bind instead of a fixed 0.5 s wait.
 - Cover monitor incident transitions, stale historical evidence, failed
   observations, terminal control sanitization and non-mutating exit signals.
 - Add isolated real systemd/nftables tests for SIGSTOP/SIGKILL, independent
@@ -145,6 +176,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Record the 0.5.0 qualification status: ROADMAP lists the defects found and
+  fixed during qualification (#132, #149, #150, #152, #154) and what release
+  validation still requires, including ParrotOS re-qualification of the final
+  candidate; ADR 0015 and the README no longer describe VM gates as pending.
 - Document the approved DNSSEC policy, manual resolution of explicit interface
   conflicts and the internal systemd state-format compatibility dependency.
 - Separate completed, approved and undecided 0.5.0 roadmap work, with indicative

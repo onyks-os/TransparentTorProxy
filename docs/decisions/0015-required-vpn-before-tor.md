@@ -4,8 +4,12 @@
 
 ## Status
 
-Accepted by the maintainer, 2026-11-08. Implementation and release qualification
-in progress for 0.5.0. This approves the VPN scope separately from ADR 0013.
+Accepted by the maintainer, 2026-11-08. Implemented for 0.5.0; its VM
+qualification gates ran in November 2026 (results and limits in the operator
+guide). The final 0.5.0 candidate must still pass them before release. The
+maintainer decided on 2026-11-17 that resume after suspend latching emergency
+is the intended fail-closed outcome. This approves the VPN scope separately from
+ADR 0013.
 
 ## Decision
 

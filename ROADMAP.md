@@ -89,14 +89,24 @@ They exclude decision waiting time and are not a release-date commitment.
 | 2 | **Degraded-state contract:** distinguish inconclusive Tor verification, requested versus live watchdog, and killswitch requested/applied/verified. Correct claims of isolation only after defining what evidence supports them. | Approved in ADR 0013; implemented: frozen budgets, typed checks, useful-progress watchdog, independent termination handler and verified persistent emergency. | Complete; release validation below. |
 | 3 | **Delivered desktop notifications:** define recipients, events, delivery evidence and the privilege boundary between the system service and desktop sessions before choosing an implementation. | Approved in ADR 0013; implemented: optional unprivileged recipient agent, authenticated IPC, D-Bus acceptance evidence and CLI/journal fallback. | Complete; release validation below. |
 | 4 | **`ttp monitor`:** passive terminal view of existing session, watchdog and containment evidence, with changes seen since opening. | Approved in ADR 0014; implemented for 0.5.0. | Complete; release validation below. |
-| 5 | **Required VPN before Tor:** active native NM WireGuard full tunnel, one numeric peer, mandatory watchdog, independent kernel guard before Tor and retained emergency. | Approved in ADR 0015; implementation and qualification in progress. [Scope and release gates](docs/web/how-to/vpn.md). | VM qualification pending, including ParrotOS. |
-| Release | **Integration and release validation:** unit/NSE tests, resolver compatibility, VM lifecycle, packaging, documentation and regression review across supported distributions. | Required before publishing 0.5.0. | 2–3 days |
+| 5 | **Required VPN before Tor:** active native NM WireGuard full tunnel, one numeric peer, mandatory watchdog, independent kernel guard before Tor and retained emergency. | Approved in ADR 0015; implemented. VM gates qualified: six IPv4/IPv6 topologies, private obfs4 bridge, suspend/resume and reboot on Debian 13; IPv4 path on ParrotOS Home 7.4. [Scope, results and limits](docs/web/how-to/vpn.md). | Complete; release validation below. |
+| Release | **Integration and release validation** on the final candidate: full CI (unit, NSE on 2.2.0, integration, lifecycle, chaos and every VPN VM gate), ParrotOS re-qualification with the native DEB (the November run predates #150–#166), Fedora 44/45 packages with signatures, documentation and regression review. | Required before publishing 0.5.0. | 2–3 days |
 
-The VPN contract is now approved. Its original 5–10 day implementation estimate
-must be reassessed after controlled-tunnel and VM qualification; integration and
-release validation remains required. NSE changes needed for future scenarios
-must be scoped separately; these estimates do
-not authorize changes to NSE.
+The VPN feature work and its VM gates are complete; integration and release
+validation remains required on the final candidate. NSE changes needed for
+future scenarios must be scoped separately; these estimates do not authorize
+changes to NSE.
+
+**Defects found during qualification and fixed for 0.5.0**, in TTP itself or in
+the evidence its tests produce:
+
+| Finding | Effect before the fix | Fix |
+| :--- | :--- | :--- |
+| O01 — optimistic DNS/UDP verdicts | Timeouts, DNS errors or aggregate counters could certify containment without external evidence. | #132 |
+| F01 — unobserved fault interval | Chaos recovery audits ran after the fault; exposure during injection and response was not measured. | #149 |
+| E01 — Tor automap inside LAN bypass | With LAN bypass, TCP and UDP to Tor's synthetic onion addresses left the host directly. | #150 |
+| Orphaned redirected sockets at `ttp stop` | A FIN to the destination tried during the session, and RSTs with a stale `::1` destination (IPv6), left in cleartext after stop; Tor's ends in LAST-ACK still did once conntrack had forgotten them (21 RSTs in a dual-stack run). | #152, #165 |
+| `ttp check` sampling the watchdog mid-evaluation | With a required watchdog, `check` could latch emergency on a healthy session (2 of ~56 CI VPN runs, one `check` each). | #154 |
 
 Supply-chain verification and reproducible builds already shipped in 0.4.10;
 they remain release checks rather than unfinished 0.5.0 feature work.

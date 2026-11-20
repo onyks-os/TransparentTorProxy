@@ -63,7 +63,7 @@ No per-application setup needed - just `sudo ttp start` and **every connection**
 > **VPN before Tor (0.5.0 development):** see the [VPN guide](docs/web/how-to/vpn.md)
 > before using `--require-vpn UUID`. It requires an already active native
 > NetworkManager WireGuard tunnel, watchdog and no bypass. Supported profiles,
-> limitations, deliberate stop/recovery and pending release qualification are
+> limitations, deliberate stop/recovery and VM qualification results are
 > documented together; this is not a general VPN-manager integration.
 
 ## Why TTP?
@@ -291,7 +291,7 @@ TTP is designed to always restore your network, even in edge cases:
 
 | Scenario                 | What happens                                                                                                                                                                                                                              |
 | :----------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ttp stop`               | **Zero-leak cleanup**: stops the watchdog, applies the teardown lockdown, shuts Tor down gracefully, kills open sockets, flushes connection tracking, removes the `inet ttp` table, restores DNS, and deletes the lock file - the lock last, even if a step before it fails |
+| `ttp stop`               | **Zero-leak cleanup**: stops the watchdog, applies the teardown lockdown, shuts Tor down gracefully, closes every redirected connection's socket and verifies it is gone (otherwise exits 8 and keeps protection), flushes connection tracking, removes the `inet ttp` table, restores DNS, and deletes the lock file - the lock last, even if a step before it fails |
 | Ctrl+C / `kill`          | Signal handler catches `SIGINT`/`SIGTERM` and runs normal cleanup before exit                                                                                                                                                             |
 | `kill -9` / Power Outage | Next `ttp start` detects the orphaned lock file, clears any stale mount stacks, and auto-restores                                                                                                                                         |
 | Manual emergency         | Run `sudo ./scripts/restore-network.sh` to flush all nftables rules, reset DNS, and delete the lock file                                                                                                                                  |
