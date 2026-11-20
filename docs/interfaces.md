@@ -179,7 +179,7 @@ TTP creates a dedicated, isolated nftables table that does not interfere with an
 | **Application method** | Atomic load, the ruleset piped to `nft -f -` on stdin (all-or-nothing; no file in `/run/ttp` is read back) |
 | **Teardown Lockdown**  | `nft insert rule inet ttp filter_out [meta skuid != <tor_uid>] oifname != "lo" drop` (applied at stop start) |
 | **Socket Slaughter**   | `nft insert rule inet ttp filter_out meta l4proto tcp counter reject with tcp reset` and `nft insert rule inet ttp filter_out meta l4proto udp counter reject` (applied before final cleanup) |
-| **Redirected socket closure** | Netlink conntrack dump (TCP, destination NAT, reply from the loopback TransPort), `SOCK_DESTROY` for the application's and Tor's end of each, lookup to verify; applied before the flush |
+| **Redirected socket closure** | Netlink conntrack dump (TCP, destination NAT, reply from the loopback TransPort) plus a sock_diag dump of IPv4/IPv6 TCP sockets (connected ends on the loopback TransPort and their peers), `SOCK_DESTROY` for the application's and Tor's end of each, lookup to verify (live state and exact tuple); applied before the flush |
 | **Conntrack Flush**    | `conntrack -F` (atomic flush of Netfilter tracked streams)      |
 | **Cleanup method**     | `nft flush table inet ttp` followed by `nft delete table inet ttp`; an absent table is treated as already cleaned up |
 

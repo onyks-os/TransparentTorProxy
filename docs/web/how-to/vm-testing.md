@@ -205,6 +205,13 @@ transaction ID. Direct canaries are checked in every underlay family. The guests
 public IPv6 route: IPv6 is qualified on the underlay and inside the tunnel, and
 Tor still reaches its relays over IPv4.
 
+After the Tor/DNS checks the harness runs `ttp check` six times while an
+unrelated nftables table is created and deleted every three seconds, which makes
+the watchdog re-evaluate repeatedly. Any emergency or watchdog verdict, or a
+latched emergency afterwards, fails the run; an inconclusive public-Tor probe
+(exit 3) does not. This reproduces a `check` that once sampled the watchdog
+mid-evaluation and contained a healthy session.
+
 Right after the tunnel drops, before the watchdog latches emergency (whose
 table has no NAT chain), the redirect still holds and Tor cannot forward. The
 harness opens redirected connections there and leaves them as orphaned sockets
