@@ -67,9 +67,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cleartext to the destination an application tried during the session; Tor's
   orphaned TransPort end kept the host answering with RSTs that left the
   physical link with a stale `::1` destination (IPv6, seen by the VPN VM's
-  external capture). Stop now destroys both ends of each connection found in
-  conntrack with `SOCK_DESTROY`, verifies they are gone, and otherwise exits 8
-  keeping rules, DNS and lock. No `conntrack` or `ss` binary is required.
+  external capture). Stop now destroys both ends of each connection with
+  `SOCK_DESTROY`, verifies they are gone, and otherwise exits 8 keeping rules,
+  DNS and lock. Connections come from conntrack and from the kernel socket
+  table, because conntrack forgets a closing connection within seconds while
+  Tor's orphaned end in LAST-ACK keeps retransmitting for minutes (21 RSTs to
+  `::1` in a dual-stack VM run). No `conntrack` or `ss` binary is required.
 - Reserve Tor's virtual destinations before LAN bypass, redirecting synthetic
   TCP and rejecting unredirected traffic. Narrow IPv6 automapping to `fc00::/8`
   so ordinary `fd00::/8` LANs remain available. Add a real-onion dual-stack VM
