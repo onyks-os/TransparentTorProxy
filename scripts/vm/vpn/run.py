@@ -862,6 +862,16 @@ dns-search=~.;
                 if any(seen[f"tunnel{f}"] for f in (4, 6)):
                     raise RuntimeError(f"{name}: cleartext application traffic entered the tunnel: {seen}")
 
+            # Regression: `ttp check` once sampled the watchdog mid-evaluation
+            # and latched emergency on a healthy session. Unrelated nftables
+            # changes make the supervisor re-evaluate every few seconds.
+            phase(
+                "check_under_events",
+                CHECK_UNDER_EVENTS + f"{guest_python} -c "
+                "'from ttp.session_report import observe_session; r=observe_session(); print(r); "
+                'assert not r["emergency"]["requested"], "false emergency"\'\n',
+                timeout=240,
+            )
             before = counters()
             phase("tunnel_denied", all_denied, timeout=60)
             tunnel_untouched("tunnel_denied", before)
@@ -1174,6 +1184,23 @@ for family, host in {[(4 if f == 4 else 6, h) for f, h in targets]!r}:
 PY
 """
     )
+
+
+CHECK_UNDER_EVENTS = """( for _ in $(seq 60); do
+    nft add table inet ttp_event_probe; nft delete table inet ttp_event_probe; sleep 3
+  done ) >/dev/null 2>&1 &
+churn=$!
+for attempt in 1 2 3 4 5 6; do
+    set +e
+    ttp check > /tmp/check-$attempt.log 2>&1
+    code=$?
+    set -e
+    echo "check $attempt exit $code"
+    # 3 is an inconclusive public-Tor probe; anything else nonzero is a verdict.
+    if [ "$code" != 0 ] && [ "$code" != 3 ]; then cat /tmp/check-$attempt.log; kill "$churn"; exit 1; fi
+done
+kill "$churn"
+"""
 
 
 ORPHAN_COUNT = """sleep 1
