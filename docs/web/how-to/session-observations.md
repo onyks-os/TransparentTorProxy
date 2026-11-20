@@ -84,6 +84,16 @@ particular time, not a continuous guarantee. A failed DNS/TLS request, timeout o
 malformed response is inconclusive. A valid negative Tor result from a correctly
 non-exempt probe requests containment.
 
+With a required watchdog, `check` also requests containment when supervision has
+no current operational evidence. A live watchdog reports itself as evaluating
+while it runs each periodic check and after each nftables or DNS-file event,
+until it has re-evaluated. `check` waits for that evaluation to complete, for at
+most twice `watchdog.check_timeout` plus `watchdog.heartbeat_interval` (25
+seconds by default), rather than treating the in-progress state as absence.
+Stopped, stale or foreign supervision evidence still requests containment at
+once, and so does a watchdog still evaluating at the end of the wait. `ttp
+start` applies the same rule to the watchdog's first healthy observation.
+
 Emergency reporting distinguishes requested, application result and independent
 verification of the expected kernel rules. An application error never suffices
 to claim isolation. A restarted watchdog preserves the emergency latch.

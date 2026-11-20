@@ -6,6 +6,7 @@
 import logging
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,7 @@ from ttp.evidence import Observation, boottime
 from ttp.exceptions import TorError
 from ttp.paths import resolve
 from ttp.runtime_records import boot_id, session_store
-from ttp.settings import Settings
+from ttp.settings import Settings, WatchdogSettings
 
 logger = logging.getLogger("ttp")
 
@@ -214,6 +215,35 @@ def watchdog_observation() -> dict[str, Any]:
         return unknown
 
 
+# States a live supervisor publishes while it is working, never as a verdict:
+# a periodic evaluation, re-evaluation after a netlink/inotify event, and
+# bounded Tor healing (see ttp.watchdog.supervisor).
+TRANSIENT_REASONS = frozenset({"watchdog.evaluation_pending", "watchdog.event_invalidated", "watchdog.tor_healing"})
+
+
+def settled_watchdog_observation(settings: WatchdogSettings) -> dict[str, Any]:
+    """The supervisor's next completed observation, for decisions that contain.
+
+    A single sample taken while a live supervisor evaluates is not evidence of
+    its absence; `ttp check` once latched emergency on a healthy session that
+    way. Only the supervisor's own in-progress states are waited out, for at
+    most 2 * check_timeout + heartbeat_interval: within that the supervisor
+    completes an evaluation, healing included, or contains on its own
+    deadline. Absent, stale or foreign evidence is returned at once, and a
+    supervisor still in progress at the deadline is returned as it is.
+    """
+    deadline = time.monotonic() + 2 * settings.check_timeout + settings.heartbeat_interval
+    while True:
+        observation = watchdog_observation()
+        if (
+            observation["value"] != "unknown"
+            or observation.get("reason") not in TRANSIENT_REASONS
+            or time.monotonic() >= deadline
+        ):
+            return observation
+        time.sleep(0.2)
+
+
 def watchdog_liveness() -> tuple[bool, int | None]:
     observation = watchdog_observation()
     live = observation["value"] in ("healthy", "emergency")
@@ -240,7 +270,7 @@ def start_watchdog() -> None:
             check=True,
             timeout=settings.watchdog.readiness_timeout,
         )
-        observed = watchdog_observation()
+        observed = settled_watchdog_observation(settings.watchdog)
         if observed["value"] != "healthy" or emergency_latched(lock):
             raise TorError(f"Required supervisor is not ready and healthy ({observed['reason']})")
         state.update_lock_keys(watchdog_active=True, watchdog_pid=observed["pid"])
