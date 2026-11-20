@@ -168,8 +168,11 @@ class Kernel:
     def sleep(self, seconds):
         self.now += seconds
 
+    transport: list = []
+
     def install(self, monkeypatch):
         monkeypatch.setattr(redirected, "_dump_flows", self.dump)
+        monkeypatch.setattr(redirected, "_dump_transport_flows", lambda ports: list(self.transport))
         monkeypatch.setattr(redirected, "_destroy", self.destroy)
         monkeypatch.setattr(redirected, "_exists", self.exists)
         monkeypatch.setattr(redirected.time, "sleep", self.sleep)
@@ -289,6 +292,9 @@ ORPHAN = textwrap.dedent(
     print("before", before)
     assert sum(line.startswith("FIN-WAIT-1") for line in before) == 2, before
     assert sum(line.startswith("ESTAB") for line in before) == 2, before
+    if FORGET_CONNTRACK:
+        # Conntrack forgets closing connections within seconds; sockets do not.
+        redirected._dump_flows = lambda ports: []
     closed = redirected.close_redirected_sockets(9041)
     print("closed", closed, "remaining", orphans())
     assert closed == 4 and orphans() == []
@@ -297,11 +303,12 @@ ORPHAN = textwrap.dedent(
 
 
 @pytest.mark.skipif(not _user_namespaces_work(), reason="needs unprivileged user+network namespaces with nftables")
-def test_real_kernel_orphans_are_destroyed_while_redirected():
+@pytest.mark.parametrize("forget", [False, True], ids=["conntrack", "conntrack-expired"])
+def test_real_kernel_orphans_are_destroyed_while_redirected(forget):
     """Against the running kernel, in a throwaway user and network namespace."""
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
-        ["unshare", "-rn", sys.executable, "-c", ORPHAN],
+        ["unshare", "-rn", sys.executable, "-c", f"FORGET_CONNTRACK = {forget}\n" + ORPHAN],
         capture_output=True,
         text=True,
         timeout=60,
@@ -347,9 +354,19 @@ def ack(code: int, kind: int = 2) -> bytes:
     return struct.pack("=IHHII", 36, kind, 0, 1, 0) + struct.pack("=i", code) + bytes(16)
 
 
-def diag(state: int) -> bytes:
-    body = bytes([socket.AF_INET, state]) + bytes(70)
-    return struct.pack("=IHHII", 16 + len(body), 20, 0, 1, 0) + body
+def diag(family: int, state: int, local: str, local_port: int, remote: str, remote_port: int) -> bytes:
+    """struct inet_diag_msg as the kernel replies."""
+    pack = lambda value: socket.inet_pton(family, value).ljust(16, b"\0")  # noqa: E731
+    sockid = struct.pack("!HH", local_port, remote_port) + pack(local) + pack(remote) + struct.pack("=III", 0, 0, 0)
+    body = bytes([family, state, 0, 0]) + sockid + struct.pack("=IIIII", 0, 0, 0, 0, 0)
+    return struct.pack("=IHHII", 16 + len(body), 20, 2, 1, 0) + body
+
+
+def of(flow, state: int) -> bytes:
+    return diag(flow.family, state, flow.local, flow.local_port, flow.remote, flow.remote_port)
+
+
+TOR_END = redirected.Flow(socket.AF_INET6, "::1", 9041, "fd31:250::20", 54490)
 
 
 def test_conntrack_dump_request_and_multi_read_reply(monkeypatch):
@@ -379,15 +396,36 @@ def test_destroy_accepts_success_or_already_gone(monkeypatch, code, raises):
 @pytest.mark.parametrize(
     ("reply", "expected"),
     [
-        (diag(4), True),  # FIN-WAIT-1 still retransmits
-        (diag(1), True),  # ESTABLISHED
-        (diag(redirected.TCP_TIME_WAIT), False),
+        (of(B, 4), True),  # FIN-WAIT-1 still retransmits
+        (of(B, 1), True),  # ESTABLISHED
+        (of(B, redirected.TCP_TIME_WAIT), False),
         (ack(-2), False),  # ENOENT: gone
     ],
 )
 def test_exists_reports_only_live_sockets(monkeypatch, reply, expected):
     monkeypatch.setattr(redirected.socket, "socket", FakeNetlink(reply))
     assert redirected._exists(B) is expected
+
+
+def test_the_listener_answering_for_a_closed_tor_end_is_not_that_end(monkeypatch):
+    # The kernel lookup falls back to the TransPort listener once the
+    # accepted socket is gone; seen on a real kernel as a permanent "remain".
+    listener = diag(socket.AF_INET6, redirected.TCP_LISTEN, "::1", 9041, "::", 0)
+    monkeypatch.setattr(redirected.socket, "socket", FakeNetlink(listener))
+    assert redirected._exists(TOR_END) is False
+
+
+def test_a_different_live_socket_is_not_the_flow(monkeypatch):
+    other = TOR_END._replace(remote_port=54491)
+    monkeypatch.setattr(redirected.socket, "socket", FakeNetlink(of(other, 1)))
+    assert redirected._exists(TOR_END) is False
+
+
+def test_an_unexpected_lookup_reply_is_never_absence(monkeypatch):
+    unexpected = struct.pack("=IHHII", 16 + 72, 99, 0, 1, 0) + bytes(72)
+    monkeypatch.setattr(redirected.socket, "socket", FakeNetlink(unexpected))
+    with pytest.raises(ValueError):
+        redirected._exists(B)
 
 
 @pytest.mark.parametrize("reply", [ack(0), ack(-1)])
@@ -419,3 +457,58 @@ def test_a_truncated_attribute_is_refused():
     message = struct.pack("=IHHII", 16 + len(body), 0x0100, 2, 1, 0) + body
     with pytest.raises(ValueError, match="attribute"):
         redirected.flows_from_dump(redirected.parse_messages(message + done()), {9041})
+
+
+V6 = socket.AF_INET6
+V4 = socket.AF_INET
+
+
+def test_transport_ends_and_their_peers_are_found_without_conntrack():
+    """The CI leak: three Tor ends in LAST-ACK whose conntrack entries had expired."""
+    data = b"".join(
+        [
+            diag(V6, 10, "::1", 9041, "::", 0),  # Tor's listener stays
+            diag(V6, 9, "::1", 9041, "fd31:250::20", 54202),  # LAST-ACK Tor end
+            diag(V6, 4, "fd31:250::20", 54202, "2001:db8:100::7", 8000),  # its application end
+            diag(V6, 1, "fd31:250::20", 40000, "2001:db8::443", 443),  # unrelated connection
+            diag(V4, 6, "127.0.0.1", 9041, "10.0.0.2", 5000),  # TIME-WAIT never transmits
+            diag(V4, 1, "172.31.250.20", 9041, "10.0.0.3", 6000),  # not the loopback TransPort
+            diag(V4, 1, "10.0.0.2", 5000, "198.51.100.7", 8000),  # peer of a TIME-WAIT end only
+        ]
+    )
+    sockets = redirected.sockets_from_dump(redirected.parse_messages(data + done()))
+    assert redirected.transport_flows(sockets, {9041}) == [
+        redirected.Flow(V6, "::1", 9041, "fd31:250::20", 54202),
+        redirected.Flow(V6, "fd31:250::20", 54202, "2001:db8:100::7", 8000),
+    ]
+
+
+def test_socket_dump_asks_each_family_for_every_tcp_socket(monkeypatch):
+    fake = FakeNetlink(diag(V4, 9, "127.0.0.1", 9041, "10.0.0.2", 5000) + done(), done())
+    sent = []
+    monkeypatch.setattr(redirected.socket, "socket", fake)
+    monkeypatch.setattr(fake, "send", lambda data: sent.append(data))
+    assert redirected._dump_transport_flows({9041}) == [redirected.Flow(V4, "127.0.0.1", 9041, "10.0.0.2", 5000)]
+    families = [data[16] for data in sent]
+    assert families == [V4, V6]
+    assert all(struct.unpack_from("=HH", data, 4) == (20, 0x301) for data in sent)
+
+
+def test_both_sources_are_closed_once(monkeypatch):
+    kernel = Kernel([A, B])
+    kernel.transport = [B, C := redirected.Flow(V6, "::1", 9041, "fd31:250::20", 1)]
+    kernel.alive |= {C}
+    kernel.install(monkeypatch)
+    assert redirected.close_redirected_sockets(9041) == 3
+    assert kernel.destroyed == [A, B, C]
+
+
+def test_an_unreadable_socket_table_retains_protection(monkeypatch):
+    Kernel([A]).install(monkeypatch)
+
+    def broken(ports):
+        raise OSError(1, "not permitted")
+
+    monkeypatch.setattr(redirected, "_dump_transport_flows", broken)
+    with pytest.raises(redirected.RedirectedSocketsRemain, match="cannot be enumerated"):
+        redirected.close_redirected_sockets(9041)
