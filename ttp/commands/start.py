@@ -262,7 +262,9 @@ def start_command(
     preflight_checks()
     # A retained pre-start guard may exist without a session lock. Never start
     # another Tor instance over it or silently adopt it as the new policy.
-    if require_vpn is not None or Path("/run/ttp/vpn-intent.json").exists():
+    from ttp import vpn_guard
+
+    if require_vpn is not None or vpn_guard.INTENT.exists():
         from ttp.vpn_guard import retained
 
         if retained():
