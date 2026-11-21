@@ -1,0 +1,69 @@
+name: Download statistics
+
+# Records, once a week, how many people are estimated to have downloaded each
+# release, and the repository's traffic. GitHub keeps only cumulative download
+# counters and 14 days of traffic, so a trend exists only if someone writes it
+# down. TTP itself reports nothing: this reads public counters from outside.
+#
+# The estimate subtracts each release's floor of automated downloads (its least
+# downloaded SBOM) from its package counts; see scripts/release_stats.py.
+#
+# The snapshots go to the `stats` branch, never to `main`: no pull request, no
+# CI run (GITHUB_TOKEN pushes trigger no workflow), and `main`'s history stays
+# code. README badges read `downloads.json` from that branch.
+#
+# Traffic needs a token with write access to the repository, which the
+# workflow's own token cannot be given. It is read only when a `STATS_TOKEN`
+# secret exists (a fine-grained token for this repository with read access to
+# Administration); without one, the downloads are still recorded.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: download-statistics
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    name: Snapshot downloads and traffic
+    if: github.repository == 'onyks-os/TransparentTorProxy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # Push the snapshot to the stats branch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # Only this checkout keeps the token, and only to push to `stats`.
+      - name: Check out the stats branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: stats
+          path: stats-data
+
+      - name: Record the snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATS_TOKEN: ${{ secrets.STATS_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: python3 -I scripts/release_stats.py --repo "$REPO" --snapshot stats-data
+
+      - name: Push it to the stats branch
+        working-directory: stats-data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing changed."
+            exit 0
+          fi
+          git commit -q -m "Snapshot $(date -u +%F)"
+          git push -q origin HEAD:stats

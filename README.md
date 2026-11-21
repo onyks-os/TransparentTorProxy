@@ -413,6 +413,30 @@ sudo ttp diagnose
 └── docs/                   # Technical documentation, threat models, and ADRs
 ```
 
+## Project statistics
+
+<p>
+  <a href="https://github.com/onyks-os/TransparentTorProxy/stargazers"><img src="https://img.shields.io/github/stars/onyks-os/TransparentTorProxy?style=flat-square&logo=github" alt="GitHub stars"></a>
+  <a href="https://github.com/onyks-os/TransparentTorProxy/tree/stats"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fonyks-os%2FTransparentTorProxy%2Fstats%2Fdownloads.json&style=flat-square&logo=github" alt="Estimated release downloads"></a>
+  <a href="https://pypistats.org/packages/transparent-tor-proxy"><img src="https://img.shields.io/pypi/dm/transparent-tor-proxy?style=flat-square&logo=pypi" alt="PyPI downloads per month"></a>
+</p>
+
+<a href="https://star-history.com/#onyks-os/TransparentTorProxy&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=onyks-os%2Ftransparenttorproxy&type=Date&theme=dark">
+    <img src="https://api.star-history.com/svg?repos=onyks-os%2Ftransparenttorproxy&type=Date" alt="Star history" width="600">
+  </picture>
+</a>
+
+TTP has no telemetry and never will: these numbers are read from outside.
+GitHub counts every download of a release asset, including this project's own
+release verification, mirrors and crawlers, which fetch every file. The
+**estimated** count subtracts each release's floor of automated downloads (its
+least downloaded SBOM, which nobody fetches by hand) from its packages. It is
+an estimate: one person downloading twice counts twice. The method is in
+[`scripts/release_stats.py`](scripts/release_stats.py); the weekly history is on
+the [`stats` branch](https://github.com/onyks-os/TransparentTorProxy/tree/stats).
+
 ## Have you tried TTP?
 
 TTP is maintained in free time, and hearing from people who try it helps
