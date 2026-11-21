@@ -2,9 +2,8 @@
 
 # Require a VPN before Tor
 
-This optional 0.5.0 feature is unreleased. Its VM qualification gates, listed
-in the validation limits below, have run; the final release candidate must still
-pass them before it is described as supported in a published release.
+This optional feature is new in 0.5.0. The 0.5.0 release candidate passed the
+VM qualification gates listed in the validation limits below.
 
 The supported order is **user → VPN → Tor → destination**. TTP's Tor connects
 to its guards or bridges through the VPN; websites still see a Tor exit.

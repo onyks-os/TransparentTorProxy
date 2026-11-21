@@ -4,7 +4,7 @@
 
 ## Status
 
-Accepted by the maintainer, 2026-11-06. Implemented for 0.5.0 (unreleased).
+Accepted by the maintainer, 2026-11-06. Implemented in 0.5.0.
 
 ## Context
 
