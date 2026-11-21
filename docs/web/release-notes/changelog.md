@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Estimate real release downloads without telemetry: `scripts/release_stats.py`
+  subtracts each release's floor of automated downloads (its least downloaded
+  SBOM) from its package counts, and a weekly workflow records the estimate,
+  stars, and daily views and clones on the `stats` branch. The README shows
+  them with the star history.
+
 ## [0.5.0] - 2026-11-21
 
 Reported state now matches the evidence behind it. `ttp status`, `ttp check`
