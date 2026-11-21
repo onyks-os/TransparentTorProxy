@@ -56,7 +56,7 @@ If bootstrapping stalls on restricted networks:
 
 ```bash
 # View real-time TTP and Tor logs
-ttp logs
+sudo ttp logs
 
 # Run diagnostic check to verify Tor control socket connectivity
 sudo ttp diagnose

@@ -6,7 +6,7 @@
 This module enforces a strict NO AUTO-INSTALL policy. TTP will never attempt
 to install system packages automatically. If Tor or required pluggable transport
 helpers are missing, TTP displays distro-specific package guidance and official
-documentation links, then exits gracefully with status code 0.
+documentation links, then exits with status code 1. Nothing is installed.
 """
 
 from __future__ import annotations
@@ -105,13 +105,13 @@ def ensure_pluggable_transports(required_transports: list[str]) -> None:
     """Verify that required pluggable transport helper binaries are installed.
 
     If any required binary is missing, displays distro package guidance and official
-    Tor documentation links, then exits gracefully with status code 0.
+    Tor documentation links, then exits with status code 1. Nothing is installed.
 
     Args:
         required_transports: List of pluggable transport names (e.g. ``["obfs4", "snowflake"]``).
 
     Raises:
-        typer.Exit: With exit code 0 if any transport binary is missing or unsupported.
+        typer.Exit: With exit code 1 if any transport binary is missing or unsupported.
     """
     for pt in required_transports:
         pt = pt.lower()
@@ -120,7 +120,7 @@ def ensure_pluggable_transports(required_transports: list[str]) -> None:
             from ttp.commands._common import _PREFIX, console
 
             console.print(f"{_PREFIX} [bold red]Unsupported pluggable transport: '{pt}'[/bold red]")
-            raise typer.Exit(code=0)
+            raise typer.Exit(code=1)
 
         pt_info = PT_MAP[pt]
         binary = pt_info["binary"]
@@ -144,7 +144,7 @@ def ensure_pluggable_transports(required_transports: list[str]) -> None:
             from ttp.commands._common import console
 
             console.print(Panel(msg, title="[bold red]Missing Dependency[/bold red]", expand=False))
-            raise typer.Exit(code=0)
+            raise typer.Exit(code=1)
 
 
 def _assert_is_tor_system_account(tor_user: str) -> None:
@@ -181,7 +181,7 @@ def ensure_tor_ready(
     """Ensure Tor is installed and start it via the dedicated systemd service.
 
     Enforces a strict NO AUTO-INSTALL policy. If Tor or required helper binaries are missing,
-    displays distro-aware installation guidance and exits gracefully with status code 0.
+    displays distro-aware installation guidance and exits with status code 1.
 
     Args:
         transport_port: Local TCP port for Tor TransPort redirection.
@@ -195,7 +195,7 @@ def ensure_tor_ready(
         dict[str, Any]: Dictionary containing detected Tor installation metadata.
 
     Raises:
-        typer.Exit: With exit code 0 if Tor binary is not installed on the system.
+        typer.Exit: With exit code 1 if Tor binary is not installed on the system.
     """
     info = detect_tor(transport_port=transport_port, dns_port=dns_port)
 
@@ -213,7 +213,7 @@ def ensure_tor_ready(
         from ttp.commands._common import console
 
         console.print(Panel(msg, title="[bold red]Missing Tor Dependency[/bold red]", expand=False))
-        raise typer.Exit(code=0)
+        raise typer.Exit(code=1)
 
     tor_user = info.get("tor_user", "debian-tor")
     _assert_is_tor_system_account(tor_user)

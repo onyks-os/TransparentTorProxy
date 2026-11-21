@@ -164,7 +164,7 @@ For installing TTP via Python-specific package managers (`pipx` or `pip` with vi
 
 ## Usage
 
-TTP is designed to be simple and lightweight. For the complete list of CLI commands, options, exit codes, and technical specifications, refer to the [External Interfaces Reference](docs/interfaces.md).
+TTP is designed to be simple and lightweight. For the complete list of CLI commands, options and exit codes, see the [CLI reference](docs/web/reference/cli.md); for the technical specification, the [External Interfaces Reference](docs/interfaces.md).
 
 ### Quick Start
 
@@ -197,10 +197,10 @@ Most network-modifying commands require root privileges (`sudo`):
   The terminal view is passive. Its Tor result is the last recorded check,
   not a new verification; close it with Ctrl-C without stopping the session.
 
-* **Verify Tor routing and latency**:
+* **Verify that traffic reaches Tor**:
 
   ```bash
-  ttp check
+  sudo ttp check
   ```
 
 * **Request a new exit IP (rotate circuits)**:

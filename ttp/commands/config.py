@@ -16,6 +16,7 @@ from ttp.settings import Settings, SettingsError, load_settings
 def config_command(
     session: bool = typer.Option(False, "--session", help="Show the frozen running-session configuration."),
 ) -> None:
+    """Show the validated settings and where each value comes from (root only)."""
     require_root()
     try:
         if session:

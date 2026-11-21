@@ -112,13 +112,20 @@ def uninstall_command() -> None:
 
 
 def logs_command() -> None:
-    """View recent TTP logs from the volatile log file."""
-    if not _LOG_PATH.exists():
+    """View recent TTP logs from the volatile log file (root only)."""
+    try:
+        text = _LOG_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
         console.print(f"{_PREFIX} No log file found at {_LOG_PATH}.")
+        raise typer.Exit(code=1)
+    except PermissionError:
+        # The log is 0600 in a root:ttp-watchdog 0750 directory: it records
+        # interfaces, bypassed users and Tor's UID, so it is not world-readable.
+        _print_error("Logs Unreadable", f"{_LOG_PATH} is readable only by root. Run this command with sudo.")
         raise typer.Exit(code=1)
 
     console.print(f"{_PREFIX} Displaying logs from [bold]{_LOG_PATH}[/bold]...")
-    console.print(_LOG_PATH.read_text(encoding="utf-8"))
+    console.print(text)
 
 
 def bypass_command(

@@ -46,6 +46,9 @@ if [ "$IFACE" = "wlan0" ] || [ "$IFACE" = "eth0" ]; then
 fi
 ```
 
+Native packages install `ttp` as `/usr/bin/ttp`; the source installer uses
+`/usr/local/bin/ttp`. Use the path `command -v ttp` prints.
+
 1. Make the script executable and set root ownership:
 
 ```bash
@@ -72,7 +75,8 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/ttp --quiet start --watchdog
 ExecStop=/usr/local/bin/ttp --quiet stop
-TimeoutStartSec=120
+# Tor bootstrap (180 s by default) plus verification (60 s) must fit.
+TimeoutStartSec=300
 TimeoutStopSec=30
 
 [Install]
@@ -99,27 +103,46 @@ sudo systemctl enable transparent-tor-proxy.service
 
 ## 4. Script Return Codes and Status Inspection
 
-When invoking TTP inside shell scripts, inspect exit codes to verify success:
+When invoking TTP inside shell scripts, branch on the exit code instead of
+testing only for success. The code says what state the host is in:
 
 ```bash
 #!/bin/bash
-set -e
 
-sudo ttp --quiet start && status=0 || status=$?
+sudo ttp --quiet start --watchdog && status=0 || status=$?
 
 case "$status" in
-    0) echo "TTP session established and verified." ;;
-    3) echo "Session is up but Tor is unverified: traffic is blocked, not leaking." >&2
-       exit 3 ;;
-    *) echo "Failed to start TTP session; the network is in cleartext." >&2
-       exit "$status" ;;
+    0)  echo "Session active and Tor confirmed." ;;
+    3)  echo "Session active, but the Tor check was inconclusive." >&2 ;;
+    7)  echo "Emergency: all traffic is blocked until 'sudo ttp stop'." >&2
+        exit 7 ;;
+    8)  echo "Containment unconfirmed: treat the host as leaking; run 'sudo ttp stop'." >&2
+        exit 8 ;;
+    2|4|10)
+        echo "Refused before any change (usage, DNSSEC or VPN): see the error." >&2
+        exit "$status" ;;
+    *)  echo "No session (code $status): the host is in cleartext." >&2
+        exit "$status" ;;
 esac
 ```
 
-`0` means the session is active *and* traffic was confirmed to be reaching Tor.
-`3` means the session is active and fail-closed but Tor could not be verified —
-nothing is leaking, but nothing is getting through either. Anything else means
-there is no session and the host is back on clearnet.
+* `0`: the session is active *and* traffic was confirmed to reach Tor.
+* `3`: the session's rules are in place, but the external check could not answer.
+  Nothing bypasses them, yet Tor may or may not be carrying traffic: run
+  `sudo ttp check` again before relying on it.
+* `7`: the emergency rules are verified in the kernel; the host is offline on
+  purpose, and stays so until `sudo ttp stop`.
+* `8`: containment was required and TTP cannot show it is in place.
+* `2`, `4`, `10`: a refusal before any change. With `10`, a retained VPN guard
+  may still block traffic: `sudo ttp stop --restore-only` releases it.
+* `1`, `5`, `6`, `9` on their own after `start` mean the start failed and the
+  network was restored: **cleartext**. (`5` and `6` with containment come back as
+  `7` or `8`, which take precedence.)
 
-Testing only for `$? -eq 0` collapses those last two into one, which is how
-`ttp restart && next_command` ends up running against a blocked network.
+The full table, with the precedence when several causes apply, is in the
+[CLI reference](../reference/cli.md#4-cli-exit-codes). For the complete set of
+causes, read `sudo ttp status --json`.
+
+Testing only for `$? -eq 0` collapses "blocked" and "cleartext" into one, which
+is how `ttp restart && next_command` ends up running against a blocked network,
+or `ttp start || retry` against an open one.

@@ -64,7 +64,7 @@ The project is divided into independent Python modules. Each module has a single
 | `tor_control.py` | **Control**      | Encapsulates Tor interaction (Stem, Bootstrap, IP Check).                        |
 | `system_info.py` | **Diagnostic**   | Gathers system state (torrc, rules, logs, OS detection) for debugging.           |
 | `selinux.py`     | **SELinux**      | Compiles, installs/removes custom SELinux policy, and labels/unlabels custom ports. |
-| `watchdog/`      | **Watchdog**     | Package managing session background watchdog, auto-healing (`integrity.py`, `inotify.py`), service configuration (`service.py`), and wall/desktop alerts (`alerts.py`). |
+| `watchdog/`      | **Watchdog**     | Package managing session background watchdog, auto-healing (`integrity.py`, `inotify.py`), service configuration (`service.py`), the supervision loop (`supervisor.py`) and the emergency request (`alerts.py`). |
 | `cli.py` / `commands/` | **Interface**    | Typer entry point orchestrator (`cli.py`) and command modules (`start`, `stop`, etc.). |
 
 ### 2.1 Execution Flow - `start`
@@ -72,13 +72,14 @@ The project is divided into independent Python modules. Each module has a single
 1. **cli**: Verifies root execution.
 2. **state**: Checks for existing/orphaned locks and verifies `tmpfs` free space (**pre-flight check**).
 3. **detect**: Verifies Tor installation and config.
-4. **install**: Checks Tor readiness via `tor_install.py`. Enforces strict **No Auto-Install policy** (if Tor or required Pluggable Transports are missing, displays distro package guidance and official doc URLs, then exits with code 0). Performs **SELinux optimization** on Fedora.
+4. **install**: Checks Tor readiness via `tor_install.py`. Enforces strict **No Auto-Install policy** (if Tor or required Pluggable Transports are missing, displays distro package guidance and official doc URLs, then exits with code 1 before any network change). Performs **SELinux optimization** on Fedora.
 5. **firewall**: Generates and atomically applies rules in isolated `inet ttp` table via `ttp/firewall/`.
 6. **dns**: Clears any stale overlays (idempotency guard), then modifies active interface DNS using `mount --bind` overlay on `/etc/resolv.conf`.
 7. **state**: Initializes volatile runtime in `/run/ttp` and writes lock file.
-8. **cli**: Waits for Tor bootstrap via ControlSocket, verifies IP.
-9. **watchdog**: Starts the volatile systemd watchdog service (`ttp-watchdog.service`) if watchdog monitoring is enabled.
-10. **cli**: Returns to the prompt.
+8. **cli**: Waits for Tor bootstrap via ControlSocket.
+9. **watchdog**: Starts the volatile systemd watchdog service (`ttp-watchdog.service`) if it is required, and waits for its first healthy observation.
+10. **verification**: Verifies Tor from a non-exempt process; a valid negative answer requests containment.
+11. **cli**: Returns to the prompt.
 
 ### 2.1.1 BYOD Execution Flow - `start --external-daemon`
 
@@ -132,7 +133,7 @@ Module functionality:
 
 Orchestrates Tor readiness and native systemd service configuration. Enforces a strict **No Auto-Install policy**: TTP will never attempt or suggest automated package installation.
 
-1. **`tor_install.py`**: Verifies Tor presence and required Pluggable Transport binaries. If missing, displays distro package guidance (`apt`, `dnf`, `pacman`, `zypper`), official Tor Project documentation links, and exits with status code `0`.
+1. **`tor_install.py`**: Verifies Tor presence and required Pluggable Transport binaries. If missing, displays distro package guidance (`apt`, `dnf`, `pacman`, `zypper`), official Tor Project documentation links, and exits with status code `1`.
 2. **SELinux Optimization**: If on Fedora and enforcing, compiles the custom SELinux policy on-the-fly via `selinux.py`. The policy source (`.te`) is stored as an internal package resource and accessed via `importlib.resources`.
 3. **`tor_config.py`**: Generates a volatile `torrc` in `/run/tor/ttp/torrc`, appending `UseBridges 1`, `ClientTransportPlugin` executable paths, and target `Bridge` lines if configured.
 4. **`tor_service.py`**: Writes a dedicated `ttp-tor.service` unit to `/run/systemd/system/` (volatile, evaporates on reboot) and manages start/stop/reload calls via `systemctl`. The unit is `Type=notify`: Tor signals readiness through `sd_notify` when run with `--RunAsDaemon 0`, so `systemctl restart` blocks until the daemon is actually up and fails otherwise. A `Type=simple` unit reports success at fork, which meant a Tor that died while parsing its config was indistinguishable from one that started — the session was then built on a daemon that was not there, and the failure surfaced 60s later as a bootstrap stuck at 0%. When the start does fail, the last lines of the unit's journal are quoted into the raised `TorError`: `systemctl` reports only that the job failed, while Tor's own log names the cause.
