@@ -8,7 +8,7 @@ This tutorial guides you through installing TTP and running your first transpare
 
 Before starting, ensure your system meets these prerequisites:
 
-* **Operating System**: Linux with `systemd`. Native packages are built and tested for Debian 13, Ubuntu 24.04, Fedora 44 and Arch Linux. The next release adds Fedora 45; elsewhere, install with `pipx`.
+* **Operating System**: Linux with `systemd`. Native packages are built and tested for Debian 13, Ubuntu 24.04, Fedora 44 and Arch Linux. From 0.5.0, also Fedora 45; elsewhere, install with `pipx`.
 * **Runtime**: Python 3.12 or higher
 * **Firewall Engine**: `nftables`
 * **Privileges**: Root access (`sudo`)
@@ -33,7 +33,7 @@ then install it:
     sudo dnf install ./transparent-tor-proxy-*.fc44.noarch.rpm
     ```
 
-=== "Fedora 45 (.rpm, next release)"
+=== "Fedora 45 (.rpm)"
 
     Verify the release assets with `scripts/verify-release.sh` first, then
     import the release's public key and install the signed RPM:

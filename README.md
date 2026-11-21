@@ -54,13 +54,13 @@ No per-application setup needed - just `sudo ttp start` and **every connection**
 
 <!-- -->
 
-> **0.5.0 development:** required watchdog readiness, typed session evidence and
-> optional desktop notifications are implemented on the development branch.
-> Read the [operator guide](docs/web/how-to/session-observations.md) for independent
+> **New in 0.5.0:** required watchdog readiness, typed session evidence and
+> optional desktop notifications. Read the
+> [operator guide](docs/web/how-to/session-observations.md) for independent
 > `--watchdog` / `--notifications` selection, configurable deadlines, exit codes
-> and explicit emergency termination. These changes are not in released 0.4.11.
+> and explicit emergency termination.
 >
-> **VPN before Tor (0.5.0 development):** see the [VPN guide](docs/web/how-to/vpn.md)
+> **VPN before Tor (new in 0.5.0):** see the [VPN guide](docs/web/how-to/vpn.md)
 > before using `--require-vpn UUID`. It requires an already active native
 > NetworkManager WireGuard tunnel, watchdog and no bypass. Supported profiles,
 > limitations, deliberate stop/recovery and VM qualification results are
@@ -107,7 +107,7 @@ keeps nothing on disk.
   query therefore leaves through a Tor exit like any other connection, whoever
   the resolver is; no blocklist is involved
   ([ADR 0012](docs/decisions/0012-doh-dot-and-browser-leaks-are-out-of-scope.md)).
-* **AppArmor confinement (0.5.0 development)** - on AppArmor kernels, managed Tor
+* **AppArmor confinement** - on AppArmor kernels, managed Tor
   must have a verified `ttp-tor (enforce)` label. See [requirements, diagnosis and
   limits](docs/web/how-to/apparmor.md); the watchdog contains loss of confinement.
 * **Coexists with your system Tor** - runs its own volatile `ttp-tor.service`
@@ -131,12 +131,12 @@ Installing via native packages ensures that all system dependencies (`tor`, `nft
 
 Download the `.deb` or `.rpm` for the version you want from the [latest release](https://github.com/onyks-os/TransparentTorProxy/releases/latest) - the packages are release assets and are not checked into the repository - then install it:
 
-* **Debian / Ubuntu**: `sudo apt install ./transparent-tor-proxy_0.4.11_all.deb`
-* **Fedora 44**: `sudo dnf install ./transparent-tor-proxy-0.4.11-1.fc44.noarch.rpm`
+* **Debian / Ubuntu**: `sudo apt install ./transparent-tor-proxy_0.5.0_all.deb`
+* **Fedora 44**: `sudo dnf install ./transparent-tor-proxy-0.5.0-1.fc44.noarch.rpm`
 * **Arch Linux**: build from the repository with `cd packaging && makepkg -si`
 
-Starting with the next release, Fedora 45 will have its own `.fc45.noarch.rpm`
-with an OpenPGP signature embedded in the RPM. Its release assets include the
+* **Fedora 45**: its own `.fc45.noarch.rpm`, with an OpenPGP signature embedded
+  in the RPM. Its release assets include the
 public key (`*-fc45-rpm-key.asc`) and a Sigstore bundle for both the key and RPM.
 See the [verification guide](docs/verification.md) before importing the key.
 

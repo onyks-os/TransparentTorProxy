@@ -22,7 +22,7 @@ wheel and sdist. The same script runs in CI after every release and weekly
 (`.github/workflows/verify-release.yml`), together with an install of the
 published `.deb` and `.rpm` in clean containers.
 
-From the next release, there are two Fedora RPMs. The Fedora 44 RPM keeps its
+From 0.5.0, there are two Fedora RPMs. The Fedora 44 RPM keeps its
 existing Sigstore bundle. The Fedora 45 RPM also has an OpenPGP signature inside
 the RPM. CI generates a new key for each release, publishes its public half as
 `transparent-tor-proxy-<version>-fc45-rpm-key.asc`, and signs both the key and

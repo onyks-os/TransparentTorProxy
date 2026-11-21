@@ -4,7 +4,7 @@
 
 ## Status
 
-Accepted by the maintainer, 2026-10-27. Implemented for 0.5.0 (unreleased).
+Accepted by the maintainer, 2026-10-27. Implemented in 0.5.0.
 This record supersedes earlier proposals about degraded states and notifications;
 it does not approve a privileged D-Bus controller. The monitor and required VPN
 topology were approved separately in [ADR 0014](0014-passive-monitor.md) and

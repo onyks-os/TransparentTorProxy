@@ -9,7 +9,7 @@
 
 ---
 
-## 0.5.0 supervision and delivery update (unreleased)
+## 0.5.0 supervision and delivery update
 
 [ADR 0013](decisions/0013-session-evidence-and-notifications.md) replaces cached
 watchdog flags and best-effort terminal broadcasts with evidence and explicit

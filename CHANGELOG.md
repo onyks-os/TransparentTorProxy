@@ -12,6 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-21
+
+Reported state now matches the evidence behind it. `ttp status`, `ttp check`
+and the new `ttp monitor` say what was observed and when, a required watchdog
+must prove it is evaluating before `ttp start` succeeds, and its emergency
+containment holds until `ttp stop`. New and optional: a VPN before Tor
+(`--require-vpn`, a native NetworkManager WireGuard tunnel) and desktop
+notifications. On AppArmor kernels, Tor must run confined in enforce mode.
+Qualification found and fixed five defects, among them onion-address traffic
+leaving directly under LAN bypass, and cleartext FIN/RST packets after
+`ttp stop`.
+
+Upgrade notes: Python 3.12 is now the minimum (0.4.11 remains available for 3.10
+and 3.11). Fedora 45 has its own signed `.fc45.noarch.rpm`; read the
+verification guide before importing its key. Exit codes 5–9 are new and are
+listed in the session observations guide.
+
 ### Added
 
 - Document the post-0.5.0 leak-testing and hardening plan, with scenario matrices,
@@ -59,8 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Declare Python 3.12 as the minimum in the Debian, RPM and Arch package
   dependencies, and check it before source installation changes system files.
-- Raise the minimum supported Python version to 3.12 for the upcoming 0.5.0
-  release. Python 3.10 and 3.11 remain supported by the published 0.4.11
+- Raise the minimum supported Python version to 3.12. Python 3.10 and 3.11 remain supported by the published 0.4.11
   artifacts, but are no longer in the development CI matrix or dependency locks.
 
 ### Fixed
