@@ -60,6 +60,8 @@ the session starts.
 | `dig` | `bind-utils` / `dnsutils` | DNS leak verification in `ttp check-leak`. |
 | `semodule` | `policycoreutils` | Loading the `ttp_tor_policy` SELinux module on Fedora/RHEL. |
 | `apparmor_parser` | `apparmor` | Required for managed Tor when AppArmor is active; see [confinement and limits](../how-to/apparmor.md). |
+| NetworkManager | `network-manager` / `NetworkManager` | Only for `--require-vpn`: TTP reads the WireGuard profile over the system bus and never changes it; see [VPN before Tor](../how-to/vpn.md). The packages suggest it, with `wireguard-tools`. |
+| `loginctl`, `busctl` and a desktop notification server | `systemd`, your desktop | Only for `--notifications`: TTP finds the recipient's graphical session and an unprivileged agent calls `org.freedesktop.Notifications`. |
 
 ### Pluggable Transport Binaries (Censorship Circumvention)
 
@@ -85,6 +87,7 @@ CI installs every package in a clean container before a release is signed
     ```text
     Depends: python3 (>= 3.12), python3-typer, python3-rich (>= 13.7.1), python3-stem,
              python3-transitions (>= 0.9.0), nftables, tor, apparmor
+    Suggests: network-manager, wireguard-tools
     ```
 
     Tested on Debian 13 and Ubuntu 24.04.
@@ -94,6 +97,7 @@ CI installs every package in a clean container before a release is signed
     ```text
     Requires: python3 >= 3.12, python3-typer, python3-rich, python3-stem, python3-six,
               nftables, tor, policycoreutils
+    Suggests: NetworkManager, wireguard-tools
     Provides: bundled(python3dist(transitions)) = 0.9.3
     ```
 

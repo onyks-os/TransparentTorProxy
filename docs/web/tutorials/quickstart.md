@@ -77,9 +77,11 @@ Upon execution, TTP performs the following automated steps:
 
 Add `--watchdog` to also start the background integrity watchdog.
 
-`start` exits `0` when the session is up and verified, `3` when the session is up and
-fail-closed but Tor could not be verified (traffic is blocked, not leaking), and `1`
-when there is no session. See the [exit codes](../reference/cli.md#4-cli-exit-codes).
+`start` exits `0` when the session is up and verified, `3` when the session is up
+but the Tor check was inconclusive, and `1` when there is no session (the network
+is restored, in cleartext). With a watchdog, `7` and `8` mean emergency
+containment, verified or unconfirmed. All codes are in the
+[exit code table](../reference/cli.md#4-cli-exit-codes).
 
 !!! note "Community & Contributions"
     If you find TTP valuable for your workflow, consider starring the [TransparentTorProxy repository on GitHub](https://github.com/onyks-os/TransparentTorProxy). Contributions in the form of issue reports, pull requests, and forks are welcome to help improve system security and compatibility.
@@ -91,17 +93,17 @@ when there is no session. See the [exit codes](../reference/cli.md#4-cli-exit-co
 Confirm that all system traffic and DNS resolutions are routed through Tor:
 
 ```bash
-# Display live session state and configuration options
-ttp status
+# Display the recorded session state (no network request)
+sudo ttp status
 
 # Run automated network leak tests and circuit verification
-ttp check
+sudo ttp check
 
 # Verify public exit IP address
 curl -s https://check.torproject.org/api/ip
 ```
 
-`ttp check` confirms through `check.torproject.org` that traffic exits through Tor, and shows the exit IP, the TransPort and DNSPort in use, the IPv6 state and the latency.
+`ttp check` confirms through `check.torproject.org` that traffic exits through Tor, and shows the exit IP, the TransPort and DNSPort in use and the IPv6 state.
 
 ---
 

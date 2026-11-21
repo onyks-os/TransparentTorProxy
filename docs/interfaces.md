@@ -31,20 +31,22 @@ Most commands require root privileges (`sudo`). Exceptions are noted in the tabl
 
 | Command               | Requires Root | Description                                                                                                                                                  |
 | :-------------------- | :-----------: | :----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ttp start`           |       ✅       | Activates the transparent Tor proxy: installs Tor if missing, applies nftables rules, mounts DNS overlay, waits for Tor bootstrap, and verifies the exit IP. |
-| `ttp stop`            |       ✅       | Zero-leak teardown: stops watchdog, resolves Tor UID, applies teardown lockdown, sends `SHUTDOWN` to Tor, stops Tor service, applies active socket slaughter (TCP RST & reject), waits 300ms, destroys and verifies closed every redirected TCP socket (exit 8 and nothing removed if one remains), flushes connection tracking via `conntrack -F`, removes nftables rules, unmounts DNS overlay, and deletes the session lock. |
-| `ttp restart`         |       ✅       | Shortcut for `ttp stop` followed by `ttp start`. Accepts all `start` options.                                                                                |
+| `ttp start`           |       ✅       | Activates the transparent Tor proxy: checks that Tor and any needed pluggable transport are installed (it never installs them; exit 1 if missing), applies the nftables rules, mounts the DNS overlay, waits for Tor bootstrap, starts the watchdog if required, and verifies Tor from a non-exempt process. |
+| `ttp stop`            |       ✅       | Zero-leak teardown: stops watchdog, resolves Tor UID, applies teardown lockdown, sends `SHUTDOWN` to Tor, stops Tor service, applies active socket slaughter (TCP RST & reject), waits 300ms, destroys and verifies closed every redirected TCP socket (exit 8 and nothing removed if one remains), flushes connection tracking via `conntrack -F`, removes nftables rules, unmounts DNS overlay, and deletes the session lock. `--restore-only` forces restoration without a session and releases a retained VPN guard. |
+| `ttp restart`         |       ✅       | `ttp stop` followed by `ttp start`, with the DNSSEC and settings checks done before stopping. Accepts the `start` options except `--require-vpn`; refuses a required-VPN session (exit 10) and a latched emergency (exit 7). |
 | `ttp refresh`         |       ✅       | Requests a new Tor circuit via `NEWNYM` signal. All active streams are rotated for a new exit IP.                                                            |
-| `ttp status [--json]` | Recommended | Read-only evidence with session health separated from command success; no HTTP probe. Root is needed to read private session evidence. |
+| `ttp status [--json]` | ✅ (after any session) | Read-only evidence with session health separated from command success; no HTTP probe. Without root it works only before any session since boot; afterwards it asks for `sudo` and exits 1. |
 | `ttp monitor [--interval SECONDS]` | ✅ | Interactive passive view of status evidence and changes seen since opening; no Tor/DNS probe or network-policy change. |
 | `ttp check` | ✅ | Bounded non-exempt Tor verification; valid negative requests containment, inconclusive returns 3. |
-| `ttp check-leak` | ✅ | Shared typed Tor check plus optional informational DNS observations; not a proof covering all applications. |
-| `ttp logs`            |       ✅       | Streams real-time content from the volatile log at `/run/ttp/ttp.log`.                                                                                       |
+| `ttp check-leak` | ✅ | Shared typed Tor check plus optional informational DNS observations; returns the `check` code; not a proof covering all applications. |
+| `ttp config [--session]` | ✅ | Validated settings and the origin of each value; `--session` shows the copy frozen into the running session. |
+| `ttp logs`            |       ✅       | Prints the volatile log at `/run/ttp/ttp.log` (mode 0600). Without root it asks for `sudo` and exits 1. |
 | `ttp diagnose`        |       ✅       | Collects full system diagnostics: OS info, Tor service status, active torrc, nftables ruleset, and DNS state.                                                |
-| `ttp uninstall`       |       ✅       | Removes TTP system-wide (only applicable to source installs via `scripts/install.sh`).                                                                       |
+| `ttp uninstall`       |       ✅       | Stops any session, removes the `ttp_tor_policy` SELinux module and TTP's markers in `/var/lib/ttp`. The package is removed with the package manager or `scripts/uninstall.sh`. |
+| `ttp bypass CMD...`   | ✅ (via `sudo`) | Runs `CMD` as the invoking `SUDO_UID`/`SUDO_GID` in a transient scope in `ttp-bypass.slice`, which the ruleset exempts: its traffic, DNS included, is in cleartext. |
 | `ttp watchdog start`  |       ✅       | Manually starts the background session integrity watchdog as a volatile systemd service.                                                                     |
 | `ttp watchdog stop` | ✅ | Refuses while the active session requires supervision; use explicit `ttp stop`. |
-| `ttp watchdog status` |       ❌       | Shows the current state of the watchdog daemon (active/inactive, PID).                                                                                       |
+| `ttp watchdog status` | ✅ (after any session) | Shows whether the watchdog unit is running and its PID, re-probing the unit. Without root it works only before any session since boot. |
 | `ttp watchdog run`    |       ✅       | **Internal command.** Runs the continuous integrity monitoring loop (invoked by the watchdog service unit).                                                  |
 
 ### 1.3 `ttp start` Options
@@ -53,15 +55,22 @@ Most commands require root privileges (`sudo`). Exceptions are noted in the tabl
 | :-------------------- | :---- | :---------- | :-------------------------------------------------------------------------------------------- |
 | `--interface`, `-i`   | `str` | Auto-detect | Network interface for DNS overlay (e.g. `eth0`, `wlan0`).                                     |
 | `--bootstrap-timeout` | `int` | `180`       | Seconds to wait for Tor to reach 100% bootstrap before aborting.                              |
+| `--transport-port`, `-t` | `int` | `9041`   | Tor TransPort.                                                                                |
+| `--dns-port`, `-d`    | `int` | `9054`      | Tor DNSPort.                                                                                  |
 | `--allow-root`        | flag  | off         | Exempt root (`uid 0`) processes from Tor routing (allows direct internet for system updates). |
 | `--no-lan-bypass`     | flag  | off         | Disable LAN bypass: all RFC 1918 and link-local traffic is also routed through Tor.           |
 | `--no-ipv6`           | flag  | off         | Force disable all IPv6 traffic (drops outgoing IPv6 to prevent leaks).                        |
 | `--watchdog/--no-watchdog`, `-w` | flag | config (off) | Require useful-progress supervision and startup readiness. |
-| `--bypass-user`       | `str` | —           | Comma-separated list of system users whose traffic bypasses Tor (split tunneling).            |
-| `--bypass-group`      | `str` | —           | Comma-separated list of system groups whose traffic bypasses Tor (split tunneling).           |
+| `--bypass-user`       | `str` | —           | System users whose traffic bypasses Tor; repeat the option or separate names with commas.     |
+| `--bypass-group`      | `str` | —           | System groups whose traffic bypasses Tor; repeat the option or separate names with commas.    |
 | `--use-bridges`       | flag  | off         | Enable Tor bridges support.                                                                   |
-| `--bridge-file`       | `str` | —           | Path to a file containing Tor bridge lines.                                                   |
+| `--bridge-file`       | `str` | —           | Path to a file containing Tor bridge lines; under sudo/pkexec it is read as the caller.       |
 | `--bridge`            | `str` | —           | Individual Tor bridge line (can be specified multiple times).                                 |
+| `--external-daemon`   | flag  | off         | BYOD mode: use a Tor managed by the host.                                                     |
+| `--tor-uid`           | `str` | —           | UID or user name of the host's Tor process in BYOD mode.                                      |
+| `--notifications/--no-notifications` | flag | config (off) | Desktop notifications for the initiating user; independent of the watchdog. |
+| `--notification-user` | `str` | —           | Desktop recipient for a direct root invocation; requires notifications.                       |
+| `--require-vpn`       | UUID  | —           | Require an active full-tunnel NetworkManager WireGuard profile before Tor; needs `--watchdog`, `--no-lan-bypass`, managed Tor and no bypass. See the [VPN guide](web/how-to/vpn.md). |
 
 ### 1.4 Configuration and exit codes
 

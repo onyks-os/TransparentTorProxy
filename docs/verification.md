@@ -84,7 +84,7 @@ Fedora 45 container.
 ## 2. What each artifact contains: the SBOMs
 
 Every package has its own CycloneDX SBOM beside it, named after it
-(`transparent-tor-proxy_0.4.10_all.deb.cdx.json`, and so on), signed like the
+(`transparent-tor-proxy_0.5.0_all.deb.cdx.json`, and so on), signed like the
 package. It is read from the package itself by `packaging/make_sbom.py`, so it
 declares:
 
@@ -105,13 +105,14 @@ reproducible build can: from 0.4.10 on, building the same tag again produces the
 same bytes, so anyone can rebuild a release and compare.
 
 ```bash
-git clone --branch v0.4.10 https://github.com/onyks-os/TransparentTorProxy
+git clone --branch v0.5.0 https://github.com/onyks-os/TransparentTorProxy
 cd TransparentTorProxy
 packaging/release.sh           # needs python3 with twine, podman or docker, rpm, dpkg-deb
 sha256sum packaging/*.whl packaging/*.tar.gz packaging/*.rpm
 ```
 
-and compare with `SHA256SUMS.txt` from the release. What makes it work:
+and compare with `SHA256SUMS.txt` from the release (any release from 0.4.10 on;
+the signed Fedora 45 RPM is the exception described below). What makes it work:
 
 - every timestamp is the tagged commit's (`SOURCE_DATE_EPOCH`), and the `.rpm`
   records no build host;

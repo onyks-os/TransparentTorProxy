@@ -17,10 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ttp start` and `ttp restart` exited with `0` when Tor, or a pluggable
+  transport the bridges need, was not installed. No session existed, and under
+  `restart` the previous one was already gone, so a script that trusted `0` ran
+  in cleartext. They now exit with `1`, which is what the 0.5.0 exit code
+  contract says for an operation failure. Nothing is installed, as before.
+- `ttp logs` without `sudo` crashed with a `PermissionError` traceback, and
+  `ttp check-leak` and `ttp watchdog status` reported an unreadable session as
+  inactive. All three now say that root is needed and exit with `1`.
+- `ttp config --help` had no description, and `ttp restart --help` none for
+  `--notifications` and `--notification-user`.
 - `ttp status` run without `sudo` after any session said "Cannot read the
   session intent": `/run/ttp` stays root-only (0750) until reboot. It now says
   the state is readable only by root and to run it with `sudo`, and the docs
   show `sudo ttp status` and `sudo ttp check`.
+
+### Documentation
+
+- The CLI reference covers 0.5.0: `monitor`, `config`, `status --json`, the
+  notification and VPN options, what `restart` refuses, and every exit code from
+  `0` to `10` with what it means for the network. The automation tutorial
+  branches on all of them instead of treating every nonzero code as cleartext.
+- The watchdog explanation describes the 0.5.0 supervisor (systemd readiness and
+  `WatchdogSec`, the termination hook, the AppArmor and VPN checks, the latched
+  and verified emergency) instead of the 0.4 state machine.
+- `docs/interfaces.md` no longer says that `start` installs Tor, and lists the
+  missing commands and options. The operator guide's exit table includes `10`.
 
 ### Tests
 

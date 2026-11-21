@@ -181,24 +181,60 @@ def test_check_failure(mock_verify_tor):
 
 @patch("ttp.commands.admin._LOG_PATH")
 def test_logs_command(mock_log_path):
-    mock_log_path.exists.return_value = True
     mock_log_path.read_text.return_value = "Mock log content"
 
     result = runner.invoke(app, ["logs"])
     assert result.exit_code == 0
     assert "Mock log content" in result.output
     assert mock_log_path.read_text.call_args.kwargs == {"encoding": "utf-8"}
-    assert mock_log_path.exists.call_count == 1
 
 
 @patch("ttp.commands.admin._LOG_PATH")
 def test_logs_command_no_file(mock_log_path):
-    mock_log_path.exists.return_value = False
+    mock_log_path.read_text.side_effect = FileNotFoundError
 
     result = runner.invoke(app, ["logs"])
     assert result.exit_code == 1
     assert "No log file found" in result.output
-    assert mock_log_path.exists.call_count == 1
+
+
+@patch("ttp.commands.admin._LOG_PATH")
+def test_logs_as_a_normal_user_asks_for_sudo_instead_of_a_traceback(mock_log_path):
+    """The log is 0600 in a 0750 directory; a normal user got a raw PermissionError."""
+    mock_log_path.read_text.side_effect = PermissionError(13, "Permission denied")
+
+    result = runner.invoke(app, ["logs"])
+    assert result.exit_code == 1
+    assert "readable only by root" in result.output
+    assert "sudo" in result.output
+    assert not isinstance(result.exception, PermissionError)
+
+
+def test_check_leak_as_a_normal_user_asks_for_root_before_reading_the_session(monkeypatch):
+    """Without root an unreadable session used to read as INACTIVE."""
+    from ttp import state
+
+    monkeypatch.setattr("os.geteuid", lambda: 1000)
+    read = MagicMock()
+    monkeypatch.setattr(state, "read_lock", read)
+
+    result = runner.invoke(app, ["check-leak"])
+    assert result.exit_code == 1
+    assert "INACTIVE" not in result.output
+    read.assert_not_called()
+
+
+def test_watchdog_status_never_reports_an_unreadable_session_as_not_running(monkeypatch):
+    from ttp import state
+
+    unreadable = MagicMock()
+    unreadable.read_text.side_effect = PermissionError(13, "Permission denied")
+    monkeypatch.setattr(state, "LOCK_PATH", unreadable)
+
+    result = runner.invoke(app, ["watchdog", "status"])
+    assert result.exit_code == 1
+    assert "sudo" in result.output
+    assert "INACTIVE" not in result.output
 
 
 # tmpfs pre-flight

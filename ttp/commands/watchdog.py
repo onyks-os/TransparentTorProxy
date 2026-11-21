@@ -20,6 +20,7 @@ from ttp.commands._common import (
     require_root_or_watchdog_user as _require_root_or_watchdog_user,
 )
 from ttp.evidence import Diagnostic, ExitCode
+from ttp.exceptions import StateError
 from ttp.session_safety import request_emergency, supervision_terminated
 
 watchdog_app = typer.Typer(
@@ -93,7 +94,12 @@ def watchdog_stop() -> None:
 @watchdog_app.command(name="status")
 def watchdog_status() -> None:
     """Show the background session watchdog status."""
-    lock = state.read_lock()
+    try:
+        lock = state.read_lock(strict=True)
+    except StateError as exc:
+        # Never report an unreadable session as "not running".
+        _print_error("Observation Failed", str(exc))
+        raise typer.Exit(code=1)
     if lock is None:
         console.print(f"{_PREFIX} Status: [bold red]INACTIVE[/] (TTP is not running)")
         raise typer.Exit(code=0)

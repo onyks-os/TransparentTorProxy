@@ -67,7 +67,7 @@ sudo -u devuser curl -s https://api.ipify.org
 Inspect active bypass rules and excluded entities:
 
 ```bash
-ttp status
+sudo ttp status
 ```
 
 The output confirms active session parameters, including registered bypass UIDs, GIDs, and LAN exclusion state.
