@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-21
+
+Maintenance. Missing Tor or a missing pluggable transport is now a failure
+(exit `1`) instead of a success, commands run without `sudo` ask for it instead
+of crashing or reporting an unreadable session as inactive, and the
+documentation catches up with 0.5.0: every command and option, and exit codes
+`0` to `10`. The zero-leak suite's round-trip test no longer trips on the host's
+own firewall.
+
+Upgrade notes: a script that treated exit `0` from `ttp start` or
+`ttp restart` as "nothing to do" when Tor was absent now sees `1`. No network
+change was ever made in that case, and none is made now.
+
 ### Added
 
 - Estimate real release downloads without telemetry: `scripts/release_stats.py`

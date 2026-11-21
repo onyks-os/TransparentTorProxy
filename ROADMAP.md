@@ -4,7 +4,7 @@ This document outlines the **realistic, near-term** development plan for Transpa
 
 ---
 
-## Current Status (v0.5.0)
+## Current Status (v0.5.1)
 
 Delivered and in use:
 
@@ -38,6 +38,15 @@ TTP has no start-at-boot mode ([security assessment, 4.3](docs/security-assessme
 ---
 
 ## Released
+
+### v0.5.1 — Maintenance
+
+Missing Tor or a missing pluggable transport exits `1` instead of `0`; `logs`,
+`status`, `check-leak` and `watchdog status` ask for `sudo` instead of crashing
+or reporting an unreadable session as inactive; the documentation describes
+0.5.0's commands and exit codes in full; and the NSE round-trip test runs its
+echo server in an isolated host namespace (NSE 2.3.0), out of reach of the
+host's firewall.
 
 ### v0.5.0 — Compatibility & Observability
 
