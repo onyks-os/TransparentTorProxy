@@ -24,7 +24,7 @@ What backs those claims, as of this release:
 
 | Evidence | Where it runs |
 | :------- | :------------ |
-| **Zero-leak ruleset suite.** TTP's real ruleset in a network namespace (NSE 2.2.0, incomplete captures rejected), every containment test preceded by a positive control, alongside Docker-, ufw-, firewalld- and WireGuard-shaped competing rulesets. | CI, every push and PR (`make test-nse`) |
+| **Zero-leak ruleset suite.** TTP's real ruleset in a network namespace (NSE 2.3.0, incomplete captures rejected, round trip answered from an isolated host namespace), every containment test preceded by a positive control, alongside Docker-, ufw-, firewalld- and WireGuard-shaped competing rulesets. | CI, every push and PR (`make test-nse`) |
 | **Lifecycle transitions.** Shutdown, reboot and suspend/resume onto a new network, judged from a packet capture taken outside the guest, under systemd-networkd (Debian 13) and NetworkManager (Fedora 44, SELinux enforcing). | CI, in a VM, when firewall, lifecycle, DNS or watchdog code changes, and weekly |
 | **Watchdog chaos sweep.** Every fault once, each audit paired with a canary, TCP and UDP, in three variants. | CI, in a VM, same trigger |
 | **Required VPN gates.** Real Tor through WireGuard in a Debian 13 VM with an external observer: six IPv4/IPv6 topologies, a private obfs4 bridge, suspend/resume and reboot. ParrotOS Home 7.4 (AppArmor enforcing) qualified by hand on the release candidate. | CI, in a VM, when VPN, firewall or lifecycle code changes, and weekly |

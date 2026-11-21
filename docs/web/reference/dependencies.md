@@ -26,7 +26,7 @@ the session starts.
 
 | Group | Package | Constraint | Purpose |
 |---|---|---|---|
-| `nse` | [network-sandbox-engine](https://pypi.org/project/network-sandbox-engine/) | `>=2.2.0,<3` | Isolated network namespace testing & Scapy rule validation. |
+| `nse` | [network-sandbox-engine](https://pypi.org/project/network-sandbox-engine/) | `>=2.3.0,<3` | Isolated network namespace testing & Scapy rule validation. |
 | `nse` | [pyroute2](https://pypi.org/project/pyroute2/) | unpinned | Netlink route & interface management inside sandbox namespaces. |
 | `dev` | [pytest](https://pypi.org/project/pytest/) | `>=9.1.1` | Unit & integration test runner. |
 | `dev` | [hypothesis](https://pypi.org/project/hypothesis/) | `>=6.0.0` | Property-based fuzz testing. |
