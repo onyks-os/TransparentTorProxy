@@ -5,26 +5,27 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     commit-message:
       prefix: "ci"
     labels:
       - "dependencies"
       - "ci"
-    # init, analyze and upload-sarif must move together: CodeQL refuses to
-    # analyze with a different version from the one that initialised
+    # One PR a month for every action. Grouping everything also keeps the
+    # CodeQL init, analyze and upload-sarif actions together: CodeQL refuses
+    # to analyze with a different version from the one that initialised
     # ("Loaded a configuration file for version '4.38.2', but running version
     # '4.38.1'"), so one PR per action failed every time (#102, #104).
     groups:
-      codeql-action:
+      github-actions:
         patterns:
-          - "github/codeql-action*"
+          - "*"
 
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
+      interval: "monthly"
+    open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
       prefix-development: "deps-dev"
@@ -36,15 +37,18 @@ updates:
     exclude-paths:
       - "requirements/oldest.in"
       - "requirements/oldest.txt"
+    # Every lock moves in one reviewed PR a month instead of one PR per
+    # package (eight in a single week before this). Packages that must move
+    # together (pydantic and pydantic-core, wcmatch and bracex) are in the
+    # same group by construction. Security updates do not wait for the
+    # monthly run: Dependabot opens them as soon as an advisory is published,
+    # grouped into one PR of their own.
     groups:
-      pydantic:
+      python-locks:
+        applies-to: version-updates
         patterns:
-          - "pydantic"
-          - "pydantic-core"
-          - "pydantic-settings"
-      wcmatch:
+          - "*"
+      python-security:
+        applies-to: security-updates
         patterns:
-          - "wcmatch"
-          - "bracex"
-      dev-dependencies:
-        dependency-type: "development"
+          - "*"
