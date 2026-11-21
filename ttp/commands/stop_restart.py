@@ -191,8 +191,14 @@ def restart_command(
         "--no-ipv6",
         help="Force disable all IPv6 traffic (drops outgoing IPv6 to prevent leaks).",
     ),
-    notifications: Optional[bool] = typer.Option(None, "--notifications/--no-notifications"),
-    notification_user: Optional[str] = typer.Option(None, "--notification-user"),
+    notifications: Optional[bool] = typer.Option(
+        None,
+        "--notifications/--no-notifications",
+        help="Enable optional desktop notifications for the initiating user.",
+    ),
+    notification_user: Optional[str] = typer.Option(
+        None, "--notification-user", help="Explicit non-root desktop recipient (required for direct root invocation)."
+    ),
 ) -> None:
     """Restart the transparent Tor proxy session."""
     _require_root()

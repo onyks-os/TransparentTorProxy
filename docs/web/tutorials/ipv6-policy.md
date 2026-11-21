@@ -40,7 +40,7 @@ To verify that IPv6 traffic is properly handled or blocked:
 
 ```bash
 # Run automated TTP connectivity checks
-ttp check
+sudo ttp check
 
 # Attempt IPv6 ping (should fail or time out under --no-ipv6)
 ping -c 2 -6 2001:4860:4860::8888 || echo "IPv6 outbound blocked."

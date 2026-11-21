@@ -111,7 +111,7 @@ nav:
       - Security and Quality Findings: how-to/security-quality.md
   - Explanation:
       - Architecture & Flow: explanation/architecture.md
-      - Watchdog FSM: explanation/watchdog-fsm.md
+      - Session Watchdog: explanation/watchdog-fsm.md
       - Zero-Leak Verification: explanation/verification.md
       - Security & Threat Model: explanation/security-assessment.md
   - Reference:

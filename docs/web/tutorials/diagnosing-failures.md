@@ -30,7 +30,7 @@ View recent session logs stored in `/run/ttp/ttp.log`:
 
 ```bash
 # Display full volatile session log
-ttp logs
+sudo ttp logs
 
 # Combine with systemd journal for Tor daemon logs
 sudo journalctl -u ttp-tor.service -n 50 --no-pager
@@ -120,8 +120,8 @@ sudo nft -a list ruleset
 
 Record the installed package version using your installation method (for example
 `rpm -q transparent-tor-proxy`, `dpkg-query -W transparent-tor-proxy`, or the
-package metadata in the pip/pipx environment used to install TTP). Version 0.4.11
-does not expose a `ttp --version` option.
+package metadata in the pip/pipx environment used to install TTP). TTP has no
+`ttp --version` option.
 
 An inactive service is useful information, not automatically an error. If
 `resolvectl` is unavailable, record that and inspect `/etc/resolv.conf` locally.
@@ -135,9 +135,9 @@ a VPN, container network, UID-based egress policy or application sandbox is acti
 Record whether normal browsing and name resolution work before TTP starts.
 Record nftables' version too: syntax support is distinct from firewall hardening.
 For example, nftables 1.0.6 rejects the `destroy table` operation used by
-TTP 0.4.11's teardown. The subsequent implementation uses `delete table` and
-handles an absent table explicitly. If that exact error appears on an older
-release, preserve it as a compatibility issue; do not loosen firewall policy.
+the teardown of TTP 0.4.11 and earlier; 0.5.0 uses `delete table` and handles an
+absent table explicitly. If that exact error appears on an older release,
+preserve it as a compatibility issue; do not loosen firewall policy.
 
 ### B. Reproduce once and preserve the exit status
 
@@ -154,10 +154,13 @@ This starts a real TTP session and changes its firewall/DNS state; it is the
 intentional reproduction step, not a read-only diagnostic. Do not add bypasses or
 `--allow-root` merely to make the check pass.
 
-For 0.4.11, code `1` indicates an unsuccessful start, `3` an established but
-unverified session, and `0` successful verification. A failed external check is
-not by itself proof of a leak or proof that no traffic reaches Tor. Also inspect
-watchdog startup errors: a requested watchdog can fail independently of Tor.
+Code `0` means the session is active and Tor was confirmed, `3` an established
+session whose Tor check was inconclusive, `1` an unsuccessful start (the network
+is restored, in cleartext), `5` a requested watchdog that did not become ready,
+and `7`/`8` emergency containment verified or unconfirmed. The
+[exit code table](../reference/cli.md#4-cli-exit-codes) lists them all. A failed
+external check is not by itself proof of a leak or proof that no traffic reaches
+Tor.
 
 ### C. Capture the failing state before stopping
 

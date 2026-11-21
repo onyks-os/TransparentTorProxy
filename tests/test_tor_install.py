@@ -534,17 +534,17 @@ def test_ensure_pluggable_transports_already_installed(mock_resolve):
 
 @patch("ttp.tor_install.resolve_optional", return_value=None)
 def test_ensure_pluggable_transports_missing_raises(mock_resolve):
-    """ensure_pluggable_transports exits 0 when the transport binary is missing (No Auto-Install)."""
+    """ensure_pluggable_transports exits 1 when the transport binary is missing (No Auto-Install)."""
     with pytest.raises(typer.Exit) as exc_info:
         tor_install.ensure_pluggable_transports(["obfs4"])
-    assert exc_info.value.exit_code == 0
+    assert exc_info.value.exit_code == 1
 
 
 def test_ensure_pluggable_transports_unsupported_pt():
-    """ensure_pluggable_transports exits with code 0 for unsupported transports under No Auto-Install policy."""
+    """ensure_pluggable_transports exits with code 1 for unsupported transports under No Auto-Install policy."""
     with pytest.raises(typer.Exit) as exc_info:
         tor_install.ensure_pluggable_transports(["shadow"])
-    assert exc_info.value.exit_code == 0
+    assert exc_info.value.exit_code == 1
 
 
 # ---------------------------------------------------------------------------
@@ -727,10 +727,11 @@ def test_transport_names_are_case_insensitive() -> None:
         ensure_pluggable_transports(["OBFS4"])
 
 
-def test_missing_transport_binary_exits_zero_without_installing() -> None:
+def test_missing_transport_binary_exits_one_without_installing() -> None:
     """
-    Exit code 0, not 1: a missing optional dependency is guidance, not a crash.
-    And nothing may be installed - that is the documented policy.
+    Exit code 1, not 0: no session was started, and under `ttp restart` the
+    previous one is already gone, so 0 would tell a script the host is protected
+    while it is in cleartext. Nothing may be installed - the documented policy.
     """
     with (
         patch("ttp.tor_install.resolve_optional", return_value=None),
@@ -738,7 +739,7 @@ def test_missing_transport_binary_exits_zero_without_installing() -> None:
         pytest.raises(typer.Exit) as exc,
     ):
         ensure_pluggable_transports(["obfs4"])
-    assert exc.value.exit_code == 0
+    assert exc.value.exit_code == 1
     run.assert_not_called()
 
 
@@ -748,7 +749,7 @@ def test_unknown_transport_exits_without_touching_the_filesystem() -> None:
         pytest.raises(typer.Exit) as exc,
     ):
         ensure_pluggable_transports(["wireguard"])
-    assert exc.value.exit_code == 0
+    assert exc.value.exit_code == 1
     lookup.assert_not_called()
 
 
@@ -787,7 +788,7 @@ def test_the_guidance_names_the_missing_binary_and_the_transport() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ensure_tor_ready_exits_zero_when_tor_is_absent() -> None:
+def test_ensure_tor_ready_exits_one_when_tor_is_absent() -> None:
     with (
         patch("ttp.tor_install.detect_tor", return_value={"is_installed": False}),
         patch("ttp.tor_install.start_tor_service") as start,
@@ -795,7 +796,7 @@ def test_ensure_tor_ready_exits_zero_when_tor_is_absent() -> None:
         pytest.raises(typer.Exit) as exc,
     ):
         ensure_tor_ready()
-    assert exc.value.exit_code == 0
+    assert exc.value.exit_code == 1
     start.assert_not_called()
 
 

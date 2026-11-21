@@ -159,6 +159,9 @@ def check_command() -> None:
 
 def check_leak_command() -> None:
     """Check for network leaks using Tor Project API and optional DNS probes."""
+    # Before reading the lock: without root an unreadable session would read
+    # as "INACTIVE", and the shared check below requires root anyway.
+    _require_root()
     lock = state.read_lock()
     if lock is None:
         console.print(f"{_PREFIX} Cannot check for leaks: TTP is INACTIVE.")

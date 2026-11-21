@@ -126,7 +126,7 @@ override the configuration, including `--no-watchdog` and `--no-notifications`.
 | Code | Meaning |
 | ---: | --- |
 | 0 | Requested command requirements satisfied |
-| 1 | Configuration or operation error |
+| 1 | Configuration or operation error, including missing Tor or a missing transport |
 | 2 | CLI usage error |
 | 3 | Tor verification inconclusive |
 | 4 | Explicit DNSSEC conflict before startup |
@@ -135,10 +135,13 @@ override the configuration, including `--no-watchdog` and `--no-notifications`.
 | 7 | Emergency rules verified |
 | 8 | Required containment unconfirmed |
 | 9 | Notification failure |
+| 10 | Required VPN unavailable, or an operation that would weaken it refused |
 
-Concurrent causes are retained. Session-result precedence is `8 > 7 > 6 > 5 > 1 > 9 > 3 > 0`; for example, verified containment after watchdog failure returns 7 and
+Concurrent causes are retained. Session-result precedence is `8 > 7 > 6 > 10 > 5 > 1 > 9 > 3 > 0`; for example, verified containment after watchdog failure returns 7 and
 retains the watchdog cause. A returned command's exit status cannot change when
-an asynchronous failure happens later.
+an asynchronous failure happens later. The
+[CLI reference](../reference/cli.md#4-cli-exit-codes) says what each code means
+for the network.
 
 See [ADR 0013](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/decisions/0013-session-evidence-and-notifications.md)
 for timing defaults and the approved contract. The underlying mechanisms follow
