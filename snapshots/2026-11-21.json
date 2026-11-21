@@ -1,0 +1,323 @@
+{
+  "taken_at": "2026-11-21T12:55:08+00:00",
+  "repo": "onyks-os/TransparentTorProxy",
+  "stars": 51,
+  "estimated": 317,
+  "raw_packages": 377,
+  "releases": [
+    {
+      "tag": "v0.4.11",
+      "published_at": "2026-10-06T22:54:14Z",
+      "has_floor": true,
+      "floor": 7,
+      "raw_packages": 164,
+      "estimated": 136,
+      "packages": {
+        "transparent-tor-proxy-0.4.11-1.fc44.noarch.rpm": 31,
+        "transparent-tor-proxy_0.4.11_all.deb": 94,
+        "transparent_tor_proxy-0.4.11-py3-none-any.whl": 4,
+        "transparent_tor_proxy-0.4.11.tar.gz": 7
+      }
+    },
+    {
+      "tag": "v0.4.10",
+      "published_at": "2026-09-30T08:16:10Z",
+      "has_floor": true,
+      "floor": 3,
+      "raw_packages": 29,
+      "estimated": 17,
+      "packages": {
+        "transparent-tor-proxy-0.4.10-1.fc44.noarch.rpm": 3,
+        "transparent-tor-proxy_0.4.10_all.deb": 10,
+        "transparent_tor_proxy-0.4.10-py3-none-any.whl": 2,
+        "transparent_tor_proxy-0.4.10.tar.gz": 2
+      }
+    },
+    {
+      "tag": "v0.4.9",
+      "published_at": "2026-09-29T12:32:44Z",
+      "has_floor": true,
+      "floor": 4,
+      "raw_packages": 21,
+      "estimated": 5,
+      "packages": {
+        "transparent-tor-proxy-0.4.9-1.fc44.noarch.rpm": 1,
+        "transparent-tor-proxy_0.4.9_all.deb": 3,
+        "transparent_tor_proxy-0.4.9-py3-none-any.whl": 0,
+        "transparent_tor_proxy-0.4.9.tar.gz": 1
+      }
+    },
+    {
+      "tag": "v0.4.8",
+      "published_at": "2026-09-11T16:17:46Z",
+      "has_floor": true,
+      "floor": 1,
+      "raw_packages": 31,
+      "estimated": 27,
+      "packages": {
+        "transparent-tor-proxy-0.4.8-1.noarch.rpm": 6,
+        "transparent-tor-proxy_0.4.8_all.deb": 20,
+        "transparent_tor_proxy-0.4.8-py3-none-any.whl": 0,
+        "transparent_tor_proxy-0.4.8.tar.gz": 1
+      }
+    },
+    {
+      "tag": "v0.4.7",
+      "published_at": "2026-09-08T15:10:40Z",
+      "has_floor": true,
+      "floor": 0,
+      "raw_packages": 6,
+      "estimated": 6,
+      "packages": {
+        "transparent-tor-proxy-0.4.7-1.noarch.rpm": 1,
+        "transparent-tor-proxy_0.4.7_all.deb": 3,
+        "transparent_tor_proxy-0.4.7-py3-none-any.whl": 1,
+        "transparent_tor_proxy-0.4.7.tar.gz": 1
+      }
+    },
+    {
+      "tag": "v0.4.5",
+      "published_at": "2026-06-23T00:22:53Z",
+      "has_floor": false,
+      "floor": 0,
+      "raw_packages": 35,
+      "estimated": 35,
+      "packages": {
+        "transparent-tor-proxy-0.4.5-1.fc44.noarch.rpm": 10,
+        "transparent-tor-proxy_0.4.5_all.deb": 15,
+        "transparent_tor_proxy-0.4.5-py3-none-any.whl": 3,
+        "transparent_tor_proxy-0.4.5.tar.gz": 7
+      }
+    },
+    {
+      "tag": "v0.4.0",
+      "published_at": "2026-06-08T23:31:31Z",
+      "has_floor": false,
+      "floor": 0,
+      "raw_packages": 47,
+      "estimated": 47,
+      "packages": {
+        "transparent-tor-proxy-0.4.0-1.fc44.noarch.rpm": 5,
+        "transparent-tor-proxy_0.4.0_all.deb": 37,
+        "transparent_tor_proxy-0.4.0-py3-none-any.whl": 3,
+        "transparent_tor_proxy-0.4.0.tar.gz": 2
+      }
+    },
+    {
+      "tag": "v0.3.5",
+      "published_at": "2026-05-22T20:54:33Z",
+      "has_floor": false,
+      "floor": 0,
+      "raw_packages": 5,
+      "estimated": 5,
+      "packages": {
+        "transparent-tor-proxy-0.3.5-1.fc44.noarch.rpm": 2,
+        "transparent-tor-proxy_0.3.5_all.deb": 1,
+        "transparent_tor_proxy-0.3.5-py3-none-any.whl": 1,
+        "transparent_tor_proxy-0.3.5.tar.gz": 1
+      }
+    },
+    {
+      "tag": "v0.3.0",
+      "published_at": "2026-05-20T01:22:04Z",
+      "has_floor": false,
+      "floor": 0,
+      "raw_packages": 2,
+      "estimated": 2,
+      "packages": {
+        "transparent-tor-proxy-0.3.0-1.fc44.noarch.rpm": 1,
+        "transparent-tor-proxy_0.3.0_all.deb": 1
+      }
+    },
+    {
+      "tag": "v0.2.0",
+      "published_at": "2026-05-05T18:53:41Z",
+      "has_floor": false,
+      "floor": 0,
+      "raw_packages": 8,
+      "estimated": 8,
+      "packages": {
+        "transparent-tor-proxy-0.2.0-1.fc44.noarch.rpm": 2,
+        "transparent-tor-proxy_0.2.0_all.deb": 6
+      }
+    },
+    {
+      "tag": "v0.1.1",
+      "published_at": "2026-05-01T23:01:49Z",
+      "has_floor": false,
+      "floor": 0,
+      "raw_packages": 16,
+      "estimated": 16,
+      "packages": {
+        "transparent-tor-proxy-0.1.1-1.fc44.noarch.rpm": 8,
+        "transparent-tor-proxy_0.1.1_all.deb": 8
+      }
+    },
+    {
+      "tag": "v0.1.0",
+      "published_at": "2026-04-28T23:50:13Z",
+      "has_floor": false,
+      "floor": 0,
+      "raw_packages": 13,
+      "estimated": 13,
+      "packages": {
+        "ttp-0.1.0-1.fc43.noarch.rpm": 10,
+        "ttp_0.1.0_all.deb": 3
+      }
+    }
+  ],
+  "traffic": {
+    "views": {
+      "count": 163,
+      "uniques": 61,
+      "views": [
+        {
+          "timestamp": "2026-11-07T00:00:00Z",
+          "count": 6,
+          "uniques": 4
+        },
+        {
+          "timestamp": "2026-11-08T00:00:00Z",
+          "count": 6,
+          "uniques": 4
+        },
+        {
+          "timestamp": "2026-11-09T00:00:00Z",
+          "count": 14,
+          "uniques": 9
+        },
+        {
+          "timestamp": "2026-11-10T00:00:00Z",
+          "count": 13,
+          "uniques": 6
+        },
+        {
+          "timestamp": "2026-11-11T00:00:00Z",
+          "count": 19,
+          "uniques": 10
+        },
+        {
+          "timestamp": "2026-11-12T00:00:00Z",
+          "count": 12,
+          "uniques": 6
+        },
+        {
+          "timestamp": "2026-11-13T00:00:00Z",
+          "count": 12,
+          "uniques": 7
+        },
+        {
+          "timestamp": "2026-11-14T00:00:00Z",
+          "count": 12,
+          "uniques": 7
+        },
+        {
+          "timestamp": "2026-11-15T00:00:00Z",
+          "count": 6,
+          "uniques": 5
+        },
+        {
+          "timestamp": "2026-11-16T00:00:00Z",
+          "count": 11,
+          "uniques": 6
+        },
+        {
+          "timestamp": "2026-11-17T00:00:00Z",
+          "count": 9,
+          "uniques": 7
+        },
+        {
+          "timestamp": "2026-11-18T00:00:00Z",
+          "count": 23,
+          "uniques": 8
+        },
+        {
+          "timestamp": "2026-11-19T00:00:00Z",
+          "count": 13,
+          "uniques": 5
+        },
+        {
+          "timestamp": "2026-11-20T00:00:00Z",
+          "count": 7,
+          "uniques": 5
+        }
+      ]
+    },
+    "clones": {
+      "count": 2460,
+      "uniques": 313,
+      "clones": [
+        {
+          "timestamp": "2026-11-07T00:00:00Z",
+          "count": 29,
+          "uniques": 11
+        },
+        {
+          "timestamp": "2026-11-08T00:00:00Z",
+          "count": 155,
+          "uniques": 23
+        },
+        {
+          "timestamp": "2026-11-09T00:00:00Z",
+          "count": 18,
+          "uniques": 9
+        },
+        {
+          "timestamp": "2026-11-10T00:00:00Z",
+          "count": 233,
+          "uniques": 25
+        },
+        {
+          "timestamp": "2026-11-11T00:00:00Z",
+          "count": 137,
+          "uniques": 26
+        },
+        {
+          "timestamp": "2026-11-12T00:00:00Z",
+          "count": 247,
+          "uniques": 23
+        },
+        {
+          "timestamp": "2026-11-13T00:00:00Z",
+          "count": 367,
+          "uniques": 37
+        },
+        {
+          "timestamp": "2026-11-14T00:00:00Z",
+          "count": 31,
+          "uniques": 22
+        },
+        {
+          "timestamp": "2026-11-15T00:00:00Z",
+          "count": 40,
+          "uniques": 22
+        },
+        {
+          "timestamp": "2026-11-16T00:00:00Z",
+          "count": 40,
+          "uniques": 19
+        },
+        {
+          "timestamp": "2026-11-17T00:00:00Z",
+          "count": 280,
+          "uniques": 29
+        },
+        {
+          "timestamp": "2026-11-18T00:00:00Z",
+          "count": 162,
+          "uniques": 27
+        },
+        {
+          "timestamp": "2026-11-19T00:00:00Z",
+          "count": 192,
+          "uniques": 27
+        },
+        {
+          "timestamp": "2026-11-20T00:00:00Z",
+          "count": 529,
+          "uniques": 53
+        }
+      ]
+    }
+  }
+}
