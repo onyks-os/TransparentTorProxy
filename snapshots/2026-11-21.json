@@ -1,10 +1,25 @@
 {
-  "taken_at": "2026-11-21T12:55:08+00:00",
+  "taken_at": "2026-11-21T13:13:48+00:00",
   "repo": "onyks-os/TransparentTorProxy",
   "stars": 51,
   "estimated": 317,
   "raw_packages": 377,
   "releases": [
+    {
+      "tag": "v0.5.0",
+      "published_at": "2026-11-21T13:03:33Z",
+      "has_floor": true,
+      "floor": 0,
+      "raw_packages": 0,
+      "estimated": 0,
+      "packages": {
+        "transparent-tor-proxy-0.5.0-1.fc44.noarch.rpm": 0,
+        "transparent-tor-proxy-0.5.0-1.fc45.noarch.rpm": 0,
+        "transparent-tor-proxy_0.5.0_all.deb": 0,
+        "transparent_tor_proxy-0.5.0-py3-none-any.whl": 0,
+        "transparent_tor_proxy-0.5.0.tar.gz": 0
+      }
+    },
     {
       "tag": "v0.4.11",
       "published_at": "2026-10-06T22:54:14Z",
@@ -166,158 +181,5 @@
       }
     }
   ],
-  "traffic": {
-    "views": {
-      "count": 163,
-      "uniques": 61,
-      "views": [
-        {
-          "timestamp": "2026-11-07T00:00:00Z",
-          "count": 6,
-          "uniques": 4
-        },
-        {
-          "timestamp": "2026-11-08T00:00:00Z",
-          "count": 6,
-          "uniques": 4
-        },
-        {
-          "timestamp": "2026-11-09T00:00:00Z",
-          "count": 14,
-          "uniques": 9
-        },
-        {
-          "timestamp": "2026-11-10T00:00:00Z",
-          "count": 13,
-          "uniques": 6
-        },
-        {
-          "timestamp": "2026-11-11T00:00:00Z",
-          "count": 19,
-          "uniques": 10
-        },
-        {
-          "timestamp": "2026-11-12T00:00:00Z",
-          "count": 12,
-          "uniques": 6
-        },
-        {
-          "timestamp": "2026-11-13T00:00:00Z",
-          "count": 12,
-          "uniques": 7
-        },
-        {
-          "timestamp": "2026-11-14T00:00:00Z",
-          "count": 12,
-          "uniques": 7
-        },
-        {
-          "timestamp": "2026-11-15T00:00:00Z",
-          "count": 6,
-          "uniques": 5
-        },
-        {
-          "timestamp": "2026-11-16T00:00:00Z",
-          "count": 11,
-          "uniques": 6
-        },
-        {
-          "timestamp": "2026-11-17T00:00:00Z",
-          "count": 9,
-          "uniques": 7
-        },
-        {
-          "timestamp": "2026-11-18T00:00:00Z",
-          "count": 23,
-          "uniques": 8
-        },
-        {
-          "timestamp": "2026-11-19T00:00:00Z",
-          "count": 13,
-          "uniques": 5
-        },
-        {
-          "timestamp": "2026-11-20T00:00:00Z",
-          "count": 7,
-          "uniques": 5
-        }
-      ]
-    },
-    "clones": {
-      "count": 2460,
-      "uniques": 313,
-      "clones": [
-        {
-          "timestamp": "2026-11-07T00:00:00Z",
-          "count": 29,
-          "uniques": 11
-        },
-        {
-          "timestamp": "2026-11-08T00:00:00Z",
-          "count": 155,
-          "uniques": 23
-        },
-        {
-          "timestamp": "2026-11-09T00:00:00Z",
-          "count": 18,
-          "uniques": 9
-        },
-        {
-          "timestamp": "2026-11-10T00:00:00Z",
-          "count": 233,
-          "uniques": 25
-        },
-        {
-          "timestamp": "2026-11-11T00:00:00Z",
-          "count": 137,
-          "uniques": 26
-        },
-        {
-          "timestamp": "2026-11-12T00:00:00Z",
-          "count": 247,
-          "uniques": 23
-        },
-        {
-          "timestamp": "2026-11-13T00:00:00Z",
-          "count": 367,
-          "uniques": 37
-        },
-        {
-          "timestamp": "2026-11-14T00:00:00Z",
-          "count": 31,
-          "uniques": 22
-        },
-        {
-          "timestamp": "2026-11-15T00:00:00Z",
-          "count": 40,
-          "uniques": 22
-        },
-        {
-          "timestamp": "2026-11-16T00:00:00Z",
-          "count": 40,
-          "uniques": 19
-        },
-        {
-          "timestamp": "2026-11-17T00:00:00Z",
-          "count": 280,
-          "uniques": 29
-        },
-        {
-          "timestamp": "2026-11-18T00:00:00Z",
-          "count": 162,
-          "uniques": 27
-        },
-        {
-          "timestamp": "2026-11-19T00:00:00Z",
-          "count": 192,
-          "uniques": 27
-        },
-        {
-          "timestamp": "2026-11-20T00:00:00Z",
-          "count": 529,
-          "uniques": 53
-        }
-      ]
-    }
-  }
+  "traffic": null
 }
