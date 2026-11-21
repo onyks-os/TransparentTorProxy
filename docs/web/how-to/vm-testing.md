@@ -267,7 +267,7 @@ python3 scripts/vm/vpn/run.py \
   --client-os parrot --client-memory 3072 \
   --client-firmware-code /path/OVMF_CODE.fd \
   --client-firmware-vars /path/OVMF_VARS.fd \
-  --client-deb packaging/transparent-tor-proxy_0.5.0_all.deb \
+  --client-deb packaging/transparent-tor-proxy_0.5.1_all.deb \
   --require-apparmor --work /path/new-parrot-run
 ```
 

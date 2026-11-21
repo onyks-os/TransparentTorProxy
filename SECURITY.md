@@ -78,7 +78,8 @@ For valid, in-scope security vulnerability reports that are confirmed and resolv
 
 | Version | Support status | End of life |
 | ------- | -------------- | ------------ |
-| 0.4.x   | ✅ Security fixes | When 0.5.0 is released |
+| 0.5.x   | ✅ Security fixes | When 0.6.0 is released |
+| 0.4.x   | ❌ No longer supported | 2026-11-21 (0.5.0 released) |
 | 0.3.x   | ❌ No longer supported | 2026-01-01 |
 | < 0.3   | ❌ Unsupported | |
 
