@@ -79,7 +79,7 @@ The project is divided into independent Python modules. Each module has a single
 8. **cli**: Waits for Tor bootstrap via ControlSocket.
 9. **watchdog**: Starts the volatile systemd watchdog service (`ttp-watchdog.service`) if it is required, and waits for its first healthy observation.
 10. **verification**: Verifies Tor from a non-exempt process; a valid negative answer requests containment.
-10. **cli**: Returns to the prompt.
+11. **cli**: Returns to the prompt.
 
 ### 2.1.1 BYOD Execution Flow - `start --external-daemon`
 

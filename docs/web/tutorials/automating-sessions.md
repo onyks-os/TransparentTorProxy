@@ -126,16 +126,16 @@ case "$status" in
 esac
 ```
 
-- `0`: the session is active *and* traffic was confirmed to reach Tor.
-- `3`: the session's rules are in place, but the external check could not answer.
+* `0`: the session is active *and* traffic was confirmed to reach Tor.
+* `3`: the session's rules are in place, but the external check could not answer.
   Nothing bypasses them, yet Tor may or may not be carrying traffic: run
   `sudo ttp check` again before relying on it.
-- `7`: the emergency rules are verified in the kernel; the host is offline on
+* `7`: the emergency rules are verified in the kernel; the host is offline on
   purpose, and stays so until `sudo ttp stop`.
-- `8`: containment was required and TTP cannot show it is in place.
-- `2`, `4`, `10`: a refusal before any change. With `10`, a retained VPN guard
+* `8`: containment was required and TTP cannot show it is in place.
+* `2`, `4`, `10`: a refusal before any change. With `10`, a retained VPN guard
   may still block traffic: `sudo ttp stop --restore-only` releases it.
-- `1`, `5`, `6`, `9` on their own after `start` mean the start failed and the
+* `1`, `5`, `6`, `9` on their own after `start` mean the start failed and the
   network was restored: **cleartext**. (`5` and `6` with containment come back as
   `7` or `8`, which take precedence.)
 
