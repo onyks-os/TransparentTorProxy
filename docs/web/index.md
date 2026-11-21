@@ -64,10 +64,10 @@ TTP is a Linux system utility that transparently routes all TCP and DNS traffic 
 sudo ttp start --watchdog
 
 # Verify Tor circuit connectivity and public exit IP
-ttp check
+sudo ttp check
 
 # Display live session state and active options
-ttp status
+sudo ttp status
 
 # Terminate session and restore original network state
 sudo ttp stop

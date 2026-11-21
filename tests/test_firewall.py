@@ -8,6 +8,7 @@ All tests mock subprocess.run so no real firewall rules are ever touched.
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import subprocess
@@ -969,28 +970,26 @@ def test_destroy_rules_treats_an_absent_table_as_success(mock_run, _mock_rules_p
 def test_the_unit_suite_never_touches_the_real_runtime_directory():
     """No test may reach into /run/ttp.
 
-    destroy_rules() unlinks a stale ruleset file on every exit path, so a test
-    that does not redirect RULES_TEMP_PATH operates on the live system: it
-    fails on a host where TTP has run (the directory is root-owned 0750) and,
-    run as root, would delete a real session's artifact. The isolation is easy
-    to drop by accident when adding a test, so it is asserted rather than
-    remembered.
+    A host that has run TTP keeps /run/ttp (root-owned 0750): a test reading it
+    as a normal user fails with PermissionError, and one run as root would
+    delete a real session's artifacts (destroy_rules() unlinks a stale ruleset
+    file on every exit path). conftest's autouse fixture redirects every
+    module-level runtime path; this asserts that no module under ``ttp`` still
+    holds one it missed, so a new constant cannot silently reach the host.
     """
-    from ttp.firewall import runner
+    import pkgutil
+    from pathlib import PurePath
 
-    assert str(runner.RULES_TEMP_PATH).startswith("/run/ttp/"), (
-        "fixture drift: this test is meaningless if the real path moved"
-    )
+    import ttp
 
-    with (
-        patch("ttp.firewall.runner.RULES_TEMP_PATH") as mock_path,
-        patch("ttp.firewall.runner.subprocess.run") as mock_run,
-    ):
-        mock_run.return_value = MagicMock(returncode=0)
-        destroy_rules()
+    leaked = []
+    for info in pkgutil.walk_packages(ttp.__path__, prefix="ttp."):
+        module = importlib.import_module(info.name)
+        for attribute, value in vars(module).items():
+            if isinstance(value, PurePath) and str(value).startswith("/run/ttp"):
+                leaked.append(f"{info.name}.{attribute} = {value}")
 
-    # It was asked to clean up, and it asked the *patched* path, not the real one.
-    mock_path.unlink.assert_called_once_with(missing_ok=True)
+    assert not leaked, "runtime paths not redirected by conftest.runtime_paths: " + ", ".join(leaked)
 
 
 # ---------------------------------------------------------------------------

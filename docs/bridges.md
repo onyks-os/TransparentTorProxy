@@ -88,7 +88,7 @@ To ensure that your connection is successfully utilizing the configured bridges:
 1. **Check Status**:
 
    ```bash
-   ttp status
+   sudo ttp status
    ```
 
    Verify that the session is active and check the exit IP.

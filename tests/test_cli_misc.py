@@ -110,6 +110,22 @@ def test_status_inactive(mock_read):
     assert mock_read.called
 
 
+def test_status_as_a_normal_user_after_a_session_asks_for_sudo(monkeypatch):
+    """/run/ttp stays root:ttp-watchdog 0750 after a session; status must say so."""
+    from ttp import state
+
+    unreadable = MagicMock()
+    unreadable.read_text.side_effect = PermissionError(13, "Permission denied")
+    monkeypatch.setattr(state, "LOCK_PATH", unreadable)
+
+    result = runner.invoke(app, ["status"])
+
+    assert result.exit_code == 1
+    assert "readable only by root" in result.output
+    assert "sudo" in result.output
+    assert "INACTIVE" not in result.output
+
+
 # start with --interface
 
 

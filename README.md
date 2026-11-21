@@ -185,7 +185,7 @@ Most network-modifying commands require root privileges (`sudo`):
 * **Check current session status**:
 
   ```bash
-  ttp status
+  sudo ttp status
   ```
 
 * **Watch local session observations and changes**:
@@ -304,7 +304,7 @@ TTP is designed to always restore your network, even in edge cases:
 > * **DNS-over-HTTPS (DoH)**: Browsers (Firefox, Chrome, Brave, Edge) may use DoH instead of the system resolver. For a process that is not bypassed this is not a leak: DoH is TCP, and all TCP goes through Tor. It does mean a DoH provider sees your queries (from a Tor exit), and some settings make name resolution fail rather than leak. Turning off **DoH / "Secure DNS"** in the browser keeps DNS on Tor's own resolver. What happens to each application-level resolver, and how to check yours: [Applications that resolve DNS on their own](docs/web/how-to/apps-with-own-dns.md).
 > * **IPv6**: Fully supported when available. TTP dynamically detects IPv6 loopback and routes IPv6 traffic through Tor. If the host lacks IPv6 loopback support OR if the `--no-ipv6` option is passed, TTP drops all outgoing IPv6 traffic to prevent leaks.
 > * **Exit IP variation**: Different connections may show different exit IPs due to Tor stream isolation.
-> * **No protection across a reboot**: a session does not survive a reboot, and TTP has no start-at-boot mode. After a reboot TTP is not running and **all traffic is in cleartext**, from early in boot, until you run `ttp start` again. `ttp status` says so (`No active session. Traffic is in cleartext.`), but nothing warns you on its own. This is measured, not assumed: see [section 4.3 of the security assessment](docs/security-assessment.md#43-lifecycle-transitions-what-is-measured-and-what-is-not).
+> * **No protection across a reboot**: a session does not survive a reboot, and TTP has no start-at-boot mode. After a reboot TTP is not running and **all traffic is in cleartext**, from early in boot, until you run `ttp start` again. `sudo ttp status` says so (`No active session. Traffic is in cleartext.`), but nothing warns you on its own. This is measured, not assumed: see [section 4.3 of the security assessment](docs/security-assessment.md#43-lifecycle-transitions-what-is-measured-and-what-is-not).
 
 For a full breakdown of residual risks, architectural trust boundaries, and the STRIDE threat model, see:
 

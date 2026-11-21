@@ -290,6 +290,15 @@ def read_lock(*, strict: bool = False) -> dict[str, Any] | None:
         return None
     except FileNotFoundError:
         return None
+    except PermissionError as exc:
+        # /run/ttp is root:ttp-watchdog 0750 once any session has run, so a
+        # normal user lands here whether or not a session is active. That is
+        # not "no session", and not a damaged lock either: say what to do.
+        if strict:
+            raise StateError(
+                f"The session state in {LOCK_DIR} is readable only by root. Run this command with sudo."
+            ) from exc
+        return None
     except (json.JSONDecodeError, OSError) as exc:
         if strict:
             raise StateError("Cannot read the session intent") from exc

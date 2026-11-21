@@ -20,6 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stars, and daily views and clones on the `stats` branch. The README shows
   them with the star history.
 
+### Fixed
+
+- `ttp status` run without `sudo` after any session said "Cannot read the
+  session intent": `/run/ttp` stays root-only (0750) until reboot. It now says
+  the state is readable only by root and to run it with `sudo`, and the docs
+  show `sudo ttp status` and `sudo ttp check`.
+
+### Tests
+
+- Unit tests no longer read the host's `/run/ttp`. On a machine that had run a
+  real session, 44 of them failed with `PermissionError`. An autouse fixture
+  points every module-level runtime path at an empty directory, and a guard
+  test fails if any module still holds a `/run/ttp` path it does not redirect.
+
 ## [0.5.0] - 2026-11-21
 
 Reported state now matches the evidence behind it. `ttp status`, `ttp check`

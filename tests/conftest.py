@@ -187,6 +187,60 @@ def isolated_apparmor_kernel(request, monkeypatch, tmp_path):
     monkeypatch.setattr(apparmor, "PROFILES", tmp_path / "apparmor-profiles")
 
 
+#: Markers of tests that run against the real host, as root, on purpose.
+_REAL_HOST_MARKERS = ("integration", "nse", "leak")
+
+
+@pytest.fixture(autouse=True)
+def isolated_runtime_directory(request, monkeypatch, tmp_path):
+    """Unit tests never read or write the host's ``/run/ttp``.
+
+    A host that has run a real session keeps ``/run/ttp`` (root, 0750), so a
+    test reading it as a normal user got ``PermissionError`` instead of the
+    "no session" it was written for - 44 tests failed on a developer machine
+    right after a ``ttp stop``. Every module-level path under ``/run/ttp`` is
+    pointed at a directory that does not exist, which is what a clean CI
+    runner has. A test that needs a session creates one there itself.
+    """
+    if any(request.node.get_closest_marker(name) for name in _REAL_HOST_MARKERS):
+        return
+    run = tmp_path / "run-ttp"
+    for module, attribute, path in runtime_paths(run):
+        monkeypatch.setattr(module, attribute, path)
+
+
+def runtime_paths(run: Path) -> list[tuple[object, str, Path]]:
+    """Every module-level path under ``/run/ttp``, and where a test puts it.
+
+    ``ttp.firewall`` and its runner copy ``LOCK_DIR`` at import, so the copies
+    are listed too. ``test_the_unit_suite_never_touches_the_real_runtime_directory``
+    checks that nothing under ``ttp`` holds a ``/run/ttp`` path this misses.
+    """
+    import ttp.commands._common
+    import ttp.commands._logging
+    import ttp.commands.admin
+    import ttp.dns
+    import ttp.firewall
+    import ttp.firewall.runner
+    import ttp.state
+    import ttp.vpn_guard
+
+    return [
+        (ttp.state, "LOCK_DIR", run),
+        (ttp.state, "LOCK_PATH", run / "ttp.lock"),
+        (ttp.state, "WATCHDOG_DIR", run / "watchdog"),
+        (ttp.firewall, "LOCK_DIR", run),
+        (ttp.firewall, "RULES_TEMP_PATH", run / "ttp.rules"),
+        (ttp.firewall.runner, "LOCK_DIR", run),
+        (ttp.firewall.runner, "RULES_TEMP_PATH", run / "ttp.rules"),
+        (ttp.vpn_guard, "INTENT", run / "vpn-intent.json"),
+        (ttp.dns, "RUNTIME_RESOLV", run / "resolv.conf"),
+        (ttp.commands._common, "_LOG_PATH", run / "ttp.log"),
+        (ttp.commands._logging, "_LOG_PATH", run / "ttp.log"),
+        (ttp.commands.admin, "_LOG_PATH", run / "ttp.log"),
+    ]
+
+
 @pytest.fixture(autouse=True)
 def no_kernel_socket_teardown(request, monkeypatch):
     """Teardown tests never enumerate or destroy the host's real sockets."""

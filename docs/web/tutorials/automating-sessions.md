@@ -93,7 +93,7 @@ sudo systemctl enable transparent-tor-proxy.service
     window when a reboot was measured
     ([security assessment, section 4.3](https://github.com/onyks-os/TransparentTorProxy/blob/main/docs/security-assessment.md#43-lifecycle-transitions-what-is-measured-and-what-is-not)).
     If the session fails to start, the unit fails and the host stays in cleartext.
-    `ttp status` tells you which state you are in.
+    `sudo ttp status` tells you which state you are in.
 
 ---
 

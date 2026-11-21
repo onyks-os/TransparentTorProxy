@@ -12,8 +12,8 @@ TTP provides a Typer-powered command-line interface. Most network-modifying comm
 | [`sudo ttp stop`](#sudo-ttp-stop) | Root | Stop active proxying session and restore default system networking. |
 | [`sudo ttp restart`](#sudo-ttp-restart) | Root | Restart active proxy session with new or updated options. |
 | [`sudo ttp refresh`](#sudo-ttp-refresh) | Root | Send `NEWNYM` to Tor over its control socket to get new circuits (and usually a new exit IP). |
-| [`ttp status`](#ttp-status) | User | Display current session state, ports, IP address, and active options. |
-| [`ttp check`](#ttp-check) | User | Confirm traffic exits through Tor; show exit IP, ports, IPv6 state and latency. |
+| [`sudo ttp status`](#ttp-status) | Root | Display current session state, ports, IP address, and active options. |
+| [`sudo ttp check`](#ttp-check) | Root | Confirm traffic exits through Tor; show exit IP, ports, IPv6 state and latency. |
 | [`ttp check-leak`](#ttp-check-leak) | User | Run automated leak tests (Tor verification, dig A, Akamai TXT resolver identity). |
 | [`sudo ttp diagnose`](#sudo-ttp-diagnose) | Root | Execute 7-layer system diagnostics and output troubleshooting report. |
 | [`sudo ttp uninstall`](#sudo-ttp-uninstall) | Root | Stop any session, remove the SELinux module and TTP's markers; the package itself is removed separately. |
@@ -105,6 +105,10 @@ Usage: ttp refresh
 ### `ttp status`
 
 Displays the current TTP session state, active ports, public exit IP, watchdog status, and active bypass settings.
+
+The session state in `/run/ttp` is readable only by root once any session has
+run since boot, so run it with `sudo`. Without root it says so and exits with
+`1`; it never reports an unreadable session as inactive.
 
 ```text
 Usage: ttp status

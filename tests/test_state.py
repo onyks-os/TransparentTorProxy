@@ -309,6 +309,23 @@ def test_read_lock_returns_none_when_unreadable(_use_tmp_lock):
         assert state.read_lock() is None
 
 
+def test_an_unreadable_state_directory_asks_for_sudo_when_strict(_use_tmp_lock):
+    """A normal user after any session: not "no session", and not a damaged lock."""
+    state.write_lock(pid=1)
+    with (
+        patch.object(Path, "read_text", side_effect=PermissionError("denied")),
+        pytest.raises(state.StateError, match=r"readable only by root\. Run this command with sudo"),
+    ):
+        state.read_lock(strict=True)
+
+
+def test_a_damaged_lock_is_still_reported_as_unreadable_intent(_use_tmp_lock):
+    state.LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    state.LOCK_PATH.write_text("{not json at all", encoding="utf-8")
+    with pytest.raises(state.StateError, match="Cannot read the session intent"):
+        state.read_lock(strict=True)
+
+
 def test_write_lock_reports_an_os_error_as_state_error(_use_tmp_lock):
     with (
         patch.object(state, "_write_lock_file", side_effect=OSError("disk full")),
