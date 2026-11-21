@@ -4,7 +4,7 @@ This document outlines the **realistic, near-term** development plan for Transpa
 
 ---
 
-## Current Status (v0.4.11)
+## Current Status (v0.5.0)
 
 Delivered and in use:
 
@@ -15,16 +15,21 @@ Delivered and in use:
 - Privilege-separated watchdog user (`ttp-watchdog` + `CAP_NET_ADMIN`)
 - Tor started as its own account with no capabilities; both units TTP starts sandboxed by systemd; Tor verification parsed as `nobody`
 - Distinct exit code (`3`) for a session that is up but whose Tor routing is unverified ([ADR 0011](docs/decisions/0011-start-exit-codes.md))
+- Session evidence: a required watchdog proves readiness before `ttp start` succeeds, typed status/check results with diagnostic codes 5–9, and an emergency held until `ttp stop` ([ADR 0013](docs/decisions/0013-session-evidence-and-notifications.md))
+- Optional desktop notifications through an unprivileged recipient agent, and the passive `ttp monitor` ([ADR 0014](docs/decisions/0014-passive-monitor.md))
+- Optional VPN before Tor for a native NetworkManager WireGuard tunnel ([ADR 0015](docs/decisions/0015-required-vpn-before-tor.md))
+- Verified enforce-mode AppArmor confinement of Tor on AppArmor kernels
 
 What backs those claims, as of this release:
 
 | Evidence | Where it runs |
 | :------- | :------------ |
-| **Zero-leak ruleset suite.** TTP's real ruleset in a network namespace, every containment test preceded by a positive control, alongside Docker-, ufw-, firewalld- and WireGuard-shaped competing rulesets. | CI, every push and PR (`make test-nse`) |
+| **Zero-leak ruleset suite.** TTP's real ruleset in a network namespace (NSE 2.2.0, incomplete captures rejected), every containment test preceded by a positive control, alongside Docker-, ufw-, firewalld- and WireGuard-shaped competing rulesets. | CI, every push and PR (`make test-nse`) |
 | **Lifecycle transitions.** Shutdown, reboot and suspend/resume onto a new network, judged from a packet capture taken outside the guest, under systemd-networkd (Debian 13) and NetworkManager (Fedora 44, SELinux enforcing). | CI, in a VM, when firewall, lifecycle, DNS or watchdog code changes, and weekly |
 | **Watchdog chaos sweep.** Every fault once, each audit paired with a canary, TCP and UDP, in three variants. | CI, in a VM, same trigger |
+| **Required VPN gates.** Real Tor through WireGuard in a Debian 13 VM with an external observer: six IPv4/IPv6 topologies, a private obfs4 bridge, suspend/resume and reboot. ParrotOS Home 7.4 (AppArmor enforcing) qualified by hand on the release candidate. | CI, in a VM, when VPN, firewall or lifecycle code changes, and weekly |
 | **Integration suite** on Debian, Fedora and Arch. | CI, every push and PR |
-| **Unit suite.** 1083 tests, 99.8% line coverage of `ttp/`, ratchet at 99%. Also run against the oldest supported dependency versions (Ubuntu 24.04's). | CI, Python 3.12-3.13 |
+| **Unit suite.** 1816 tests, 99.0% line coverage of `ttp/`, ratchet at 99%. Also run against the oldest supported dependency versions (Ubuntu 24.04's). | CI, Python 3.12-3.13 |
 | **Release integrity.** Every release verified from what was published (signatures bound to the tag's workflow, checksums, PyPI bytes) after release and weekly; builds reproducible, and each release rebuilt from its tag and compared. | CI, on every change and after every release |
 
 What is *not* protected, and says so: a session does not survive a reboot, and
@@ -33,6 +38,27 @@ TTP has no start-at-boot mode ([security assessment, 4.3](docs/security-assessme
 ---
 
 ## Released
+
+### v0.5.0 — Compatibility & Observability
+
+Reported state made to match the evidence: a required watchdog that proves it is
+evaluating, typed session observations, an emergency held until `ttp stop`,
+`ttp monitor`, optional desktop notifications, and an optional VPN before Tor,
+qualified in VMs across six IPv4/IPv6 topologies, an obfs4 bridge,
+suspend/resume, reboot and ParrotOS. Hardened hosts work: restrictive umasks,
+an explicit per-link `DNSSEC=yes` refused before any change, and
+systemd-resolved restricted by UID with measured tests.
+
+Defects found during qualification and fixed before release, in TTP itself or
+in the evidence its tests produce:
+
+| Finding | Effect before the fix | Fix |
+| :--- | :--- | :--- |
+| O01 — optimistic DNS/UDP verdicts | Timeouts, DNS errors or aggregate counters could certify containment without external evidence. | #132 |
+| F01 — unobserved fault interval | Chaos recovery audits ran after the fault; exposure during injection and response was not measured. | #149 |
+| E01 — Tor automap inside LAN bypass | With LAN bypass, TCP and UDP to Tor's synthetic onion addresses left the host directly. | #150 |
+| Orphaned redirected sockets at `ttp stop` | A FIN to the destination tried during the session, and RSTs with a stale `::1` destination (IPv6), left in cleartext after stop; Tor's ends in LAST-ACK still did once conntrack had forgotten them (21 RSTs in a dual-stack run). | #152, #165 |
+| `ttp check` sampling the watchdog mid-evaluation | With a required watchdog, `check` could latch emergency on a healthy session (2 of ~56 CI VPN runs, one `check` each). | #154 |
 
 ### v0.4.11 — Less root
 
@@ -72,52 +98,6 @@ behavioural CLI tests in place of call-count assertions.
 
 ---
 
-## v0.5.0 — Compatibility & Observability
-
-**Goal:** Make desktop operation reliable and make reported state match the evidence.
-
-The maintainer approves behavior and architecture before implementation. The
-order below is the agreed discussion order; an estimate does not approve an
-undecided feature. Estimates are focused engineering days for one developer,
-including implementation, tests and documentation after contract approval.
-They exclude decision waiting time and are not a release-date commitment.
-
-| Order | Work | Approval / delivery status | Estimated remaining effort |
-| :--- | :--- | :--- | :--- |
-| 1 | **Measured systemd-resolved UID restriction:** IPv4 then IPv6; UDP/TCP DNS and non-DNS with LAN bypass, competing NAT, positive controls, kernel trace attribution and rule-removal mutation. These are firewall tests, not end-to-end DNS/Tor tests. | Approved; implemented for 0.5.0. Numeric Docker fixture priority and nftables 1.0.6-compatible teardown are included. | Complete; release validation below. |
-| 1a | **Hardened-host compatibility:** readable installed code and DNS artifacts under restrictive umasks; temporary inherited-global `DNSSEC=no`; preserve explicit per-link `DNSSEC=yes` and refuse startup before network changes, with documentation and exit code `4`. No new flag. | Approved; implemented for 0.5.0. Runtime behavior was diagnosed on Fedora; automated permission, preflight and resolver tests cover the fix. | Complete; release validation below. |
-| 2 | **Degraded-state contract:** distinguish inconclusive Tor verification, requested versus live watchdog, and killswitch requested/applied/verified. Correct claims of isolation only after defining what evidence supports them. | Approved in ADR 0013; implemented: frozen budgets, typed checks, useful-progress watchdog, independent termination handler and verified persistent emergency. | Complete; release validation below. |
-| 3 | **Delivered desktop notifications:** define recipients, events, delivery evidence and the privilege boundary between the system service and desktop sessions before choosing an implementation. | Approved in ADR 0013; implemented: optional unprivileged recipient agent, authenticated IPC, D-Bus acceptance evidence and CLI/journal fallback. | Complete; release validation below. |
-| 4 | **`ttp monitor`:** passive terminal view of existing session, watchdog and containment evidence, with changes seen since opening. | Approved in ADR 0014; implemented for 0.5.0. | Complete; release validation below. |
-| 5 | **Required VPN before Tor:** active native NM WireGuard full tunnel, one numeric peer, mandatory watchdog, independent kernel guard before Tor and retained emergency. | Approved in ADR 0015; implemented. VM gates qualified: six IPv4/IPv6 topologies, private obfs4 bridge, suspend/resume and reboot on Debian 13; IPv4 path on ParrotOS Home 7.4. [Scope, results and limits](docs/web/how-to/vpn.md). | Complete; release validation below. |
-| Release | **Integration and release validation** on the final candidate: full CI (unit, NSE on 2.2.0, integration, lifecycle, chaos and every VPN VM gate), ParrotOS re-qualification with the native DEB (the November run predates #150–#166), Fedora 44/45 packages with signatures, documentation and regression review. | Required before publishing 0.5.0. | 2–3 days |
-
-The VPN feature work and its VM gates are complete; integration and release
-validation remains required on the final candidate. NSE changes needed for
-future scenarios must be scoped separately; these estimates do not authorize
-changes to NSE.
-
-**Defects found during qualification and fixed for 0.5.0**, in TTP itself or in
-the evidence its tests produce:
-
-| Finding | Effect before the fix | Fix |
-| :--- | :--- | :--- |
-| O01 — optimistic DNS/UDP verdicts | Timeouts, DNS errors or aggregate counters could certify containment without external evidence. | #132 |
-| F01 — unobserved fault interval | Chaos recovery audits ran after the fault; exposure during injection and response was not measured. | #149 |
-| E01 — Tor automap inside LAN bypass | With LAN bypass, TCP and UDP to Tor's synthetic onion addresses left the host directly. | #150 |
-| Orphaned redirected sockets at `ttp stop` | A FIN to the destination tried during the session, and RSTs with a stale `::1` destination (IPv6), left in cleartext after stop; Tor's ends in LAST-ACK still did once conntrack had forgotten them (21 RSTs in a dual-stack run). | #152, #165 |
-| `ttp check` sampling the watchdog mid-evaluation | With a required watchdog, `check` could latch emergency on a healthy session (2 of ~56 CI VPN runs, one `check` each). | #154 |
-
-Supply-chain verification and reproducible builds already shipped in 0.4.10;
-they remain release checks rather than unfinished 0.5.0 feature work.
-
-*Deferred until v0.5.0+ unless a contributor picks them up:*
-
-- Playwright L7 leak tests in CI
-- System tray applet
-
----
-
 ## v0.6.0 — Hardening & Leak-Test Evidence (planned)
 
 **Goal:** Close current evidence gaps and measure containment throughout faults
@@ -138,9 +118,12 @@ that the new matrix has run or approval for changing runtime defaults.
 | 5 | Qualify the release candidate and seek focused independent human review. | Traceable matrix and artifacts, explicit residual limits and no missing required evidence. |
 
 Confirmed current in-scope leaks and false-positive test logic enter the earliest
-applicable release; the plan does not defer them automatically to 0.6.0. Existing
-0.5.0 VPN qualification gates remain required before publication. NSE changes
+applicable release; the plan does not defer them automatically to 0.6.0. The
+0.5.0 VPN qualification gates remain required before every release. NSE changes
 must be scoped separately. No calendar commitment is made for this work.
+
+*Deferred unless a contributor picks it up:* a system tray applet. Real
+browser tests are order 4 above.
 
 ### Isolation model — deferred until core hardening is qualified
 

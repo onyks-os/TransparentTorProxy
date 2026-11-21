@@ -267,13 +267,13 @@ python3 scripts/vm/vpn/run.py \
   --client-os parrot --client-memory 3072 \
   --client-firmware-code /path/OVMF_CODE.fd \
   --client-firmware-vars /path/OVMF_VARS.fd \
-  --client-deb packaging/transparent-tor-proxy_0.4.11_all.deb \
+  --client-deb packaging/transparent-tor-proxy_0.5.0_all.deb \
   --require-apparmor --work /path/new-parrot-run
 ```
 
-The version in the DEB filename remains the development base version until a
-release is authorized. This command does not publish a package or tag. Build
-the current working tree with `packaging/build_deb.sh` first.
+The DEB filename carries the version in `pyproject.toml`. This command does not
+publish a package or tag. Build the current working tree with
+`packaging/build_deb.sh` first.
 
 Prepare the client in a disposable overlay of the official Home image, keeping
 the original read-only. Verify the original signed hashes and the signing key's

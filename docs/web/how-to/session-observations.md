@@ -2,8 +2,8 @@
 
 # Supervision, observations and optional notifications
 
-This page describes the implemented 0.5.0 contract (unreleased). It does not change
-the behavior of an installed 0.4.11 package.
+This page describes the contract introduced in 0.5.0. Packages up to 0.4.11 do
+not implement it.
 
 Required-VPN sessions additionally mandate the watchdog and enforce a fixed
 VPN-before-Tor path. Read [VPN requirements, limits and recovery](vpn.md) before

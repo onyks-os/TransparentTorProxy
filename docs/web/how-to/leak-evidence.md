@@ -1,6 +1,6 @@
 # DNS and UDP containment evidence
 
-The 0.5.0 development tests distinguish packet containment, application
+From 0.5.0, the tests distinguish packet containment, application
 availability and socket observations. A DNS timeout or error reply does not
 identify the network path. The same is true of a global redirect counter:
 another process may have incremented it while the tested query escaped.

@@ -248,7 +248,7 @@ host configuration dump is not required.
 
 ## 6. Read the session evidence before changing protections
 
-On the 0.5.0 development version, capture `sudo ttp status --json`,
+From 0.5.0, capture `sudo ttp status --json`,
 `sudo ttp config --session` and
 `sudo journalctl -b -u ttp-watchdog.service -u ttp-notify.service`.
 See [session observations](../how-to/session-observations.md) for reason identifiers
