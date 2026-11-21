@@ -1429,13 +1429,37 @@ def test_bypassed_user_traffic_gets_an_answer_back(ns_sandbox, ttp_ruleset) -> N
     but breaks the return path satisfies that and is still a broken proxy --
     and nothing was listening, so nothing could ever have answered. This puts
     a real echo server on the host side of the veth and asserts the round trip.
+
+    The echo server lives in the host's own network namespace, so the host's
+    firewall sees the request before the server does. firewalld's default
+    ``public`` zone on a Fedora workstation drops it. A round trip is
+    therefore first made without TTP's ruleset: if that one gets no reply,
+    the host blocks the echo and a missing reply below would say nothing
+    about TTP.
     """
     ns, loop = ns_sandbox
-    _engine().load(ttp_ruleset, ns.name)
 
     from scapy.layers.inet import IP, UDP
 
+    def _replies(packets: list) -> list:
+        return [
+            p
+            for p in packets
+            if p.haslayer(IP) and p[IP].src == HOST_V4 and p.haslayer(UDP) and p[UDP].sport == CANARY_PORT
+        ]
+
     with host_udp_echo(HOST_V4, CANARY_PORT):
+        control = observe(ns, loop, udp_roundtrip_to(HOST_V4, CANARY_PORT, uid=1000), settle=2.5)
+        assert _replies(control), (
+            f"HARNESS FAILED: without TTP's ruleset, the echo on {HOST_V4}:"
+            f"{CANARY_PORT} did not answer ({len(control)} packet(s) captured). "
+            "The host's own firewall is most likely dropping UDP from the "
+            "sandbox veth (firewalld's default zone does). Trust the sandbox "
+            "subnet for the run, e.g. `firewall-cmd --zone=trusted "
+            "--add-source=10.0.1.0/24` (runtime only), and run again."
+        )
+
+        _engine().load(ttp_ruleset, ns.name)
         captured = observe(ns, loop, udp_roundtrip_to(HOST_V4, CANARY_PORT, uid=1000), settle=2.5)
 
     outbound = [
@@ -1448,11 +1472,7 @@ def test_bypassed_user_traffic_gets_an_answer_back(ns_sandbox, ttp_ruleset) -> N
         f"traffic it is configured to exempt. {len(captured)} packet(s) captured."
     )
 
-    replies = [
-        p
-        for p in captured
-        if p.haslayer(IP) and p[IP].src == HOST_V4 and p.haslayer(UDP) and p[UDP].sport == CANARY_PORT
-    ]
+    replies = _replies(captured)
     assert replies, (
         f"the request reached {HOST_V4}:{CANARY_PORT} but no reply came back. "
         f"The bypass is one-way: traffic leaves and the return path is blocked, "

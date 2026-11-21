@@ -149,6 +149,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- The bypass round-trip test first makes the same round trip without TTP's
+  ruleset, so a host firewall that drops the echo (firewalld's default zone on
+  Fedora does) fails it as a harness problem instead of blaming TTP's bypass.
 - Require network-sandbox-engine 2.2.0 for the zero-leak suite. Its captures
   return from `start()` only once the kernel socket is bound and filtering, so
   the fixed 0.2 s sleep after it is gone (NSE measured 2.1.2 without the sleep
