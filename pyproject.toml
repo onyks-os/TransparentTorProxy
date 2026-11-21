@@ -46,7 +46,7 @@ dev = [
     "cyclonedx-python-lib[json-validation]>=11.0.0",
 ]
 nse = [
-    # 2.2.0 is the floor, not a preference. Before 2.1.0, the NSE runner reported
+    # 2.3.0 is the floor, not a preference. Before 2.1.0, the NSE runner reported
     # PASSED when its oracle observed nothing, and the trace monitor could stop
     # reading mid-run without saying so - which would make TTP's zero-leak suite
     # green against an instrument that was not measuring. Before 2.1.2, the
@@ -55,9 +55,11 @@ nse = [
     # its own subject. Before 2.2.0, a capture could start before it was
     # listening, a filter that failed to compile opened the socket unfiltered,
     # and kernel drops were not reported, so an absence could be the
-    # instrument's. The upper bound is a real bound: 2.0.0 already rewrote
+    # instrument's. Before 2.3.0, the host end of the veth could only live in
+    # the host's own namespace, where firewalld dropped the round-trip test's
+    # echo and the test blamed TTP. The upper bound is a real bound: 2.0.0 already rewrote
     # run_test_pipeline's signature once.
-    "network-sandbox-engine>=2.2.0,<3",
+    "network-sandbox-engine>=2.3.0,<3",
     "pyroute2",
 ]
 

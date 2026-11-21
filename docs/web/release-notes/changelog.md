@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- The round-trip bypass test runs its echo server in a host namespace of its
+  own (NSE 2.3.0, `isolated_host=True`), so the host's firewall no longer sits
+  between the sandbox and the server. On Fedora, firewalld's default zone
+  dropped the request and the test reported a one-way bypass, or asked for a
+  `firewall-cmd --zone=trusted` workaround, for something TTP had not done. The
+  `nse` extra now requires `network-sandbox-engine>=2.3.0`.
 - Unit tests no longer read the host's `/run/ttp`. On a machine that had run a
   real session, 44 of them failed with `PermissionError`. An autouse fixture
   points every module-level runtime path at an empty directory, and a guard

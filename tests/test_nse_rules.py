@@ -43,7 +43,7 @@ import re
 import shutil
 import socket
 import subprocess
-import threading
+import sys
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -86,9 +86,10 @@ IS_ROOT = os.geteuid() == 0
 #: Below this, the NSE runner could report PASSED having observed nothing and the
 #: trace monitor could stop reading mid-run without saying so (< 2.1.0), and a
 #: capture could start without listening, drop packets unreported or open
-#: unfiltered on a bad filter (< 2.2.0). Verdicts from an older engine are not
-#: evidence, so refuse to produce them.
-MIN_NSE_VERSION = (2, 2, 0)
+#: unfiltered on a bad filter (< 2.2.0). 2.3.0 adds ``isolated_host``, which the
+#: round-trip test needs so the host's own firewall cannot drop its echo.
+#: Verdicts from an older engine are not evidence, so refuse to produce them.
+MIN_NSE_VERSION = (2, 3, 0)
 
 
 def _nse_version() -> tuple[int, ...]:
@@ -260,34 +261,6 @@ def udp_roundtrip_to(host: str, port: int, uid: int | None = None) -> Callable[[
     return stimulus
 
 
-@contextlib.contextmanager
-def host_udp_echo(bind_ip: str, port: int) -> Iterator[None]:
-    """A UDP echo server on the host side of the veth, for the duration."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind((bind_ip, port))
-    sock.settimeout(0.2)
-    stop = threading.Event()
-
-    def _serve() -> None:
-        while not stop.is_set():
-            try:
-                data, peer = sock.recvfrom(64)
-            except (TimeoutError, OSError):
-                continue
-            with contextlib.suppress(OSError):
-                sock.sendto(b"ack:" + data[:16], peer)
-
-    thread = threading.Thread(target=_serve, daemon=True)
-    thread.start()
-    try:
-        yield
-    finally:
-        stop.set()
-        thread.join(timeout=2)
-        sock.close()
-
-
 def tcp_to(host: str, port: int, uid: int | None = None) -> Callable[[str], str]:
     """A TCP connection attempt to *host*:*port* (the SYN is what matters)."""
 
@@ -419,9 +392,48 @@ def ns_sandbox() -> Iterator[tuple[object, asyncio.AbstractEventLoop]]:
         loop.close()
 
 
+@pytest.fixture
+def isolated_host_sandbox() -> Iterator[tuple[object, asyncio.AbstractEventLoop]]:
+    """Like ``ns_sandbox``, but the host end of the veth lives in a namespace of its own.
+
+    Traffic to ``HOST_V4`` then never crosses this machine's firewall, so a
+    server there answers whatever firewalld's default zone would have dropped.
+    """
+    controller = NetnsController()
+    loop = asyncio.new_event_loop()
+
+    ctx = controller.create_namespace(
+        "nse_ttp_iso",
+        host_ip=[f"{HOST_V4}/24", f"{HOST_V6}/64"],
+        peer_ip=[f"{PEER_V4}/24", f"{PEER_V6}/64"],
+        isolated_host=True,
+    )
+    ns = loop.run_until_complete(ctx.__aenter__())
+
+    try:
+        time.sleep(0.5)
+        _configure_namespace(ns)
+        yield ns, loop
+    finally:
+        loop.run_until_complete(ctx.__aexit__(None, None, None))
+        loop.close()
+
+
+#: A UDP echo server, run on the isolated host end. It prints READY once bound.
+_UDP_ECHO = """\
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind((sys.argv[1], int(sys.argv[2])))
+print("READY", flush=True)
+while True:
+    data, peer = s.recvfrom(64)
+    s.sendto(b"ack:" + data[:16], peer)
+"""
+
+
 def _configure_namespace(ns) -> None:  # type: ignore[no-untyped-def]
     """Default routes plus permanent neighbour entries, so no packet waits on ARP."""
-    host_mac = _get_mac_address(ns.ext_iface)
+    host_mac = _get_mac_address(ns.ext_iface, ns.ext_netns, use_nsenter=True)
 
     # Permanent neighbour entries. Without them the kernel holds the first packet
     # of each stimulus while it resolves the gateway, and the positive control
@@ -482,7 +494,7 @@ def canary_stimulus():  # type: ignore[no-untyped-def]
 
 def observe(ns, loop, stimulus, settle: float = 0.4) -> list:  # type: ignore[no-untyped-def]
     """Run *stimulus* with the sniffer armed on the host veth; return what it saw."""
-    asserter = PCAPAsserter(iface=ns.ext_iface)
+    asserter = PCAPAsserter(iface=ns.ext_iface, netns=ns.ext_netns)
     # start() returns once the kernel socket is bound and filtering.
     loop.run_until_complete(asserter.start())
     stimulus(ns.name)
@@ -522,7 +534,7 @@ def observe_with_canary(ns, loop, stimulus, settle: float = 0.4) -> list:  # typ
     the same session, so observing it proves the capture window was open across
     the whole of the leak stimulus rather than merely at some earlier time.
     """
-    asserter = PCAPAsserter(iface=ns.ext_iface)
+    asserter = PCAPAsserter(iface=ns.ext_iface, netns=ns.ext_netns)
     loop.run_until_complete(asserter.start())
     stimulus(ns.name)
     canary_stimulus()(ns.name)
@@ -1422,7 +1434,7 @@ def test_bypassed_user_traffic_still_reaches_the_lan(ns_sandbox, ttp_ruleset) ->
     )
 
 
-def test_bypassed_user_traffic_gets_an_answer_back(ns_sandbox, ttp_ruleset) -> None:
+def test_bypassed_user_traffic_gets_an_answer_back(isolated_host_sandbox, ttp_ruleset) -> None:
     """Egress is not reachability: the reply has to come back too.
 
     The test above asserts a packet left. A bypass rule that lets packets out
@@ -1430,14 +1442,14 @@ def test_bypassed_user_traffic_gets_an_answer_back(ns_sandbox, ttp_ruleset) -> N
     and nothing was listening, so nothing could ever have answered. This puts
     a real echo server on the host side of the veth and asserts the round trip.
 
-    The echo server lives in the host's own network namespace, so the host's
-    firewall sees the request before the server does. firewalld's default
-    ``public`` zone on a Fedora workstation drops it. A round trip is
-    therefore first made without TTP's ruleset: if that one gets no reply,
-    the host blocks the echo and a missing reply below would say nothing
-    about TTP.
+    The echo server runs in the host endpoint's own namespace
+    (``isolated_host=True``), not in this machine's. Before, it shared the
+    host's namespace, and firewalld's default zone on a Fedora workstation
+    dropped the request before the server saw it, so the test could blame TTP
+    for the host's firewall. A round trip is still made first without TTP's
+    ruleset: a missing reply below must be TTP's, never the harness's.
     """
-    ns, loop = ns_sandbox
+    ns, loop = isolated_host_sandbox
 
     from scapy.layers.inet import IP, UDP
 
@@ -1448,19 +1460,21 @@ def test_bypassed_user_traffic_gets_an_answer_back(ns_sandbox, ttp_ruleset) -> N
             if p.haslayer(IP) and p[IP].src == HOST_V4 and p.haslayer(UDP) and p[UDP].sport == CANARY_PORT
         ]
 
-    with host_udp_echo(HOST_V4, CANARY_PORT):
-        control = observe(ns, loop, udp_roundtrip_to(HOST_V4, CANARY_PORT, uid=1000), settle=2.5)
-        assert _replies(control), (
-            f"HARNESS FAILED: without TTP's ruleset, the echo on {HOST_V4}:"
-            f"{CANARY_PORT} did not answer ({len(control)} packet(s) captured). "
-            "The host's own firewall is most likely dropping UDP from the "
-            "sandbox veth (firewalld's default zone does). Trust the sandbox "
-            "subnet for the run, e.g. `firewall-cmd --zone=trusted "
-            "--add-source=10.0.1.0/24` (runtime only), and run again."
-        )
+    echo = loop.run_until_complete(
+        ns.host.start_process([sys.executable, "-I", "-c", _UDP_ECHO, HOST_V4, str(CANARY_PORT)])
+    )
+    loop.run_until_complete(echo.wait_for_output(b"READY", timeout=10.0))
 
-        _engine().load(ttp_ruleset, ns.name)
-        captured = observe(ns, loop, udp_roundtrip_to(HOST_V4, CANARY_PORT, uid=1000), settle=2.5)
+    control = observe(ns, loop, udp_roundtrip_to(HOST_V4, CANARY_PORT, uid=1000), settle=2.5)
+    assert _replies(control), (
+        f"HARNESS FAILED: without TTP's ruleset, the echo on {HOST_V4}:"
+        f"{CANARY_PORT} did not answer ({len(control)} packet(s) captured). The "
+        "echo runs in its own namespace, so this is not the host's firewall: "
+        f"the echo printed {echo.output('stderr')[-200:]!r} on stderr."
+    )
+
+    _engine().load(ttp_ruleset, ns.name)
+    captured = observe(ns, loop, udp_roundtrip_to(HOST_V4, CANARY_PORT, uid=1000), settle=2.5)
 
     outbound = [
         p

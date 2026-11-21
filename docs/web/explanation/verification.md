@@ -84,7 +84,7 @@ And assertions in the other direction:
 | Stimulus | What it proves |
 | :--- | :--- |
 | Traffic from a bypassed UID to the LAN | TTP is a proxy, not a brick |
-| The reply to it | the bypass works in both directions |
+| The reply to it, from an echo server in a namespace of its own | the bypass works in both directions, whatever the host's firewall does |
 
 Those last rows matter more than they look. A firewall that dropped every packet
 would pass every containment test. Without a test that something is *still
@@ -132,7 +132,7 @@ What they assert and what they found is in section 4.3 of the
 
 ## The dependency, and why it is pinned hard
 
-`network-sandbox-engine>=2.2.0,<3`. The floor is not a preference.
+`network-sandbox-engine>=2.3.0,<3`. The floor is not a preference.
 
 Before 2.1.0 the engine's own test runner reported PASSED when its oracle had
 observed nothing, and its kernel trace monitor could stop reading mid-run without
@@ -142,7 +142,11 @@ own subject. Before 2.2.0 a capture could return from `start()` before it was
 listening (the suite slept 0.2 s and still could miss a stimulus), a filter that
 did not compile opened the socket unfiltered, and kernel drops went unreported;
 the suite now relies on `start()` readiness and fails any capture whose report
-says its window was incomplete. A green result from such an engine would not have been evidence of
+says its window was incomplete. Before 2.3.0 the host end of the sandbox could
+only live in the host's own network namespace, so the round-trip test's echo server
+sat behind the host's firewall: on Fedora, firewalld's default zone dropped the
+request and the test reported a one-way bypass that was the host's doing. The echo
+now runs in an isolated host namespace (`isolated_host=True`). A green result from such an engine would not have been evidence of
 anything - the same defect as the one described at the top of this page, one
 layer down. TTP refuses to run this suite against an older engine rather than
 produce a reassuring number.
