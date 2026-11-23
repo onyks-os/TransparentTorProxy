@@ -25,6 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   payload, and IPv6 extension headers are walked to the transport header
   (O02 of the leak-testing plan).
 
+- The zero-leak suite requires NSE 2.5.1 (`network-sandbox-engine>=2.5.1`;
+  2.5.0 never reached PyPI) and uses three of its additions. Every capture
+  window now ends with a beacon the sandbox sends, an Ethernet frame no IP
+  rule touches, and a window whose beacon never arrived is refused before any
+  absence is read. The DNAT positive controls (a foreign DNAT ahead of TTP,
+  the systemd-resolved cases) now require the probe's own packet, matched by
+  its probe ID after the rewrite, instead of any packet to the rewritten
+  address. Rule traces use NSE's output-path trace chain, replacing the one
+  the suite loaded by hand, and NSE's canary-proven readiness check. New
+  tests require a window with a dropped canary and a trace without an output
+  chain to fail visibly.
+
 - The zero-leak suite builds every probe on NSE 2.4.0's stimuli instead of
   scripts it wrote itself; the `nse` extra now requires
   `network-sandbox-engine>=2.4.0`. Each probe carries a probe ID, so the

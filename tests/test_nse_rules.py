@@ -89,8 +89,11 @@ IS_ROOT = os.geteuid() == 0
 #: unfiltered on a bad filter (< 2.2.0). 2.3.0 adds ``isolated_host``, which the
 #: round-trip test needs so the host's own firewall cannot drop its echo. 2.4.0
 #: adds the stimuli, probe IDs and receivers every probe here is built on.
-#: Verdicts from an older engine are not evidence, so refuse to produce them.
-MIN_NSE_VERSION = (2, 4, 0)
+#: 2.5.1 adds the window beacons every capture here expects, NAT-aware probe
+#: matching and output-path tracing with a canary-proven readiness check (2.5.0
+#: never reached PyPI). Verdicts from an older engine are not evidence, so
+#: refuse to produce them.
+MIN_NSE_VERSION = (2, 5, 1)
 
 
 def _nse_version() -> tuple[int, ...]:
@@ -434,6 +437,12 @@ def observe(ns, loop, stimulus, settle: float = 0.4, iface: str | None = None) -
 
     *iface* moves the capture off the veth. Only the blind-instrument tests use
     it, to prove that a capture looking at the wrong place fails visibly.
+
+    Every window ends with a beacon: an Ethernet frame (EtherType 0x88B5) that
+    the sandbox sends from its end of the veth after the stimulus. No IP rule
+    touches it, so it needs no exemption from the policy under test, and a
+    capture that missed it -- attached late, watching the wrong link -- reports
+    an incomplete window, which ``finish_capture`` refuses.
     """
     asserter = PCAPAsserter(iface=iface or ns.ext_iface, netns=ns.ext_netns)
     # start() returns once the kernel socket is bound and filtering.
@@ -441,6 +450,11 @@ def observe(ns, loop, stimulus, settle: float = 0.4, iface: str | None = None) -
     try:
         stimulus(ns, loop)
         loop.run_until_complete(asyncio.sleep(settle))
+        # Sent by the sandbox and expected here, rather than via mark(): mark()
+        # refuses a capture on a non-Ethernet link, and the blind-instrument
+        # tests deliberately capture on one.
+        asserter.expect(loop.run_until_complete(ns.beacon("window-end")))
+        loop.run_until_complete(asyncio.sleep(0.1))
     except BaseException:
         # A stimulus that could not run must not leave a sniffer behind.
         with contextlib.suppress(Exception):
@@ -454,11 +468,17 @@ def finish_capture(asserter, loop) -> list:  # type: ignore[no-untyped-def]
 
     ``stop()`` raises ``CaptureError`` for an unhealthy instrument. Kernel drops
     are only reported, and a dropped packet reads exactly like a contained one,
-    so an incomplete window fails here. ``None`` means the kernel counters were
-    unavailable; the canaries and positive controls still cover that case.
+    so an incomplete window fails here, as does a window whose closing beacon
+    never arrived. ``None`` means the kernel counters were unavailable; the
+    beacon, the canaries and the positive controls still cover that case.
     """
     report = loop.run_until_complete(asserter.stop_report())
     packets = loop.run_until_complete(asserter.stop())
+    assert not report.beacons_missing, (
+        f"HARNESS FAILED: the capture on {report.iface} never saw the beacon the "
+        f"sandbox sent after the stimulus ({report.beacons_missing}); it was not "
+        f"watching the sandbox's link, so an absence in it would mean nothing."
+    )
     assert report.window_complete is not False, (
         f"HARNESS FAILED: the capture on {report.iface} was incomplete "
         f"(kernel drops {report.kernel_drops}, limits {report.limits_reached}); "
@@ -497,17 +517,6 @@ def observe_with_canary(ns, loop, stimulus, description: str, settle: float = 0.
     return packets
 
 
-#: Enables tracing for locally generated packets. See observe_trace.
-_TRACE_LOCAL_EGRESS = """
-table inet ttp_trace {
-    chain out {
-        type filter hook output priority -350; policy accept;
-        meta nftrace set 1
-    }
-}
-"""
-
-
 def observe_trace(ns, loop, stimulus: Probe, settle: float = 1.0):  # type: ignore[no-untyped-def]
     """Run *stimulus* under ``nft monitor trace`` and return what the kernel said.
 
@@ -517,24 +526,20 @@ def observe_trace(ns, loop, stimulus: Probe, settle: float = 1.0):  # type: igno
     names the rule, so "the packet was DNAT'd to Tor's DNSPort" replaces
     "nothing showed up".
 
-    Returns ``(saw_readiness_event, terminal_state, events)``. The first is the
-    proof the monitor was really subscribed to the kernel's netlink group
-    before the stimulus ran: ``wait_ready`` alone only proves this process is
-    reading. Readiness traffic is discarded, so the events returned are the
-    stimulus's own.
+    Returns ``(readiness, terminal_state, events)``. ``readiness`` is NSE's
+    proof that the monitor was subscribed to the kernel before the stimulus
+    ran: the canary was sent until its own trace came back. ``wait_ready``
+    alone only proves this process is reading. The canary's traces are
+    removed, so the events returned are the stimulus's own.
+
+    The rules must have been loaded with ``_engine()``, which adds NSE's
+    output-hook trace chain: a packet a process generates never crosses the
+    prerouting chain NSE traces by default, and without it no TTP rule would
+    ever appear.
     """
     harvester = TraceHarvester()
     events: list = []
     canary = canary_stimulus()
-
-    # NSE's trace-init ruleset enables tracing in a *prerouting* chain, and a
-    # locally generated packet never traverses prerouting -- it goes out
-    # through output/postrouting. Without this, the only rule that ever
-    # matches is nse's own `meta nftrace set 1`, from incoming traffic, and
-    # every assertion about TTP's rules fails for a reason that has nothing to
-    # do with TTP. Priority -350 puts it ahead of TTP's nat output (-150), so
-    # the flag is set before any of TTP's chains are evaluated.
-    _engine().load(_TRACE_LOCAL_EGRESS, ns.name)
 
     async def _run():  # type: ignore[no-untyped-def]
         queue: asyncio.Queue = asyncio.Queue()
@@ -547,38 +552,24 @@ def observe_trace(ns, loop, stimulus: Probe, settle: float = 1.0):  # type: igno
         )
         try:
             await harvester.wait_ready(timeout=2.0)
-
-            # Readiness: keep poking with the canary until a trace event comes
-            # back. Until one does, the monitor may not be attached and any
-            # silence that follows means nothing.
-            ready = False
-            for _ in range(5):
-                harvester.arm_event_signal()
-                harvester.extend_deadline(10.0)
-                await canary.arun(ns)
-                if await harvester.wait_for_event(timeout=1.0):
-                    ready = True
-                    break
-
-            events.clear()  # the canary is the instrument, not the subject
-            harvester.arm_event_signal()
+            readiness = await stimuli.trace_ready(harvester, ns, canary.stimulus, identity=canary.identity)
             harvester.extend_deadline(10.0)
             await stimulus.arun(ns)
             await asyncio.sleep(settle)
         finally:
             state = await harvester.aclose()
-        return ready, state
+        return readiness, state
 
-    ready, state = loop.run_until_complete(_run())
-    return ready, state, list(events)
+    readiness, state = loop.run_until_complete(_run())
+    return readiness, state, readiness.without(events)
 
 
-def assert_trace_usable(ready: bool, state, description: str) -> None:  # type: ignore[no-untyped-def]
+def assert_trace_usable(readiness, state, description: str) -> None:  # type: ignore[no-untyped-def]
     """Refuse to read a trace that the harvester cannot vouch for."""
-    assert ready, (
-        f"HARNESS FAILED for {description}: no trace event was ever observed "
-        f"for the readiness canary, so `nft monitor trace` was not attached to "
-        f"the kernel and the absence of a match below would mean nothing."
+    assert readiness.ready, (
+        f"HARNESS FAILED for {description}: {readiness.describe()}. `nft monitor "
+        f"trace` was not shown to be attached to the kernel, so the absence of a "
+        f"match below would mean nothing."
     )
     assert state in (HarvestState.CLEAN_EOF, HarvestState.STOPPED), (
         f"HARNESS FAILED for {description}: the trace monitor ended in state "
@@ -605,8 +596,12 @@ def _engine():
 
     ``nsenter --net`` changes only the network namespace, leaving mounts alone,
     which is also how TTP itself loads these rules in production.
+
+    ``trace_output=True`` also installs NSE's output-hook trace chain, so
+    ``observe_trace`` can see the rules a process's own packets meet. It sets
+    the trace flag and nothing else: no verdict changes.
     """
-    return RuleEngine(use_nsenter=True)
+    return RuleEngine(use_nsenter=True, trace_output=True)
 
 
 def assert_contained(ns, loop, ruleset: str, probe: Probe, description: str, iface: str | None = None) -> None:  # type: ignore[no-untyped-def]
@@ -1017,6 +1012,17 @@ table ip foreign_dns_dnat {{
 """
 
 
+def _probe_rewritten_to(probe: Probe, packets, address: str) -> list:  # type: ignore[no-untyped-def]
+    """*probe*'s own packets, matched by probe ID after a DNAT, that went to *address*."""
+    from scapy.layers.inet import IP
+    from scapy.layers.inet6 import IPv6
+
+    layer = IPv6 if ":" in address else IP
+    return [
+        p for p in stimuli.requests_in(probe.last, packets, nat=True) if p.haslayer(layer) and p[layer].dst == address
+    ]
+
+
 def _dns_to_lan_resolver(packets) -> list[str]:  # type: ignore[no-untyped-def]
     """Port-53 packets addressed to the gateway, i.e. DNS that reached a LAN resolver."""
     from scapy.layers.inet import IP, TCP, UDP
@@ -1038,7 +1044,7 @@ def test_a_foreign_dnat_ahead_of_ttp_cannot_carry_dns_to_a_lan_resolver(ns_sandb
     engine.flush(ns.name)
     engine.load(FOREIGN_DNS_DNAT_AHEAD_OF_TTP, ns.name)
     probe = udp_to(WAN_V4, 53)
-    control = _dns_to_lan_resolver(observe(ns, loop, probe))
+    control = _probe_rewritten_to(probe, observe(ns, loop, probe), HOST_V4)
     assert control, (
         f"POSITIVE CONTROL FAILED: with only the foreign DNAT loaded, no DNS "
         f"reached {HOST_V4}:53. The probe reported: {probe.last.describe()}."
@@ -1133,7 +1139,7 @@ def _check_resolved_containment(ns, loop, ruleset: str, protocol: str, port: int
     engine = _engine()
     engine.flush(ns.name)
     engine.load(_resolved_nat(ipv6, port), ns.name)
-    assert _resolved_packets(observe(ns, loop, stimulus), ipv6, port), (
+    assert _probe_rewritten_to(stimulus, observe(ns, loop, stimulus), HOST_V6 if ipv6 else HOST_V4), (
         f"POSITIVE CONTROL FAILED for resolved/{protocol}/{port}: {stimulus.last.describe()}"
     )
 
@@ -1152,7 +1158,9 @@ def _check_resolved_containment(ns, loop, ruleset: str, protocol: str, port: int
     with pytest.raises(AssertionError, match="resolver UID drop was not responsible"):
         _assert_resolved_attribution(ns, loop, stimulus, ipv6)
     if port != 53:
-        assert _resolved_packets(observe(ns, loop, stimulus), ipv6, port), "Non-DNS mutant did not expose LAN traffic"
+        assert _probe_rewritten_to(stimulus, observe(ns, loop, stimulus), HOST_V6 if ipv6 else HOST_V4), (
+            "Non-DNS mutant did not expose LAN traffic"
+        )
 
 
 @pytest.mark.parametrize("protocol", ["udp", "tcp"])
@@ -1571,12 +1579,12 @@ def test_a_flushed_ruleset_leaks_everything(ns_sandbox) -> None:
 def test_a_capture_on_the_wrong_interface_fails_the_positive_control(ns_sandbox, ttp_ruleset) -> None:
     """A capture on the wrong interface is a complete window that saw nothing.
 
-    On its own that reads exactly like containment. The positive control, which
-    needs this run's probe on the wire with the firewall flushed, is what must
-    refuse it.
+    On its own that reads exactly like containment. The beacon the sandbox sends
+    at the end of every window never reaches it, so the window is refused
+    before the positive control is even read.
     """
     ns, loop = ns_sandbox
-    with pytest.raises(AssertionError, match="POSITIVE CONTROL FAILED"):
+    with pytest.raises(AssertionError, match="never saw the beacon"):
         assert_contained(ns, loop, ttp_ruleset, udp_to(WAN_V4, 4242), "UDP behind a blind capture", iface="lo")
 
 
@@ -1584,12 +1592,56 @@ def test_a_capture_that_goes_blind_after_the_control_fails_at_the_canary(ns_sand
     """The control proves the instrument worked a moment ago, not that it still does.
 
     Here the window that carries the assertion looks at the wrong interface.
-    The canary, sent after the probe in that same window, is what must fail.
+    The beacon, sent by the sandbox after the probe in that same window, is
+    checked first and fails it; the canary is the second line (see the next
+    test).
     """
     ns, loop = ns_sandbox
     _engine().load(ttp_ruleset, ns.name)
-    with pytest.raises(AssertionError, match="HARNESS FAILED for a blind window"):
+    with pytest.raises(AssertionError, match="never saw the beacon"):
         observe_with_canary(ns, loop, udp_to(WAN_V4, 4242), "a blind window", iface="lo")
+
+
+#: Drops every IP packet the sandbox sends, the canary included. A beacon is a
+#: raw Ethernet frame, which no IP hook sees, so it still arrives.
+_DROP_ALL_OUTPUT = """
+table inet blind_canary {
+    chain out {
+        type filter hook output priority 0; policy drop;
+    }
+}
+"""
+
+
+def test_a_window_whose_canary_never_left_fails_even_with_its_beacon(ns_sandbox) -> None:
+    """The beacon proves the capture watched the link, not that the canary's path was open.
+
+    With every IP packet dropped, the window's beacon still arrives and the
+    window is complete; the probe's absence would read as containment. The
+    canary is what must refuse it.
+    """
+    ns, loop = ns_sandbox
+    engine = _engine()
+    engine.flush(ns.name)
+    engine.load(_DROP_ALL_OUTPUT, ns.name)
+    with pytest.raises(AssertionError, match="HARNESS FAILED for a dropped canary"):
+        observe_with_canary(ns, loop, udp_to(WAN_V4, 4242), "a dropped canary")
+
+
+def test_a_trace_without_a_proven_monitor_is_refused(ns_sandbox, ttp_ruleset) -> None:
+    """A rule load without NSE's output trace chain leaves the canary untraced.
+
+    Readiness must then be unproven, and ``assert_trace_usable`` must refuse
+    the trace rather than read its silence as "no rule matched".
+    """
+    ns, loop = ns_sandbox
+    engine = _engine()
+    engine.flush(ns.name)
+    RuleEngine(use_nsenter=True).load(ttp_ruleset, ns.name)  # no output trace chain
+    readiness, state, _events = observe_trace(ns, loop, udp_to(WAN_V4, 53))
+    assert not readiness.ready, readiness.describe()
+    with pytest.raises(AssertionError, match="HARNESS FAILED for an untraced load"):
+        assert_trace_usable(readiness, state, "an untraced load")
 
 
 def test_a_stimulus_that_cannot_run_is_not_read_as_containment(ns_sandbox, ttp_ruleset) -> None:
