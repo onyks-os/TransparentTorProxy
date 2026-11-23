@@ -12,6 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+
+- The zero-leak suite builds every probe on NSE 2.4.0's stimuli instead of
+  scripts it wrote itself; the `nse` extra now requires
+  `network-sandbox-engine>=2.4.0`. Each probe carries a probe ID, so the
+  positive control and the same-capture canary match their own packet rather
+  than any packet to the same address and port. A probe that cannot run (no
+  interpreter, an identity that cannot be applied) now stops the test instead of
+  leaving an empty capture that reads as containment. The round-trip test's echo
+  is NSE's logging receiver, so each run says separately whether the request left,
+  arrived and was answered. New tests break the instrument on purpose (a capture
+  on the wrong interface, before and after the control; a probe with no
+  interpreter; an earlier canary's packet) and require the harness to fail.
+
 ### Documentation
 
 - `assets/social-preview.png`, the image GitHub shows when the repository is
