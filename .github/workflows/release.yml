@@ -277,3 +277,17 @@ jobs:
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
         # No skip-existing here on purpose: a version that already exists on PyPI
         # means something is wrong with the release, and must fail loudly.
+
+  # Called rather than triggered: a release created with GITHUB_TOKEN starts no
+  # `release: published` workflow, so the site stayed behind until someone ran
+  # Publish Documentation by hand. After PyPI, so the site never documents a
+  # version that cannot be installed.
+  publish-docs:
+    name: Publish the documentation
+    needs: publish-pypi
+    permissions:
+      contents: read
+    uses: ./.github/workflows/publish-docs.yml
+    with:
+      ref: ${{ github.ref_name }}
+    secrets: inherit

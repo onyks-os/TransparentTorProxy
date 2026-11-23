@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Maintenance
+
+- The documentation site is published by the release itself. The Release
+  workflow creates the GitHub Release with `GITHUB_TOKEN`, and events caused by
+  that token start no other workflow, so *Publish Documentation*
+  (`release: published`) never ran for a tag push: 0.5.0 and 0.5.1 were
+  published by hand. `release.yml` now calls `publish-docs.yml` with the tag
+  once PyPI has the version.
+
 ## [0.5.1] - 2026-11-21
 
 Maintenance. Missing Tor or a missing pluggable transport is now a failure
