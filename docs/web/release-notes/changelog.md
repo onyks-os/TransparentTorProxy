@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arrived and was answered. New tests break the instrument on purpose (a capture
   on the wrong interface, before and after the control; a probe with no
   interpreter; an earlier canary's packet) and require the harness to fail.
+  The Fedora test image installs `util-linux`, which ships the `setpriv` NSE
+  uses to run a probe as another UID.
 
 ### Documentation
 

@@ -6,11 +6,15 @@ FROM registry.fedoraproject.org/fedora:44@sha256:5340dc71866f0632130a048bebbe2d4
 
 ENV container docker
 
-# Install systemd, python, tor, nftables, curl, iproute
+# Install systemd, python, tor, nftables, curl, iproute.
+# util-linux, not just the image's util-linux-core: NSE (>= 2.4.0) runs each
+# zero-leak probe as its UID through setpriv, which only util-linux ships, and
+# it never looks for it on $PATH.
 RUN dnf update -y && dnf install -y \
     systemd \
     python3 python3-pip \
     nftables tor procps-ng curl iptables iproute \
+    util-linux \
     libpcap-devel \
     && dnf clean all
 
