@@ -1576,7 +1576,7 @@ def test_a_flushed_ruleset_leaks_everything(ns_sandbox) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_capture_on_the_wrong_interface_fails_the_positive_control(ns_sandbox, ttp_ruleset) -> None:
+def test_a_capture_on_the_wrong_interface_fails_at_its_beacon(ns_sandbox, ttp_ruleset) -> None:
     """A capture on the wrong interface is a complete window that saw nothing.
 
     On its own that reads exactly like containment. The beacon the sandbox sends
@@ -1588,7 +1588,7 @@ def test_a_capture_on_the_wrong_interface_fails_the_positive_control(ns_sandbox,
         assert_contained(ns, loop, ttp_ruleset, udp_to(WAN_V4, 4242), "UDP behind a blind capture", iface="lo")
 
 
-def test_a_capture_that_goes_blind_after_the_control_fails_at_the_canary(ns_sandbox, ttp_ruleset) -> None:
+def test_a_capture_that_goes_blind_after_the_control_fails_at_its_beacon(ns_sandbox, ttp_ruleset) -> None:
     """The control proves the instrument worked a moment ago, not that it still does.
 
     Here the window that carries the assertion looks at the wrong interface.
