@@ -54,7 +54,7 @@ result. Every row needs a recorded run before it supports a release claim.
 
 | Area | Existing implementation to extend | Gap / first action |
 | :--- | :--- | :--- |
-| Kernel ruleset containment | [NSE suite](../../tests/test_nse_rules.py), [stimuli](../../tests/nse_stimuli.py), [classifier](../../tests/nse_classifier.py) | Retain positive controls, same-capture canaries and rule attribution; add the missing scenario families below |
+| Kernel ruleset containment | [NSE suite](../../tests/test_nse_rules.py) on NSE stimuli and receivers, [classifier](../../tests/nse_classifier.py) | Retain positive controls, same-capture canaries and rule attribution; add the missing scenario families below |
 | DNS integration verdict | [DNS probe](../../tests/leak/test_dns_leak.py), [oracle](../../tests/leak/oracle.py), [oracle tests](../../tests/test_leak_oracle.py) | Confirmed inference defect: a timeout or error rcode does not establish local containment; a global redirect counter is not per-query attribution |
 | Fault response | [Chaos sweep](../../tests/chaos_monkey.py), [VM wrapper](../../scripts/vm/lifecycle/chaos.sh) | The sweep waits 18 seconds before auditing; continuously observe the interval immediately after injection |
 | Startup and rollback | [Start command](../../ttp/commands/start.py), CLI/failure-path unit suites | Existing lifecycle probe is stopped across startup; measure the actual sequence and each interrupted phase externally |

@@ -132,7 +132,7 @@ What they assert and what they found is in section 4.3 of the
 
 ## The dependency, and why it is pinned hard
 
-`network-sandbox-engine>=2.3.0,<3`. The floor is not a preference.
+`network-sandbox-engine>=2.4.0,<3`. The floor is not a preference.
 
 Before 2.1.0 the engine's own test runner reported PASSED when its oracle had
 observed nothing, and its kernel trace monitor could stop reading mid-run without
@@ -146,7 +146,13 @@ says its window was incomplete. Before 2.3.0 the host end of the sandbox could
 only live in the host's own network namespace, so the round-trip test's echo server
 sat behind the host's firewall: on Fedora, firewalld's default zone dropped the
 request and the test reported a one-way bypass that was the host's doing. The echo
-now runs in an isolated host namespace (`isolated_host=True`). A green result from such an engine would not have been evidence of
+now runs in an isolated host namespace (`isolated_host=True`). Before 2.4.0 every
+probe was a script the suite wrote itself, and the canary that proves a capture
+window was open was any packet to its address and port. Each probe is now an NSE
+stimulus that carries a probe ID and reports a typed outcome, so the canary and
+the positive control match their own packet, and a probe that could not run stops
+the test instead of leaving an empty capture behind. A green result from an engine below
+the floor would not have been evidence of
 anything - the same defect as the one described at the top of this page, one
 layer down. TTP refuses to run this suite against an older engine rather than
 produce a reassuring number.

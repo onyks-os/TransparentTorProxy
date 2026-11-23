@@ -43,7 +43,6 @@ import re
 import shutil
 import socket
 import subprocess
-import sys
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -53,8 +52,7 @@ import pytest
 
 # The classifier needs neither nse nor root, so it lives outside this module
 # and is unit-tested on its own.
-from tests.nse_classifier import canary_seen, is_cleartext_leak
-from tests.nse_stimuli import reporting_send
+from tests.nse_classifier import is_cleartext_leak
 
 # Import TTP firewall dynamic rule builder
 from ttp.firewall import apply_rules, apply_teardown_lockdown, destroy_rules
@@ -70,12 +68,14 @@ REQUIRE_NSE = os.environ.get("TTP_REQUIRE_NSE") == "1"
 
 try:
     import nse
+    from nse import ProcessIdentity, StimulusResult, receivers, stimuli
     from nse.core.mock_listener import start_listener
     from nse.core.netns_controller import NetnsController
     from nse.core.rule_engine import RuleEngine
     from nse.core.scapy_injector import _get_mac_address
     from nse.core.sniffer import PCAPAsserter
     from nse.core.trace_harvester import HarvestState, TraceHarvester
+    from nse.stimuli import Stimulus
 
     NSE_IMPORT_ERROR: str | None = None
 except ImportError as exc:  # pragma: no cover - environment-dependent
@@ -87,9 +87,10 @@ IS_ROOT = os.geteuid() == 0
 #: trace monitor could stop reading mid-run without saying so (< 2.1.0), and a
 #: capture could start without listening, drop packets unreported or open
 #: unfiltered on a bad filter (< 2.2.0). 2.3.0 adds ``isolated_host``, which the
-#: round-trip test needs so the host's own firewall cannot drop its echo.
+#: round-trip test needs so the host's own firewall cannot drop its echo. 2.4.0
+#: adds the stimuli, probe IDs and receivers every probe here is built on.
 #: Verdicts from an older engine are not evidence, so refuse to produce them.
-MIN_NSE_VERSION = (2, 3, 0)
+MIN_NSE_VERSION = (2, 4, 0)
 
 
 def _nse_version() -> tuple[int, ...]:
@@ -184,32 +185,62 @@ def _exec_in_ns(ns_name: str, *args: str, check: bool = False) -> subprocess.Com
     return _original_subprocess_run(cmd, capture_output=True, text=True, check=check)
 
 
-def _python_in_ns(ns_name: str, script: str, uid: int | None = None) -> str:
+class Probe:
+    """One NSE stimulus, the UID that sends it, and every result it produced.
+
+    TTP's ruleset filters locally generated traffic by the owner of the socket
+    that sent it, which an injected packet does not have. NSE therefore runs
+    each stimulus as a real process with that identity inside the namespace.
+
+    Every run carries a new probe ID: in the payload, the DNS name, or, for a
+    bare SYN, the source port NSE binds. A capture that holds several stimuli
+    -- a probe and the canary after it -- tells them apart by the packet
+    itself, not by a destination they might share with stray traffic.
+
+    The outcome is typed. With TTP's rules loaded, ``refused`` is the firewall
+    working. ``could_not_run`` means no packet can have been produced: no
+    interpreter, an identity that cannot be applied, a socket that cannot be
+    opened. That raises here, where it happens, because the absence that
+    follows it would otherwise read as containment.
     """
-    Run a short Python program inside the namespace, optionally as another user.
 
-    A stimulus that fails to *run* produces no packet, and a positive control
-    that sees no packet reports a broken harness - true, but it does not say
-    why. Raising here names the cause at the point it happens.
+    def __init__(self, stimulus: Stimulus, uid: int | None = None, *, python: str | None = None) -> None:
+        self.stimulus = stimulus
+        self.uid = uid
+        self.python = python
+        self.results: list[StimulusResult] = []
 
-    A stimulus whose send is *refused* is a different thing entirely: with
-    TTP's rules loaded, nftables answers a rejected packet with EPERM on the
-    local socket, which is the firewall working. Each script therefore wraps
-    its send in ``reporting_send``, so a non-zero exit means the probe could
-    not run at all - no interpreter, a broken script - and never means the
-    traffic was blocked.
+    @property
+    def identity(self) -> ProcessIdentity | None:
+        # Root keeps every capability (a raw ICMP socket needs CAP_NET_RAW).
+        # Any other UID runs with the same GID and no supplementary groups.
+        return None if self.uid is None else ProcessIdentity(uid=self.uid, gid=self.uid)
 
-    Returns what the probe printed: whether the packet left the socket, and if
-    not, the kernel's reason. The positive control quotes it, because with the
-    ruleset flushed a refused send is the instrument failing rather than the
-    firewall working, and the two are otherwise indistinguishable from the
-    outside.
-    """
-    prelude = f"import os; os.setuid({uid});\n" if uid is not None else ""
-    result = _exec_in_ns(ns_name, "python3", "-c", prelude + script)
-    if result.returncode != 0:
-        raise RuntimeError(f"stimulus failed to run inside {ns_name}: {result.stderr.strip() or result.stdout.strip()}")
-    return result.stdout.strip()
+    @property
+    def last(self) -> StimulusResult:
+        """The result of the most recent run."""
+        assert self.results, "the probe has not run yet"
+        return self.results[-1]
+
+    async def arun(self, ns) -> StimulusResult:  # type: ignore[no-untyped-def]
+        result = await self.stimulus.run(ns, identity=self.identity, python=self.python)
+        if result.outcome == "could_not_run":
+            raise RuntimeError(f"stimulus could not run inside {ns.name}: {result.describe()}")
+        self.results.append(result)
+        return result
+
+    def __call__(self, ns, loop) -> StimulusResult:  # type: ignore[no-untyped-def]
+        return loop.run_until_complete(self.arun(ns))
+
+
+def in_sequence(*probes: Probe) -> Callable:
+    """Run *probes* one after the other, inside whatever capture is open."""
+
+    def run(ns, loop) -> None:  # type: ignore[no-untyped-def]
+        for probe in probes:
+            probe(ns, loop)
+
+    return run
 
 
 # ---------------------------------------------------------------------------
@@ -217,108 +248,26 @@ def _python_in_ns(ns_name: str, script: str, uid: int | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 
-def udp_to(host: str, port: int, uid: int | None = None) -> Callable[[str], str]:
-    """A UDP datagram to *host*:*port*."""
-
-    def stimulus(ns_name: str) -> str:
-        family = "AF_INET6" if ":" in host else "AF_INET"
-        return _python_in_ns(
-            ns_name,
-            "import socket\n"
-            f"s = socket.socket(socket.{family}, socket.SOCK_DGRAM)\n"
-            + reporting_send(f"s.sendto(b'ttp-leak-probe', ({host!r}, {port}))"),
-            uid=uid,
-        )
-
-    return stimulus
+def udp_to(host: str, port: int, uid: int | None = None) -> Probe:
+    """A UDP datagram to *host*:*port*. Does not wait for a reply."""
+    return Probe(stimuli.udp(host, port), uid)
 
 
-def udp_roundtrip_to(host: str, port: int, uid: int | None = None) -> Callable[[str], str]:
-    """A UDP datagram that also *waits* for the answer.
-
-    ``udp_to`` proves egress only, which is weaker than the claim the bypass
-    test makes: "must still get out" implies something is reachable. A bypass
-    rule that lets packets out but breaks the return path satisfies egress and
-    is still a broken proxy.
-    """
-
-    def stimulus(ns_name: str) -> str:
-        family = "AF_INET6" if ":" in host else "AF_INET"
-        # The reply is waited for separately: a recv that times out is a broken
-        # return path, which is not the same finding as a send the kernel
-        # refused, and folding them together would report one as the other.
-        return _python_in_ns(
-            ns_name,
-            "import socket, contextlib\n"
-            f"s = socket.socket(socket.{family}, socket.SOCK_DGRAM)\n"
-            "s.settimeout(2.0)\n"
-            + reporting_send(f"s.sendto(b'ttp-roundtrip-probe', ({host!r}, {port}))")
-            + "with contextlib.suppress(OSError):\n"
-            "    s.recvfrom(64)\n",
-            uid=uid,
-        )
-
-    return stimulus
-
-
-def tcp_to(host: str, port: int, uid: int | None = None) -> Callable[[str], str]:
+def tcp_to(host: str, port: int, uid: int | None = None) -> Probe:
     """A TCP connection attempt to *host*:*port* (the SYN is what matters)."""
-
-    def stimulus(ns_name: str) -> str:
-        family = "AF_INET6" if ":" in host else "AF_INET"
-        return _python_in_ns(
-            ns_name,
-            "import socket\n"
-            f"s = socket.socket(socket.{family}, socket.SOCK_STREAM)\n"
-            "s.settimeout(0.5)\n" + reporting_send(f"s.connect(({host!r}, {port}))"),
-            uid=uid,
-        )
-
-    return stimulus
+    return Probe(stimuli.tcp_connect(host, port, timeout=0.5), uid)
 
 
-def icmp_to(host: str) -> Callable[[str], str]:
+def icmp_to(host: str) -> Probe:
+    """An ICMP or ICMPv6 echo request, i.e. traffic Tor cannot carry at all.
+
+    Sent by root over a raw socket, which NSE builds itself: an earlier version
+    of this probe shelled out to ``ping``, which the Debian test image does not
+    ship, and the failure surfaced only as a positive control that saw nothing.
+    A socket that cannot be opened is now ``could_not_run``, which ``Probe``
+    raises.
     """
-    An ICMP echo request, i.e. traffic Tor cannot carry at all.
-
-    Built on a raw socket rather than by calling ``ping``. This used to shell
-    out, and the Debian test image does not ship iputils-ping: the command
-    failed silently, no packet was generated, and the positive control failed
-    with "the instrument is not measuring" - which was true, and which is
-    exactly what it is there to catch. Every other stimulus in this file already
-    speaks to the kernel directly; this one now does too, so the suite depends
-    on nothing but python3 inside the namespace.
-    """
-
-    def stimulus(ns_name: str) -> str:
-        if ":" in host:
-            # The kernel computes the checksum for raw ICMPv6 sockets.
-            return _python_in_ns(
-                ns_name,
-                "import socket\n"
-                "s = socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_ICMPV6)\n"
-                "echo = b'\\x80\\x00\\x00\\x00\\x00\\x01\\x00\\x01' + b'ttp-leak-probe'\n"
-                + reporting_send(f"s.sendto(echo, ({host!r}, 0))"),
-            )
-        # For IPv4 it does not, so the probe computes its own.
-        return _python_in_ns(
-            ns_name,
-            "import socket, struct\n"
-            "def csum(data):\n"
-            "    if len(data) % 2:\n"
-            "        data += b'\\x00'\n"
-            "    total = sum(struct.unpack('!%dH' % (len(data) // 2), data))\n"
-            "    total = (total >> 16) + (total & 0xffff)\n"
-            "    total += total >> 16\n"
-            "    return ~total & 0xffff\n"
-            "payload = b'ttp-leak-probe'\n"
-            "echo = struct.pack('!BBHHH', 8, 0, 0, 1, 1) + payload\n"
-            "echo = struct.pack('!BBHHH', 8, 0, csum(echo), 1, 1) + payload\n"
-            "s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)\n"
-            + reporting_send(f"s.sendto(echo, ({host!r}, 0))"),
-        )
-
-    return stimulus
+    return Probe(stimuli.icmp_echo(host))
 
 
 # ---------------------------------------------------------------------------
@@ -419,18 +368,6 @@ def isolated_host_sandbox() -> Iterator[tuple[object, asyncio.AbstractEventLoop]
         loop.close()
 
 
-#: A UDP echo server, run on the isolated host end. It prints READY once bound.
-_UDP_ECHO = """\
-import socket, sys
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.bind((sys.argv[1], int(sys.argv[2])))
-print("READY", flush=True)
-while True:
-    data, peer = s.recvfrom(64)
-    s.sendto(b"ack:" + data[:16], peer)
-"""
-
-
 def _configure_namespace(ns) -> None:  # type: ignore[no-untyped-def]
     """Default routes plus permanent neighbour entries, so no packet waits on ARP."""
     host_mac = _get_mac_address(ns.ext_iface, ns.ext_netns, use_nsenter=True)
@@ -487,18 +424,28 @@ def has_ipv6(ns) -> bool:  # type: ignore[no-untyped-def]
 CANARY_PORT = 9999
 
 
-def canary_stimulus():  # type: ignore[no-untyped-def]
+def canary_stimulus() -> Probe:
     """The stimulus whose arrival proves the capture window was open."""
     return udp_to(HOST_V4, CANARY_PORT, uid=1000)
 
 
-def observe(ns, loop, stimulus, settle: float = 0.4) -> list:  # type: ignore[no-untyped-def]
-    """Run *stimulus* with the sniffer armed on the host veth; return what it saw."""
-    asserter = PCAPAsserter(iface=ns.ext_iface, netns=ns.ext_netns)
+def observe(ns, loop, stimulus, settle: float = 0.4, iface: str | None = None) -> list:  # type: ignore[no-untyped-def]
+    """Run *stimulus* with the sniffer armed on the host veth; return what it saw.
+
+    *iface* moves the capture off the veth. Only the blind-instrument tests use
+    it, to prove that a capture looking at the wrong place fails visibly.
+    """
+    asserter = PCAPAsserter(iface=iface or ns.ext_iface, netns=ns.ext_netns)
     # start() returns once the kernel socket is bound and filtering.
     loop.run_until_complete(asserter.start())
-    stimulus(ns.name)
-    loop.run_until_complete(asyncio.sleep(settle))
+    try:
+        stimulus(ns, loop)
+        loop.run_until_complete(asyncio.sleep(settle))
+    except BaseException:
+        # A stimulus that could not run must not leave a sniffer behind.
+        with contextlib.suppress(Exception):
+            loop.run_until_complete(asserter.stop())
+        raise
     return finish_capture(asserter, loop)
 
 
@@ -520,7 +467,7 @@ def finish_capture(asserter, loop) -> list:  # type: ignore[no-untyped-def]
     return packets
 
 
-def observe_with_canary(ns, loop, stimulus, settle: float = 0.4) -> list:  # type: ignore[no-untyped-def]
+def observe_with_canary(ns, loop, stimulus, description: str, settle: float = 0.4, iface: str | None = None) -> list:  # type: ignore[no-untyped-def]
     """Fire *stimulus*, then the canary, inside **one** capture session.
 
     The positive control in ``assert_contained`` runs in its own capture, so it
@@ -532,14 +479,22 @@ def observe_with_canary(ns, loop, stimulus, settle: float = 0.4) -> list:  # typ
 
     The canary closes that. It is emitted *after* the leak stimulus and inside
     the same session, so observing it proves the capture window was open across
-    the whole of the leak stimulus rather than merely at some earlier time.
+    the whole of the leak stimulus rather than merely at some earlier time. It
+    is matched by its own probe ID, so other traffic to the same address and
+    port cannot stand in for it. A missing canary fails here, before any
+    absence is read.
     """
-    asserter = PCAPAsserter(iface=ns.ext_iface, netns=ns.ext_netns)
-    loop.run_until_complete(asserter.start())
-    stimulus(ns.name)
-    canary_stimulus()(ns.name)
-    loop.run_until_complete(asyncio.sleep(settle))
-    return finish_capture(asserter, loop)
+    canary = canary_stimulus()
+    packets = observe(ns, loop, in_sequence(stimulus, canary), settle, iface)
+    assert stimuli.requests_in(canary.last, packets), (
+        f"HARNESS FAILED for {description}: the canary ({HOST_V4}:{CANARY_PORT} "
+        f"from a bypassed UID, which TTP is configured to permit) was not "
+        f"observed in the same capture as the assertion "
+        f"({len(packets)} packet(s) captured). The canary reported: "
+        f"{canary.last.describe()}. The sniffer was not measuring during this "
+        f"window, so an absence in it would mean nothing."
+    )
+    return packets
 
 
 #: Enables tracing for locally generated packets. See observe_trace.
@@ -553,7 +508,7 @@ table inet ttp_trace {
 """
 
 
-def observe_trace(ns, loop, stimulus, settle: float = 1.0):  # type: ignore[no-untyped-def]
+def observe_trace(ns, loop, stimulus: Probe, settle: float = 1.0):  # type: ignore[no-untyped-def]
     """Run *stimulus* under ``nft monitor trace`` and return what the kernel said.
 
     Every other assertion in this file is about an **absence**: no cleartext
@@ -570,6 +525,7 @@ def observe_trace(ns, loop, stimulus, settle: float = 1.0):  # type: ignore[no-u
     """
     harvester = TraceHarvester()
     events: list = []
+    canary = canary_stimulus()
 
     # NSE's trace-init ruleset enables tracing in a *prerouting* chain, and a
     # locally generated packet never traverses prerouting -- it goes out
@@ -599,7 +555,7 @@ def observe_trace(ns, loop, stimulus, settle: float = 1.0):  # type: ignore[no-u
             for _ in range(5):
                 harvester.arm_event_signal()
                 harvester.extend_deadline(10.0)
-                canary_stimulus()(ns.name)
+                await canary.arun(ns)
                 if await harvester.wait_for_event(timeout=1.0):
                     ready = True
                     break
@@ -607,7 +563,7 @@ def observe_trace(ns, loop, stimulus, settle: float = 1.0):  # type: ignore[no-u
             events.clear()  # the canary is the instrument, not the subject
             harvester.arm_event_signal()
             harvester.extend_deadline(10.0)
-            stimulus(ns.name)
+            await stimulus.arun(ns)
             await asyncio.sleep(settle)
         finally:
             state = await harvester.aclose()
@@ -653,64 +609,46 @@ def _engine():
     return RuleEngine(use_nsenter=True)
 
 
-def _recording(stimulus):  # type: ignore[no-untyped-def]
-    """Wrap *stimulus* so what it reported survives the call into ``observe``.
-
-    ``observe`` returns packets, not the probe's own account of itself, and
-    changing that would touch every caller. The list returned here is filled
-    in by the time ``observe`` returns, which is all the positive control
-    needs to say *why* it saw nothing.
+def assert_contained(ns, loop, ruleset: str, probe: Probe, description: str, iface: str | None = None) -> None:  # type: ignore[no-untyped-def]
     """
-    reports: list[str] = []
+    Assert that TTP contains *probe*, having first proved the test can see it.
 
-    def probe(ns_name: str) -> str:
-        report = stimulus(ns_name) or ""
-        reports.append(report)
-        return report
-
-    return probe, reports
-
-
-def assert_contained(ns, loop, ruleset: str, stimulus, description: str) -> None:  # type: ignore[no-untyped-def]
-    """
-    Assert that TTP contains *stimulus*, having first proved the test can see it.
-
-    Step 1 flushes the ruleset and requires the packet to reach the wire. If it
-    does not, the harness is not measuring and the zero-leak assertion in step 2
+    Step 1 flushes the ruleset and requires this run's packet -- matched by its
+    probe ID -- on the wire, and the classifier to call it a leak. If either
+    fails, the harness is not measuring and the zero-leak assertion in step 2
     would pass for the wrong reason, so the test fails there instead.
     """
     engine = _engine()
 
     engine.flush(ns.name)
-    probe, reports = _recording(stimulus)
-    control = observe(ns, loop, probe)
-    control_leaks = [p for p in control if is_cleartext_leak(p)]
-    assert control_leaks, (
+    control = observe(ns, loop, probe, iface=iface)
+    seen = stimuli.requests_in(probe.last, control)
+    assert seen, (
         f"POSITIVE CONTROL FAILED for {description}: with the firewall flushed, the "
-        f"sniffer on {ns.ext_iface} observed no cleartext packet "
+        f"sniffer on {iface or ns.ext_iface} did not observe the probe "
         f"({len(control)} packet(s) captured in total). The probe itself reported: "
-        f"{'; '.join(reports) or '<nothing>'}. The instrument is not "
-        f"measuring, so the zero-leak assertion below would pass for the wrong "
-        f"reason. Fix the harness before trusting any result in this file."
+        f"{probe.last.describe()}. The instrument is not measuring, so the "
+        f"zero-leak assertion below would pass for the wrong reason. Fix the "
+        f"harness before trusting any result in this file."
+    )
+    assert all(is_cleartext_leak(p) for p in seen), (
+        f"CLASSIFIER FAILED for {description}: the control's own packet is not "
+        f"classified as a leak ({[p.summary() for p in seen]}), so the leak scan "
+        f"below would be blind to the very traffic it is about."
     )
 
     engine.load(ruleset, ns.name)
-    observed = observe_with_canary(ns, loop, stimulus)
+    observed = observe_with_canary(ns, loop, probe, description, iface=iface)
 
-    # The canary rides in this capture, not the previous one, so it speaks for
-    # the window the assertion below is about. Check it first: "no leak" and
-    # "no packets at all" look identical, and only one of them is containment.
-    assert canary_seen(observed, HOST_V4, CANARY_PORT), (
-        f"HARNESS FAILED for {description}: the canary ({HOST_V4}:{CANARY_PORT} "
-        f"from a bypassed UID, which TTP is configured to permit) was not "
-        f"observed in the same capture as the assertion "
-        f"({len(observed)} packet(s) captured in total). The sniffer was not "
-        f"measuring during this window, so the zero-leak assertion below would "
-        f"pass for the wrong reason."
-    )
-
+    # The probe by its ID, and anything else the classifier calls a leak: a
+    # rewritten or fragmented copy of the probe would not carry a matching
+    # destination, and a leak of any shape fails the claim.
+    escaped = [p.summary() for p in stimuli.requests_in(probe.last, observed)]
     leaks = [p.summary() for p in observed if is_cleartext_leak(p)]
-    assert not leaks, f"{description} LEAKED to the WAN despite TTP's ruleset: {leaks}"
+    assert not escaped and not leaks, (
+        f"{description} LEAKED to the WAN despite TTP's ruleset: probe {escaped}, "
+        f"cleartext {leaks}. The probe reported: {probe.last.describe()}."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -726,21 +664,7 @@ def test_virtual_destinations_override_lan_with_targeted_mutation(ns_sandbox, re
     from scapy.layers.inet6 import IPv6
 
     ns, loop = ns_sandbox
-    family = "AF_INET6" if ":" in destination else "AF_INET"
-    script = (
-        "import os, socket\n"
-        "os.setgroups([]); os.setgid(65534); os.setuid(65534)\n"
-        f"s = socket.socket(socket.{family}, socket.SOCK_{'STREAM' if protocol == 'tcp' else 'DGRAM'})\n"
-        "s.settimeout(0.5)\n"
-        + reporting_send(
-            f"s.connect(({destination!r}, 19302))"
-            if protocol == "tcp"
-            else f"s.sendto(b'automap-regression', ({destination!r}, 19302))"
-        )
-    )
-
-    def stimulus(name):
-        return _python_in_ns(name, script)
+    stimulus = (tcp_to if protocol == "tcp" else udp_to)(destination, 19302, uid=65534)
 
     def seen(packets):
         network, transport = (IPv6 if ":" in destination else IP), (TCP if protocol == "tcp" else UDP)
@@ -757,8 +681,7 @@ def test_virtual_destinations_override_lan_with_targeted_mutation(ns_sandbox, re
     _exec_in_ns(ns.name, "nft", "flush", "ruleset", check=True)
     assert seen(observe(ns, loop, stimulus)), "Positive control could not observe the exact synthetic destination"
     engine.load(resolved_ruleset, ns.name)
-    captured = observe_with_canary(ns, loop, stimulus)
-    assert canary_seen(captured, HOST_V4, CANARY_PORT)
+    captured = observe_with_canary(ns, loop, stimulus, f"{protocol} to {destination}")
     assert not seen(captured), "Tor virtual destination escaped through LAN bypass"
     mutant = "\n".join(line for line in resolved_ruleset.splitlines() if 'comment "ttp automap ' not in line)
     assert mutant != resolved_ruleset.rstrip("\n")
@@ -848,9 +771,10 @@ def test_routable_icmpv6_is_not_allowed_to_escape(ns_sandbox, ttp_ruleset) -> No
 
     The positive control is what caught this: on 2.1.1 the echo left the
     socket and was never captured, so the test failed rather than asserting
-    containment of a packet it could not see. `icmp_to` reports its send, so
-    if it fails again the control names which it is: a raw sendto the kernel
-    refused, or a packet that left the socket and was lost before the capture.
+    containment of a packet it could not see. The probe's outcome is quoted
+    in the control's message, so if it fails again the control names which it
+    is: a raw send the kernel refused, or a packet that left the socket and was
+    lost before the capture.
     """
     ns, loop = ns_sandbox
     if not has_ipv6(ns):
@@ -1065,11 +989,7 @@ def test_containment_holds_alongside_a_competing_ruleset(ns_sandbox, ttp_ruleset
         f"loaded but are not in the ruleset alongside TTP's (present: {sorted(listed)})."
     )
 
-    observed = observe_with_canary(ns, loop, udp_to(WAN_V4, 53))
-    assert canary_seen(observed, HOST_V4, CANARY_PORT), (
-        f"HARNESS FAILED for {competitor}: the canary was not observed in the "
-        f"same capture as the assertion ({len(observed)} packet(s) captured)."
-    )
+    observed = observe_with_canary(ns, loop, udp_to(WAN_V4, 53), competitor)
 
     leaks = [p.summary() for p in observed if is_cleartext_leak(p)]
     assert not leaks, (
@@ -1117,19 +1037,15 @@ def test_a_foreign_dnat_ahead_of_ttp_cannot_carry_dns_to_a_lan_resolver(ns_sandb
     # the gateway, or "nothing reached the LAN resolver" below proves nothing.
     engine.flush(ns.name)
     engine.load(FOREIGN_DNS_DNAT_AHEAD_OF_TTP, ns.name)
-    probe, reports = _recording(udp_to(WAN_V4, 53))
+    probe = udp_to(WAN_V4, 53)
     control = _dns_to_lan_resolver(observe(ns, loop, probe))
     assert control, (
         f"POSITIVE CONTROL FAILED: with only the foreign DNAT loaded, no DNS "
-        f"reached {HOST_V4}:53. The probe reported: {'; '.join(reports) or '<nothing>'}."
+        f"reached {HOST_V4}:53. The probe reported: {probe.last.describe()}."
     )
 
     engine.load(ttp_ruleset, ns.name)
-    observed = observe_with_canary(ns, loop, udp_to(WAN_V4, 53))
-    assert canary_seen(observed, HOST_V4, CANARY_PORT), (
-        f"HARNESS FAILED: the canary was not observed in the same capture as "
-        f"the assertion ({len(observed)} packet(s) captured)."
-    )
+    observed = observe_with_canary(ns, loop, udp_to(WAN_V4, 53), "DNS behind a foreign DNAT")
 
     escaped = _dns_to_lan_resolver(observed) + [p.summary() for p in observed if is_cleartext_leak(p)]
     assert not escaped, (
@@ -1217,14 +1133,12 @@ def _check_resolved_containment(ns, loop, ruleset: str, protocol: str, port: int
     engine = _engine()
     engine.flush(ns.name)
     engine.load(_resolved_nat(ipv6, port), ns.name)
-    probe, reports = _recording(stimulus)
-    assert _resolved_packets(observe(ns, loop, probe), ipv6, port), (
-        f"POSITIVE CONTROL FAILED for resolved/{protocol}/{port}: {reports}"
+    assert _resolved_packets(observe(ns, loop, stimulus), ipv6, port), (
+        f"POSITIVE CONTROL FAILED for resolved/{protocol}/{port}: {stimulus.last.describe()}"
     )
 
     engine.load(ruleset, ns.name)
-    observed = observe_with_canary(ns, loop, stimulus)
-    assert canary_seen(observed, HOST_V4, CANARY_PORT), "Resolver capture canary missing"
+    observed = observe_with_canary(ns, loop, stimulus, f"resolved/{protocol}/{port}")
     assert not _resolved_packets(observed, ipv6, port), "Resolver traffic escaped to LAN"
     assert not [p.summary() for p in observed if is_cleartext_leak(p)], "Resolver traffic escaped to WAN"
     _assert_resolved_attribution(ns, loop, stimulus, ipv6)
@@ -1298,8 +1212,7 @@ def test_resolved_ipv6_disabled_uses_family_killswitch(ns_sandbox, protocol: str
     with patch("ttp.tor_detect.is_ipv6_supported", return_value=True):
         ruleset = _capture_ttp_ruleset(disable_ipv6=True)
     engine.load(ruleset, ns.name)
-    observed = observe_with_canary(ns, loop, stimulus)
-    assert canary_seen(observed, HOST_V4, CANARY_PORT), "IPv6-disabled capture canary missing"
+    observed = observe_with_canary(ns, loop, stimulus, f"resolved/{protocol} with IPv6 disabled")
     assert not _resolved_packets(observed, True, 53), "Disabled IPv6 escaped"
     ready, state, events = observe_trace(ns, loop, stimulus)
     assert_trace_usable(ready, state, "resolver with IPv6 disabled")
@@ -1448,51 +1361,42 @@ def test_bypassed_user_traffic_gets_an_answer_back(isolated_host_sandbox, ttp_ru
     dropped the request before the server saw it, so the test could blame TTP
     for the host's firewall. A round trip is still made first without TTP's
     ruleset: a missing reply below must be TTP's, never the harness's.
+
+    The receiver logs every arrival before answering it, so each run also says
+    whether the request *arrived*, not only whether a packet left: a reply
+    missing after an arrival is the return path, and an arrival the capture
+    did not see means the capture is blind, which ``contradictions()`` names.
     """
     ns, loop = isolated_host_sandbox
+    probe = stimuli.udp_round_trip(HOST_V4, CANARY_PORT, timeout=2.0)
+    user = ProcessIdentity(uid=1000, gid=1000)
 
-    from scapy.layers.inet import IP, UDP
+    async def _round_trips():  # type: ignore[no-untyped-def]
+        async with await receivers.udp_echo(HOST_V4, CANARY_PORT).start(ns.host) as echo:
+            control = await stimuli.observe(ns, probe, identity=user, receiver=echo, settle=0.5)
+            _engine().load(ttp_ruleset, ns.name)
+            bypassed = await stimuli.observe(ns, probe, identity=user, receiver=echo, settle=0.5)
+        return control, bypassed
 
-    def _replies(packets: list) -> list:
-        return [
-            p
-            for p in packets
-            if p.haslayer(IP) and p[IP].src == HOST_V4 and p.haslayer(UDP) and p[UDP].sport == CANARY_PORT
-        ]
+    control, bypassed = loop.run_until_complete(_round_trips())
 
-    echo = loop.run_until_complete(
-        ns.host.start_process([sys.executable, "-I", "-c", _UDP_ECHO, HOST_V4, str(CANARY_PORT)])
+    assert control.result.answered and control.received is True and control.reply_on_wire is True, (
+        f"HARNESS FAILED: without TTP's ruleset, the echo on {HOST_V4}:{CANARY_PORT} "
+        f"did not complete a round trip. The echo runs in its own namespace, so "
+        f"this is not the host's firewall: {control.describe()}"
     )
-    loop.run_until_complete(echo.wait_for_output(b"READY", timeout=10.0))
+    assert not control.contradictions(), control.describe()
 
-    control = observe(ns, loop, udp_roundtrip_to(HOST_V4, CANARY_PORT, uid=1000), settle=2.5)
-    assert _replies(control), (
-        f"HARNESS FAILED: without TTP's ruleset, the echo on {HOST_V4}:"
-        f"{CANARY_PORT} did not answer ({len(control)} packet(s) captured). The "
-        "echo runs in its own namespace, so this is not the host's firewall: "
-        f"the echo printed {echo.output('stderr')[-200:]!r} on stderr."
-    )
-
-    _engine().load(ttp_ruleset, ns.name)
-    captured = observe(ns, loop, udp_roundtrip_to(HOST_V4, CANARY_PORT, uid=1000), settle=2.5)
-
-    outbound = [
-        p
-        for p in captured
-        if p.haslayer(IP) and p[IP].dst == HOST_V4 and p.haslayer(UDP) and p[UDP].dport == CANARY_PORT
-    ]
-    assert outbound, (
+    assert bypassed.on_wire is True and bypassed.received is True, (
         f"bypassed UID 1000 could not reach {HOST_V4}:{CANARY_PORT}: TTP blocked "
-        f"traffic it is configured to exempt. {len(captured)} packet(s) captured."
+        f"traffic it is configured to exempt. {bypassed.describe()}"
     )
-
-    replies = _replies(captured)
-    assert replies, (
+    assert bypassed.result.answered and bypassed.reply_on_wire is True, (
         f"the request reached {HOST_V4}:{CANARY_PORT} but no reply came back. "
         f"The bypass is one-way: traffic leaves and the return path is blocked, "
-        f"which is a broken proxy rather than an exempted one. "
-        f"{len(captured)} packet(s) captured, {len(outbound)} outbound."
+        f"which is a broken proxy rather than an exempted one. {bypassed.describe()}"
     )
+    assert not bypassed.contradictions(), bypassed.describe()
 
 
 # ---------------------------------------------------------------------------
@@ -1531,14 +1435,13 @@ def ttp_nft_inside(ns_name: str) -> Iterator[None]:
         yield
 
 
-def _two_lan_probes(ns_name: str) -> None:
-    """Tor's traffic and a bypassed user's, fired into the same capture window.
+def _two_lan_probes() -> tuple[Probe, Probe]:
+    """Tor's traffic and a bypassed user's, to be fired into the same capture window.
 
     Separate ports, because the assertion is that the lockdown acted on one and
     not the other, and traffic that cannot be told apart cannot say that.
     """
-    udp_to(HOST_V4, TOR_CANARY_PORT, uid=TOR_UID)(ns_name)
-    udp_to(HOST_V4, CANARY_PORT, uid=1000)(ns_name)
+    return udp_to(HOST_V4, TOR_CANARY_PORT, uid=TOR_UID), udp_to(HOST_V4, CANARY_PORT, uid=1000)
 
 
 def test_the_teardown_lockdown_closes_the_bypass_and_spares_tor(ns_sandbox, ttp_ruleset) -> None:
@@ -1566,14 +1469,15 @@ def test_the_teardown_lockdown_closes_the_bypass_and_spares_tor(ns_sandbox, ttp_
     ns, loop = ns_sandbox
     _engine().load(ttp_ruleset, ns.name)
 
-    before = observe(ns, loop, _two_lan_probes, settle=0.5)
-    assert canary_seen(before, HOST_V4, CANARY_PORT), (
+    tor, user = _two_lan_probes()
+    before = observe(ns, loop, in_sequence(tor, user), settle=0.5)
+    assert stimuli.requests_in(user.last, before), (
         f"CONTROL FAILED: the bypassed UID could not reach {HOST_V4}:{CANARY_PORT} "
         f"*before* any lockdown was applied ({len(before)} packet(s) captured). "
         f"The assertion below would then pass because the bypass never worked, "
         f"not because the lockdown closed it."
     )
-    assert canary_seen(before, HOST_V4, TOR_CANARY_PORT), (
+    assert stimuli.requests_in(tor.last, before), (
         f"CONTROL FAILED: the Tor UID could not reach {HOST_V4}:{TOR_CANARY_PORT} "
         f"before any lockdown was applied ({len(before)} packet(s) captured)."
     )
@@ -1581,9 +1485,9 @@ def test_the_teardown_lockdown_closes_the_bypass_and_spares_tor(ns_sandbox, ttp_
     with ttp_nft_inside(ns.name):
         apply_teardown_lockdown(TOR_UID)
 
-    during = observe(ns, loop, _two_lan_probes, settle=0.5)
+    during = observe(ns, loop, in_sequence(tor, user), settle=0.5)
 
-    assert canary_seen(during, HOST_V4, TOR_CANARY_PORT), (
+    assert stimuli.requests_in(tor.last, during), (
         f"the teardown lockdown blocked the Tor UID it explicitly exempts: no "
         f"packet to {HOST_V4}:{TOR_CANARY_PORT} was observed "
         f"({len(during)} packet(s) captured). do_stop applies this rule before "
@@ -1592,7 +1496,7 @@ def test_the_teardown_lockdown_closes_the_bypass_and_spares_tor(ns_sandbox, ttp_
         f"means the assertion below cannot be trusted: a capture that sees nothing "
         f"at all reads as a lockdown that worked."
     )
-    assert not canary_seen(during, HOST_V4, CANARY_PORT), (
+    assert not stimuli.requests_in(user.last, during), (
         f"the teardown lockdown did not close the bypass: traffic from UID 1000 "
         f"still reached {HOST_V4}:{CANARY_PORT} while the lockdown rule was "
         f"installed. Everything TTP is configured to permit stays permitted "
@@ -1650,6 +1554,75 @@ def test_a_flushed_ruleset_leaks_everything(ns_sandbox) -> None:
         f"the harness cannot observe a leak even with NO firewall loaded. "
         f"Captured {len(captured)} packet(s) on {ns.ext_iface}. Every other "
         f"assertion in this module is vacuous until this passes."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Deliberately blind instruments
+#
+# Every containment assertion above reads an absence, and an absence is also
+# what a broken instrument produces. Each test here breaks one instrument on
+# purpose and requires the harness to say so, instead of reporting
+# containment. If one of these passes for the wrong reason -- or stops
+# failing where it should -- the green results above stop meaning anything.
+# ---------------------------------------------------------------------------
+
+
+def test_a_capture_on_the_wrong_interface_fails_the_positive_control(ns_sandbox, ttp_ruleset) -> None:
+    """A capture on the wrong interface is a complete window that saw nothing.
+
+    On its own that reads exactly like containment. The positive control, which
+    needs this run's probe on the wire with the firewall flushed, is what must
+    refuse it.
+    """
+    ns, loop = ns_sandbox
+    with pytest.raises(AssertionError, match="POSITIVE CONTROL FAILED"):
+        assert_contained(ns, loop, ttp_ruleset, udp_to(WAN_V4, 4242), "UDP behind a blind capture", iface="lo")
+
+
+def test_a_capture_that_goes_blind_after_the_control_fails_at_the_canary(ns_sandbox, ttp_ruleset) -> None:
+    """The control proves the instrument worked a moment ago, not that it still does.
+
+    Here the window that carries the assertion looks at the wrong interface.
+    The canary, sent after the probe in that same window, is what must fail.
+    """
+    ns, loop = ns_sandbox
+    _engine().load(ttp_ruleset, ns.name)
+    with pytest.raises(AssertionError, match="HARNESS FAILED for a blind window"):
+        observe_with_canary(ns, loop, udp_to(WAN_V4, 4242), "a blind window", iface="lo")
+
+
+def test_a_stimulus_that_cannot_run_is_not_read_as_containment(ns_sandbox, ttp_ruleset) -> None:
+    """No interpreter, no packet: the absence that follows must not count.
+
+    The probe's interpreter does not exist, so nothing is ever sent. The
+    harness must stop at the probe, not go on to observe a clean window.
+    """
+    ns, loop = ns_sandbox
+    broken = Probe(stimuli.udp(WAN_V4, 4242), python="/nonexistent/python3")
+    with pytest.raises(RuntimeError, match="could not run"):
+        assert_contained(ns, loop, ttp_ruleset, broken, "UDP from a probe that cannot run")
+    assert not broken.results, "a probe that could not run must leave no result to assert on"
+
+
+def test_the_canary_is_its_own_probe_not_its_destination(ns_sandbox, ttp_ruleset) -> None:
+    """Traffic to the canary's address and port must not stand in for the canary.
+
+    A canary matched by destination alone is satisfied by any packet to
+    10.0.1.1:9999, including one from a previous window. Matched by probe ID,
+    a capture that holds an earlier canary's datagram but not this one's
+    still fails.
+    """
+    ns, loop = ns_sandbox
+    _engine().load(ttp_ruleset, ns.name)
+    earlier, current = canary_stimulus(), canary_stimulus()
+    packets = observe(ns, loop, earlier)
+    loop.run_until_complete(current.arun(ns))  # sent outside any capture window
+
+    assert stimuli.requests_in(earlier.last, packets), earlier.last.describe()
+    assert earlier.last.probe_id != current.last.probe_id
+    assert not stimuli.requests_in(current.last, packets), (
+        "a packet from an earlier canary was accepted as this canary: the match is by destination, not by probe ID"
     )
 
 
