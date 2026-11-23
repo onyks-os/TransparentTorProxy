@@ -37,7 +37,7 @@ SPDX-License-Identifier: MIT
 ---
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/onyks-os/TransparentTorProxy/main/assets/gif/demo_2.0.gif" alt="TTP Demo">
+  <img src="https://raw.githubusercontent.com/onyks-os/TransparentTorProxy/main/assets/gif/demo.gif" alt="TTP 0.5.1 demo: sudo ttp start, sudo ttp check, sudo ttp stop">
 </p>
 
 ---
