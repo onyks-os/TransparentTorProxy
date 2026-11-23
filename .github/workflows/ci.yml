@@ -205,13 +205,15 @@ jobs:
     # excluded from the default pytest run. A claim nothing executes is not a
     # measurement.
     #
-    # Requires network-sandbox-engine >= 2.4.0. Below 2.1.0, the engine could
+    # Requires network-sandbox-engine >= 2.5.1. Below 2.1.0, the engine could
     # report a clean result from an oracle that observed nothing, so a green run
     # here would prove nothing about the firewall; below 2.1.2, its capture
     # filter hid routable ICMPv6; below 2.2.0, a capture could start before it
     # listened and drop packets unreported; below 2.3.0, the round-trip echo
     # had to share the host's namespace and its firewall; below 2.4.0, probes
-    # carried no ID, so the canary was any packet to its address and port. tests/test_nse_rules.py
+    # carried no ID, so the canary was any packet to its address and port;
+    # below 2.5.1, no beacon proved a capture watched the sandbox's link at the
+    # end of its window. tests/test_nse_rules.py
     # refuses to run against an older NSE rather than producing a false pass.
     name: Zero-leak ruleset verification (NSE)
     needs: unit-tests

@@ -132,7 +132,7 @@ What they assert and what they found is in section 4.3 of the
 
 ## The dependency, and why it is pinned hard
 
-`network-sandbox-engine>=2.4.0,<3`. The floor is not a preference.
+`network-sandbox-engine>=2.5.1,<3`. The floor is not a preference.
 
 Before 2.1.0 the engine's own test runner reported PASSED when its oracle had
 observed nothing, and its kernel trace monitor could stop reading mid-run without
@@ -151,7 +151,13 @@ probe was a script the suite wrote itself, and the canary that proves a capture
 window was open was any packet to its address and port. Each probe is now an NSE
 stimulus that carries a probe ID and reports a typed outcome, so the canary and
 the positive control match their own packet, and a probe that could not run stops
-the test instead of leaving an empty capture behind. A green result from an engine below
+the test instead of leaving an empty capture behind. Before 2.5.1 (2.5.0 never
+reached PyPI) nothing proved a capture was still watching the sandbox's link when
+its window closed; every window now ends with a beacon, an Ethernet frame the
+sandbox sends that no IP rule touches, and a capture that missed it is refused.
+The same release matches a probe by its ID after a DNAT rewrote its destination,
+so the DNAT positive controls require their own packet, and traces the rules a
+process's own packets meet, with readiness proven by a canary's own trace. A green result from an engine below
 the floor would not have been evidence of
 anything - the same defect as the one described at the top of this page, one
 layer down. TTP refuses to run this suite against an older engine rather than
