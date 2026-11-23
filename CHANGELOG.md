@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- The lifecycle VM's capture reader (`scripts/vm/lifecycle/egress.py`) no longer
+  reports a capture it cannot vouch for as clean. An empty or cut-short pcap
+  used to read as "0 probe packets", which `run.sh` passed as contained; it is
+  now inconclusive, as is a non-Ethernet file, a frame snapped below its
+  addresses and any layout the reader does not parse (a VLAN tag, an unknown
+  EtherType). Every scenario must also show the guest's own SSH traffic in the
+  same window, so a window of replies only, or of nothing, fails instead of
+  passing. Non-first IPv4 fragments no longer have a port read from their
+  payload, and IPv6 extension headers are walked to the transport header
+  (O02 of the leak-testing plan).
+
 - The zero-leak suite builds every probe on NSE 2.4.0's stimuli instead of
   scripts it wrote itself; the `nse` extra now requires
   `network-sandbox-engine>=2.4.0`. Each probe carries a probe ID, so the

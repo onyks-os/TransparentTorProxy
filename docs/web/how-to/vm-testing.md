@@ -104,6 +104,12 @@ the distribution's published checksum list; the list's signature is not checked)
 installs TTP from the working tree, and writes `results.txt`, one capture per phase
 and state snapshots into `$VM_WORK`. `scripts/vm/lifecycle/egress.py <file.pcap>`
 summarises a capture by destination; it streams the file, so size is not a concern.
+A capture it cannot vouch for is never summarised as clean: an empty, cut-short or
+non-Ethernet file, a frame snapped below its addresses, or a layout it does not parse
+(a VLAN tag, an unknown EtherType) prints `INCONCLUSIVE: <reason>` and exits 2. Each
+scenario also requires the guest's own SSH traffic in the same window
+(`--require-control`), so a window that saw only replies, or nothing, fails as
+inconclusive instead of passing as contained.
 Transient download errors receive up to three retries. Downloads remain bounded
 by connection/transfer timeouts; checksum mismatches still fail the run.
 Guest readiness requires successful `cloud-init` completion. A timeout or error

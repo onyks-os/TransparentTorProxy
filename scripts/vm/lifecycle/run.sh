@@ -33,7 +33,25 @@ check() { # check <name> <pass|fail> <detail>
     [ "$2" = pass ] || FAILED=1
 }
 
-hits() { python3 "$HERE/egress.py" "$VM_WORK/$1.pcap" --net "${2:-10.0.2.0/24}" --hits "$PROBE_DST"; }
+# Probe packets in capture $1, or "inconclusive" when the capture cannot support a
+# verdict: empty, cut short, unparseable, or without the guest's own SSH control
+# traffic. egress.py's reason is kept in $1.egress.err and quoted by inconclusive().
+hits() {
+    python3 "$HERE/egress.py" "$VM_WORK/$1.pcap" --net "${2:-10.0.2.0/24}" --hits "$PROBE_DST" \
+        --require-control 2>"$VM_WORK/$1.egress.err" || echo inconclusive
+}
+
+# Fail scenario $3 when capture $1 was inconclusive. Never a pass: a capture that
+# saw nothing is exactly what containment looks like.
+inconclusive() { # inconclusive <capture> <hits> <scenario>
+    [ "$2" = inconclusive ] || return 1
+    check "$3" fail "capture inconclusive: $(tr '\n' ' ' <"$VM_WORK/$1.egress.err")"
+}
+
+# Guest-originated traffic inside the capture window that TTP never touches (the
+# reply side of our own SSH session), so egress.py --require-control can tell a
+# capture that sees the guest from one that sees nothing.
+control_beacon() { vm_ssh true; }
 
 probe_start() { # the probe runs as the unprivileged, non-bypassed login user
     vm_ssh "sudo systemd-run --quiet --uid=ttp --unit=ttp-probe python3 /usr/local/lib/ttp-probe.py"
@@ -73,9 +91,12 @@ vm_ssh 'sudo tee /usr/local/lib/ttp-probe.py >/dev/null' <"$HERE/probe.py"
 probe_start
 vm_capture_start c0-control
 sleep 5
+control_beacon
 vm_capture_stop
 n="$(hits c0-control)"
-if [ "$n" -gt 0 ]; then
+if inconclusive c0-control "$n" "positive control (no TTP)"; then
+    exit 1
+elif [ "$n" -gt 0 ]; then
     check "positive control (no TTP)" pass "$n probe packet(s) seen"
 else
     check "positive control (no TTP)" fail "0 probe packets: the capture is not measuring, nothing below means anything"
@@ -86,9 +107,12 @@ fi
 ttp_start
 vm_capture_start s1-session
 sleep 10
+control_beacon
 vm_capture_stop
 n="$(hits s1-session)"
-if [ "$n" -eq 0 ]; then
+if inconclusive s1-session "$n" "active session"; then
+    :
+elif [ "$n" -eq 0 ]; then
     check "active session" pass "0 probe packets"
 else
     check "active session" fail "$n probe packet(s) escaped"
@@ -99,7 +123,9 @@ vm_capture_start s2-poweroff
 vm_ssh 'sudo systemctl poweroff' || true
 vm_wait_exit 180
 n="$(hits s2-poweroff)"
-if [ "$n" -eq 0 ]; then
+if inconclusive s2-poweroff "$n" "poweroff with active session"; then
+    :
+elif [ "$n" -eq 0 ]; then
     check "poweroff with active session" pass "0 probe packets until power-off"
 else
     check "poweroff with active session" fail "$n probe packet(s) escaped while shutting down"
@@ -129,7 +155,9 @@ else
     check "reboot leaves one defined state" fail "partial session state after reboot, see state-after-reboot.txt"
 fi
 n="$(hits s3-reboot)"
-if [ "$n" -gt 0 ]; then
+if inconclusive s3-reboot "$n" "after reboot the host is in cleartext"; then
+    :
+elif [ "$n" -gt 0 ]; then
     check "after reboot the host is in cleartext" pass "$n probe packet(s): expected, recorded"
 else
     check "after reboot the host is in cleartext" fail "0 probe packets after reboot: capture not measuring"
@@ -148,7 +176,9 @@ sleep 15
 vm_capture_stop
 snapshot after-resume
 n="$(hits s4-resume-newnet 192.168.77.0/24)"
-if [ "$n" -eq 0 ]; then
+if inconclusive s4-resume-newnet "$n" "resume onto a new network"; then
+    :
+elif [ "$n" -eq 0 ]; then
     check "resume onto a new network" pass "0 probe packets"
 else
     check "resume onto a new network" fail "$n probe packet(s) escaped after resume"
