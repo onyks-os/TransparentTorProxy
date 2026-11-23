@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- `assets/social-preview.png`, the image GitHub shows when the repository is
+  linked, and `assets/gif/demo.tape`, which re-records the README demo from a
+  real session with VHS. The current GIF predates 0.5.0's output.
+
 ## [0.5.1] - 2026-11-21
 
 Maintenance. Missing Tor or a missing pluggable transport is now a failure
