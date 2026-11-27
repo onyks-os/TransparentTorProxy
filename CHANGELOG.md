@@ -28,14 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raises, so an `nft` or `systemctl` call in flight finishes unwinding before
   the undo starts.
 
-### Documentation
-
-- [Startup phases and their failure
-  contract](https://onyks-os.github.io/ttp/explanation/startup/) states what
-  each phase of `ttp start` changes, where the first barrier falls and what a
-  failure or an interruption leaves behind. It is the L01 contract of the
-  leak-testing plan.
-
 ### Tests
 
 - The lifecycle VM's capture reader (`scripts/vm/lifecycle/egress.py`) no longer
@@ -76,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses to run a probe as another UID.
 
 ### Documentation
+
+- [Startup phases and their failure
+  contract](https://onyks-os.github.io/ttp/explanation/startup/) states what
+  each phase of `ttp start` changes, where the first barrier falls and what a
+  failure or an interruption leaves behind. It is the L01 contract of the
+  leak-testing plan.
 
 - `assets/social-preview.png`, the image GitHub shows when the repository is
   linked, and `assets/gif/demo.tape`, which re-records the README demo from a
