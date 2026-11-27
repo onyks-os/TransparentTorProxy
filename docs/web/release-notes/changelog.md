@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- The `nse` extra requires `network-sandbox-engine>=2.5.2`. Each rule load in
+  the zero-leak suite used to add another copy of NSE's trace rules to the
+  namespace, so every traced packet repeated them once per load. The
+  untraced-load test now also requires NSE to name the missing output trace
+  chain as the reason readiness is unproven.
+
 - The lifecycle VM's capture reader (`scripts/vm/lifecycle/egress.py`) no longer
   reports a capture it cannot vouch for as clean. An empty or cut-short pcap
   used to read as "0 probe packets", which `run.sh` passed as contained; it is
