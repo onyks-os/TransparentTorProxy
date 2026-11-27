@@ -91,9 +91,11 @@ IS_ROOT = os.geteuid() == 0
 #: adds the stimuli, probe IDs and receivers every probe here is built on.
 #: 2.5.1 adds the window beacons every capture here expects, NAT-aware probe
 #: matching and output-path tracing with a canary-proven readiness check (2.5.0
-#: never reached PyPI). Verdicts from an older engine are not evidence, so
+#: never reached PyPI). 2.5.2 stops each load from stacking another copy of
+#: NSE's trace rules, and says why a readiness could not be proven. Verdicts
+#: from an older engine are not evidence, so
 #: refuse to produce them.
-MIN_NSE_VERSION = (2, 5, 1)
+MIN_NSE_VERSION = (2, 5, 2)
 
 
 def _nse_version() -> tuple[int, ...]:
@@ -1640,6 +1642,8 @@ def test_a_trace_without_a_proven_monitor_is_refused(ns_sandbox, ttp_ruleset) ->
     RuleEngine(use_nsenter=True).load(ttp_ruleset, ns.name)  # no output trace chain
     readiness, state, _events = observe_trace(ns, loop, udp_to(WAN_V4, 53))
     assert not readiness.ready, readiness.describe()
+    # And NSE names the cause, not just the absence of a canary trace.
+    assert any("no output chain" in problem for problem in readiness.problems), readiness.problems
     with pytest.raises(AssertionError, match="HARNESS FAILED for an untraced load"):
         assert_trace_usable(readiness, state, "an untraced load")
 

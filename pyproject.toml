@@ -46,7 +46,7 @@ dev = [
     "cyclonedx-python-lib[json-validation]>=11.0.0",
 ]
 nse = [
-    # 2.5.1 is the floor, not a preference. Before 2.1.0, the NSE runner reported
+    # 2.5.2 is the floor, not a preference. Before 2.1.0, the NSE runner reported
     # PASSED when its oracle observed nothing, and the trace monitor could stop
     # reading mid-run without saying so - which would make TTP's zero-leak suite
     # green against an instrument that was not measuring. Before 2.1.2, the
@@ -64,9 +64,11 @@ nse = [
     # never reached PyPI), a capture could not prove it was watching the
     # sandbox's link at the end of a window, a probe rewritten by a DNAT no
     # longer matched its own probe ID, and tracing a process's own packets
-    # needed a chain TTP added by hand. The upper bound is a real bound: 2.0.0 already rewrote
+    # needed a chain TTP added by hand. Before 2.5.2, every rule load added
+    # another copy of NSE's trace rules to the namespace, and an untraced
+    # readiness gave no reason. The upper bound is a real bound: 2.0.0 already rewrote
     # run_test_pipeline's signature once.
-    "network-sandbox-engine>=2.5.1,<3",
+    "network-sandbox-engine>=2.5.2,<3",
     "pyroute2",
 ]
 
