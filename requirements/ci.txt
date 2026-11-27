@@ -1078,9 +1078,9 @@ mypy-extensions==1.2.0 \
     --hash=sha256:993e7a20aa5671eb41a7132cf555af30062da99729601601b9a8382b11cae768 \
     --hash=sha256:c6e275a07f1c2fc096b62940452d0eaa3f3af7de45d704787866240a7c6d5a51
     # via mypy
-network-sandbox-engine==2.5.1 \
-    --hash=sha256:94024b2062cf68670d850d606977e3ec3bd557c0692290aeae9e891d0075b2e8 \
-    --hash=sha256:f6172cd025d9cdf2b11d5be9c84f9f74371ec6c9d0ebba018a3e87ee6e481dc0
+network-sandbox-engine==2.5.2 \
+    --hash=sha256:9945b2ec53b6c32a46484f5a3f874bb7e86b520ec36c63f0d3c69541d3e572f7 \
+    --hash=sha256:da1f48a15b674f93ac0550d879407c5f4c4d0919ca67ef55eb4f0a672df4e4a2
     # via transparent-tor-proxy (pyproject.toml)
 nh3==0.3.8 \
     --hash=sha256:088eddcb226811214be26cd8077e8aaee6b93561db9eb2c39dc1af29e9b9c4f6 \
