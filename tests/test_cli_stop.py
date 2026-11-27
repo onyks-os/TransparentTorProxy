@@ -57,9 +57,7 @@ def test_partial_vpn_start_requires_explicit_restore(tmp_path, monkeypatch):
     monkeypatch.setattr("ttp.state.read_lock", lambda **kw: None)
     result = runner.invoke(app, ["stop"])
     assert result.exit_code == 10 and "restore-only" in result.output
-    with pytest.raises(SystemExit) as stopped:
-        lifecycle.signal_handler(2, None)
-    assert stopped.value.code == 10
+    assert lifecycle.finish_interrupted_start() == 10
 
 
 @pytest.fixture(autouse=True)
@@ -546,16 +544,32 @@ def test_do_stop_survives_a_watchdog_that_will_not_stop():
     delete_lock.assert_called_once()
 
 
-def test_signal_handler_tears_down_and_exits_zero():
-    """SIGINT/SIGTERM during a foreground session must restore the network."""
+def test_the_signal_handler_only_raises():
+    """It runs between two bytecodes of start, maybe while an nft child still runs.
+
+    Tearing down there could destroy the table before that child loads it, so
+    the handler changes nothing: interruptible_start undoes the start once the
+    in-flight call has unwound.
+    """
     with (
         patch("ttp.commands.lifecycle.do_stop") as do_stop,
-        pytest.raises(SystemExit) as exc,
+        patch("ttp.commands.lifecycle.restore_without_session") as restore,
+        pytest.raises(lifecycle.StartInterrupted) as interrupted,
     ):
         lifecycle.signal_handler(15, None)
 
+    assert interrupted.value.signum == 15
+    do_stop.assert_not_called()
+    restore.assert_not_called()
+
+
+def test_an_interrupted_recorded_start_stops_the_session_and_exits_one(monkeypatch):
+    """The network is restored, and start does not report a session it never finished."""
+    monkeypatch.setattr("ttp.state.read_lock", lambda **kw: {"session_id": "s", "pid": 1})
+    monkeypatch.setattr("ttp.session_safety.emergency_latched", lambda lock: False)
+    with patch("ttp.commands.lifecycle.do_stop") as do_stop:
+        assert lifecycle.finish_interrupted_start() == 1
     do_stop.assert_called_once()
-    assert exc.value.code == 0
 
 
 @pytest.mark.parametrize("restore", [False, True])

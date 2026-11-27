@@ -1468,3 +1468,112 @@ def test_start_notification_and_degraded_outcomes(mock_write, mock_firewall, moc
     if scenario == "recipient_missing":
         agent.assert_not_called()
         assert "notifications.recipient_unavailable" in result.output
+
+
+# interrupted start (L01)
+
+
+def _interrupt(*args, **kwargs):
+    """SIGINT arriving inside whatever start is doing at that moment."""
+    from ttp.commands import lifecycle
+
+    lifecycle.signal_handler(2, None)
+
+
+@pytest.fixture
+def undo_mocks(monkeypatch):
+    """What `stop --restore-only` touches, recorded instead of run."""
+    from ttp.runtime_records import RecordStore
+
+    mocks = types.SimpleNamespace(
+        destroy=MagicMock(), restore_dns=MagicMock(), stop_tor=MagicMock(), close=MagicMock(return_value=0)
+    )
+    monkeypatch.setattr("ttp.firewall.destroy_rules", mocks.destroy)
+    monkeypatch.setattr("ttp.dns.restore_dns", mocks.restore_dns)
+    monkeypatch.setattr("ttp.tor_install.stop_tor_service", mocks.stop_tor)
+    monkeypatch.setattr("ttp.firewall.close_redirected_sockets", mocks.close)
+    monkeypatch.setattr("ttp.tor_control.graceful_shutdown", MagicMock(return_value=False))
+    monkeypatch.setattr("ttp.watchdog.stop_watchdog", MagicMock())
+    monkeypatch.setattr("ttp.state.delete_lock", MagicMock())
+    monkeypatch.setattr("ttp.state.write_stop_marker", MagicMock())
+    store = MagicMock(spec=RecordStore)
+    monkeypatch.setattr("ttp.runtime_records.session_store", lambda: store)
+    return mocks
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        pytest.param("ttp.tor_install.ensure_tor_ready", id="tor-setup"),
+        pytest.param("ttp.firewall.runner._run_nft_string", id="rules-load"),
+        pytest.param("ttp.dns.apply_dns", id="dns-overlay"),
+    ],
+)
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
+def test_a_start_interrupted_before_its_session_is_recorded_is_undone(
+    _pw, _nft, target, undo_mocks, mock_base_start, monkeypatch
+):
+    """Ctrl-C or SIGTERM between Tor setup and the session record.
+
+    The handler used to call do_stop, which returns at once without a lock: the
+    table, the overlay and Tor stayed, `ttp stop` said "No active session
+    found", `ttp status` said INACTIVE, and start exited 0, so a script that
+    trusted it ran on believing it was protected. Now everything start did is
+    undone as `stop --restore-only` would, and it exits 1.
+    """
+    # patch(), not monkeypatch: mock_base_start patches some of these targets,
+    # and monkeypatch would put its mock back after the fixture removed it.
+    with patch("ttp.firewall.runner._run_nft_string"), patch(target, side_effect=_interrupt):
+        result = runner.invoke(app, ["start"])
+
+    assert result.exit_code == 1, result.output
+    assert "undoing its changes" in result.output
+    assert "Network restored" in result.output
+    # Before removing the rules, as stop does: a redirected connection opened
+    # during the start must not retransmit in cleartext once they are gone.
+    assert undo_mocks.close.call_count == 1
+    assert undo_mocks.destroy.call_count == 1
+    assert undo_mocks.stop_tor.call_count == 1
+    # The overlay may be half applied: it is found on the host, not in a backup.
+    undo_mocks.restore_dns.assert_called_once_with(None)
+
+
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
+@patch("ttp.state.write_lock")
+def test_a_start_interrupted_after_its_session_is_recorded_stops_it(
+    _write, _pw, _nft, _nfts, undo_mocks, mock_base_start, monkeypatch
+):
+    """Interrupted during verification: the recorded session is stopped, and start exits 1, not 0."""
+    monkeypatch.setattr("ttp.session_safety.emergency_latched", lambda lock: False)
+    stop = MagicMock()
+    monkeypatch.setattr("ttp.commands.lifecycle.do_stop", stop)
+
+    with patch("ttp.commands.start._verify_tor", side_effect=_interrupt):
+        result = runner.invoke(app, ["start", "--no-watchdog"])
+
+    assert result.exit_code == 1, result.output
+    stop.assert_called_once()
+    assert "Session active" not in result.output
+
+
+@patch("ttp.firewall.runner._run_nft_string")
+@patch("ttp.firewall.runner._run_nft")
+@patch("ttp.firewall.runner.pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=110))
+@patch("ttp.state.write_lock")
+def test_an_interrupted_start_with_latched_emergency_keeps_it(
+    _write, _pw, _nft, _nfts, undo_mocks, mock_base_start, monkeypatch
+):
+    """Emergency containment holds until an explicit `ttp stop`, Ctrl-C included."""
+    monkeypatch.setattr("ttp.session_safety.emergency_latched", lambda lock: True)
+    stop = MagicMock()
+    monkeypatch.setattr("ttp.commands.lifecycle.do_stop", stop)
+
+    with patch("ttp.commands.start._verify_tor", side_effect=_interrupt):
+        result = runner.invoke(app, ["start", "--no-watchdog"])
+
+    assert result.exit_code == 8, result.output
+    stop.assert_not_called()
+    assert undo_mocks.destroy.call_count == 0

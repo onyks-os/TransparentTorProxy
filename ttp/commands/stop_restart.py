@@ -6,11 +6,10 @@ from typing import Optional
 
 import typer
 
-from ttp import dns, firewall, state, tor_install
+from ttp import state
 from ttp.commands._common import (
     _PREFIX,
     console,
-    logger,
     require_systemd,
 )
 from ttp.commands._common import (
@@ -18,6 +17,7 @@ from ttp.commands._common import (
 )
 from ttp.commands._preflight import require_dnssec_compatibility
 from ttp.commands.lifecycle import do_stop as _do_stop
+from ttp.commands.lifecycle import restore_without_session
 from ttp.commands.start import start_command
 
 
@@ -32,63 +32,10 @@ def stop_command(
     _require_root()
 
     if restore_only:
-        from ttp.runtime_records import session_store
         from ttp.session_safety import STOP_ADVICE
 
         console.print(f"{_PREFIX} {STOP_ADVICE}")
-        # Explicit restoration also works after lost/corrupt session intent.
-        # Persist it before stopping services, including their ExecStopPost.
-        state.ensure_runtime_dir()
-        store = session_store()
-        store.prepare()
-        with store.transition():
-            state.write_stop_marker("*")
-        console.print(f"{_PREFIX} Forcing network restoration (restore-only)...")
-
-        # Stop watchdog first. The import is inside the try: restoration must not
-        # depend on the watchdog package importing (see do_stop).
-        try:
-            from ttp import watchdog as wd
-
-            wd.stop_watchdog()
-        except Exception as e:
-            logger.warning("Could not stop the watchdog, continuing restoration: %s", e)
-
-        # Graceful shutdown even in restore-only mode
-        from ttp import tor_control
-
-        tor_control.graceful_shutdown(timeout=10)
-        tor_install.stop_tor_service()
-        from ttp.commands.lifecycle import close_redirected_or_retain
-
-        close_redirected_or_retain(state.read_lock())
-        firewall.destroy_rules()
-
-        lock = state.read_lock()
-        if lock:
-            tor_install.unlabel_ports_selinux(
-                lock.get("transport_port", 9041),
-                lock.get("dns_port", 9054),
-            )
-            dns.restore_dns(lock.get("dns_backup"))
-        else:
-            dns.restore_dns(None)
-
-        from ttp.vpn_guard import INTENT
-
-        if (lock and lock.get("vpn")) or INTENT.exists():
-            from ttp.vpn import VPNError
-            from ttp.vpn_guard import release_after_stop
-
-            try:
-                release_after_stop()
-            except VPNError as exc:
-                from ttp.commands._common import print_error
-
-                print_error("VPN Protection Retained", str(exc))
-                raise typer.Exit(code=8)
-        state.delete_lock()
-        console.print(f"{_PREFIX} [bold red]Network restored. Traffic in cleartext.[/]")
+        lock = restore_without_session()
         if lock:
             from ttp.commands._common import print_error
             from ttp.notifications.service import finish_notifications

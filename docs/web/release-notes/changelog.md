@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `ttp start` interrupted with Ctrl-C or SIGTERM before it recorded its session
+  undid nothing and exited `0`. It printed "Signal received, restoring
+  network...", but the nftables table, the DNS overlay and the managed Tor
+  stayed in place. `ttp status` then reported `INACTIVE`, `ttp stop` reported
+  that no session was found, and a script that trusted the `0` believed the
+  host was protected. The start is now undone as `ttp stop --restore-only`
+  would undo it, including closing connections redirected during the start
+  before the rules go, and it exits `1`. Interrupted after the session was
+  recorded, start still stops the session, but now exits `1` instead of `0`.
+  A latched emergency (exit `8`) and a retained VPN guard (exit `10`) are kept
+  as before. The signal handler no longer tears anything down itself: it
+  raises, so an `nft` or `systemctl` call in flight finishes unwinding before
+  the undo starts.
+
+### Documentation
+
+- [Startup phases and their failure
+  contract](https://onyks-os.github.io/ttp/explanation/startup/) states what
+  each phase of `ttp start` changes, where the first barrier falls and what a
+  failure or an interruption leaves behind. It is the L01 contract of the
+  leak-testing plan.
+
 ### Tests
 
 - The lifecycle VM's capture reader (`scripts/vm/lifecycle/egress.py`) no longer

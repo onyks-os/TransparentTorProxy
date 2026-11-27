@@ -111,6 +111,7 @@ nav:
       - Security and Quality Findings: how-to/security-quality.md
   - Explanation:
       - Architecture & Flow: explanation/architecture.md
+      - Startup Phases & Failures: explanation/startup.md
       - Session Watchdog: explanation/watchdog-fsm.md
       - Zero-Leak Verification: explanation/verification.md
       - Security & Threat Model: explanation/security-assessment.md

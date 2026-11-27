@@ -204,7 +204,7 @@ security promise against applications holding raw-packet capabilities.
 | N03 / P1 | Competing-ruleset NSE + VM | Existing Docker/UFW/firewalld/WireGuard shapes; reload real firewall managers during traffic | Distinguish coexistence from destructive removal; rule-specific mutation detects regressions; recovery cannot hide initial exposure |
 
 L01 requires documenting the intended failure contract before assigning pass
-criteria to rollback. The plan does not silently change a failed start into a
+criteria to rollback. That contract is [Startup phases and their failure contract](../web/explanation/startup.md). The plan does not silently change a failed start into a
 persistent lockdown feature. Keep full-capture diagnostics even for failures
 that occur before the normal session lock exists.
 
