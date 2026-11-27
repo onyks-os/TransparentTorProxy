@@ -48,6 +48,41 @@ apply. NetworkManager's selected peer must have full-tunnel AllowedIPs, a live
 nonzero WireGuard fwmark, and consistent kernel settings. TTP refuses ambiguous
 or changed evidence instead of rewriting the profile or routing policy.
 
+## Bring a WireGuard configuration into NetworkManager
+
+Most providers hand out a `wg-quick` file (`wg0.conf` below). TTP does not read
+it; NetworkManager can import it. Check three lines first, because TTP refuses
+a profile that does not meet them:
+
+```bash
+grep -iE '^(Endpoint|AllowedIPs)|^\[Peer\]' wg0.conf
+```
+
+- **One `[Peer]` only.**
+- **`Endpoint` is a numeric address and port**, such as `203.0.113.5:51820` or
+  `[2001:db8::5]:51820`. A hostname is refused ("VPN requires a stable numeric
+  endpoint"). Resolve it with `getent ahosts vpn.example.net`, choose one
+  address, and write it in place of the name. If the provider later moves that
+  address, the tunnel stops connecting and you repeat this step; TTP never
+  falls back to the name.
+- **`AllowedIPs` is the full tunnel**: `0.0.0.0/0`, plus `::/0` unless you
+  will start with `--no-ipv6`. A list of networks is a split tunnel, which is
+  refused.
+
+Import it, give it a WireGuard firewall mark (TTP requires a nonzero one, and
+the qualified profile sets it explicitly), and bring it up:
+
+```bash
+sudo nmcli connection import type wireguard file wg0.conf
+sudo nmcli connection modify wg0 wireguard.fwmark 51820
+sudo nmcli connection up wg0
+```
+
+The connection and its interface take the file's name, so keep it to 15
+characters. The file contains your `PrivateKey`. NetworkManager now keeps its
+own root-only copy, so delete the original or keep it with mode `0600`. Never
+share `nmcli --show-secrets` output.
+
 ## Start the session
 
 Configure and activate the VPN using your existing trusted workflow. TTP does

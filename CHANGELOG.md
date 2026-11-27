@@ -53,6 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- The VPN guide shows how to import a provider's WireGuard file into
+  NetworkManager, and what to check first. It must have one peer, a numeric
+  endpoint (with how to replace a hostname) and a full-tunnel `AllowedIPs`. The
+  guide also shows the explicit firewall mark TTP requires and how to handle
+  the private key the file contains.
+
 - `assets/social-preview.png`, the image GitHub shows when the repository is
   linked, and `assets/gif/demo.tape`, which re-records the README demo from a
   real session with VHS. The README demo is re-recorded with it from a real
