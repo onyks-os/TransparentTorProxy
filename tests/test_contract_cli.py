@@ -162,9 +162,7 @@ def test_interrupt_does_not_remove_latched_or_unknown_protection(monkeypatch, un
     )
     stop = Mock()
     monkeypatch.setattr(lifecycle, "do_stop", stop)
-    with pytest.raises(SystemExit) as error:
-        lifecycle.signal_handler(2, None)
-    assert error.value.code == 8
+    assert lifecycle.finish_interrupted_start() == 8
     stop.assert_not_called()
 
 

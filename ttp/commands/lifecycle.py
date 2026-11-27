@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+import functools
 import signal
 import subprocess
-import sys
 import time
+from collections.abc import Callable
+from typing import Any
 
 from ttp import dns, firewall, state, tor_install
 from ttp.commands._common import (
@@ -181,21 +183,136 @@ def do_stop() -> None:
         raise typer.Exit(code=int(result.exit_code))
 
 
+def restore_without_session() -> dict | None:
+    """Restore the network without trusting a session record: ``stop --restore-only``.
+
+    Everything is derived from the host, not from the lock: the managed Tor is
+    stopped, redirected connections are closed while the rules still hold them
+    (or the rules are retained, exit 8), the table is destroyed, the DNS overlay
+    is unmounted and a retained VPN guard is released. Also undoes a ``ttp
+    start`` interrupted before it recorded its session. Returns the lock it
+    found, if any, so the caller can finish its notifications.
+    """
+    import typer
+
+    from ttp import tor_control
+    from ttp.runtime_records import session_store
+
+    # Explicit restoration also works after lost/corrupt session intent.
+    # Persist it before stopping services, including their ExecStopPost.
+    state.ensure_runtime_dir()
+    store = session_store()
+    store.prepare()
+    with store.transition():
+        state.write_stop_marker("*")
+    console.print(f"{_PREFIX} Forcing network restoration (restore-only)...")
+
+    # Stop watchdog first. The import is inside the try: restoration must not
+    # depend on the watchdog package importing (see do_stop).
+    try:
+        from ttp import watchdog as wd
+
+        wd.stop_watchdog()
+    except Exception as e:
+        logger.warning("Could not stop the watchdog, continuing restoration: %s", e)
+
+    # Graceful shutdown even in restore-only mode
+    tor_control.graceful_shutdown(timeout=10)
+    tor_install.stop_tor_service()
+    close_redirected_or_retain(state.read_lock())
+    firewall.destroy_rules()
+
+    lock = state.read_lock()
+    if lock:
+        tor_install.unlabel_ports_selinux(
+            lock.get("transport_port", 9041),
+            lock.get("dns_port", 9054),
+        )
+        dns.restore_dns(lock.get("dns_backup"))
+    else:
+        dns.restore_dns(None)
+
+    from ttp.vpn_guard import INTENT
+
+    if (lock and lock.get("vpn")) or INTENT.exists():
+        from ttp.vpn import VPNError
+        from ttp.vpn_guard import release_after_stop
+
+        try:
+            release_after_stop()
+        except VPNError as exc:
+            from ttp.commands._common import print_error
+
+            print_error("VPN Protection Retained", str(exc))
+            raise typer.Exit(code=8)
+    state.delete_lock()
+    console.print(f"{_PREFIX} [bold red]Network restored. Traffic in cleartext.[/]")
+    return lock
+
+
+class StartInterrupted(BaseException):
+    """SIGINT/SIGTERM arrived during ``ttp start``.
+
+    A ``BaseException``, so no ``except Exception`` in the start path can
+    swallow it, and raised rather than handled in the signal handler: the
+    handler runs between two bytecodes of whatever start was doing, possibly
+    while an ``nft`` or ``systemctl`` child is still running. Undoing the
+    start there could destroy the table before that child loaded it. Raised,
+    the in-flight call unwinds first (``subprocess.run`` kills and reaps its
+    child), and :func:`interruptible_start` undoes what was done.
+    """
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(signum)
+        self.signum = signum
+
+
 def signal_handler(signum: int, frame) -> None:
-    """Handle SIGINT/SIGTERM - clean up and exit."""
+    """SIGINT/SIGTERM during ``ttp start``: unwind it, see :class:`StartInterrupted`."""
+    raise StartInterrupted(signum)
+
+
+def register_signal_handlers() -> None:
+    """Register SIGINT/SIGTERM handlers for safe session cleanup."""
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+
+def finish_interrupted_start() -> int:
+    """Undo an interrupted ``ttp start`` and return its exit code.
+
+    An interrupted start never exits 0: no session was established, and a
+    script that trusted 0 would run in cleartext.
+
+    - Before the session was recorded (no lock), what start changed is undone
+      as ``stop --restore-only`` would: nothing is left that ``ttp stop`` and
+      ``ttp status`` cannot see. Exit 1. A retained VPN guard stays, exit 10.
+    - After it was recorded, the session is stopped, exit 1, unless emergency
+      containment is latched (or cannot be read): then it is retained, exit 8.
+    """
+    # A second Ctrl-C must not interrupt the undo itself.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    import typer
+
+    from ttp.commands._common import print_error
+
     lock = state.read_lock()
     if lock is None:
         from ttp.vpn_guard import INTENT
 
         if INTENT.exists():
-            from ttp.commands._common import print_error
-
             print_error(
                 "VPN Protection Retained", "Interrupted startup; use ttp stop --restore-only for explicit recovery."
             )
-            sys.exit(10)
-    if lock and lock.get("session_id"):
-        from ttp.commands._common import print_error
+            return 10
+        console.print(f"\n{_PREFIX} Start interrupted before the session was recorded; undoing its changes...")
+        try:
+            restore_without_session()
+        except typer.Exit as exc:
+            return int(exc.exit_code)
+        return 1
+    if lock.get("session_id"):
         from ttp.session_safety import STOP_ADVICE, emergency_latched
 
         try:
@@ -204,13 +321,25 @@ def signal_handler(signum: int, frame) -> None:
             latched = True
         if latched:
             print_error("Session Retained", STOP_ADVICE)
-            sys.exit(8)
-    console.print(f"\n{_PREFIX} Signal received, restoring network...")
-    do_stop()
-    sys.exit(0)
+            return 8
+    console.print(f"\n{_PREFIX} Start interrupted; stopping the session...")
+    try:
+        do_stop()
+    except typer.Exit as exc:
+        return int(exc.exit_code) or 1
+    return 1
 
 
-def register_signal_handlers() -> None:
-    """Register SIGINT/SIGTERM handlers for safe session cleanup."""
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+def interruptible_start(command: Callable[..., None]) -> Callable[..., None]:
+    """Turn a :class:`StartInterrupted` inside *command* into an undone start."""
+
+    @functools.wraps(command)
+    def wrapper(*args: Any, **kwargs: Any) -> None:
+        import typer
+
+        try:
+            command(*args, **kwargs)
+        except StartInterrupted:
+            raise typer.Exit(code=finish_interrupted_start()) from None
+
+    return wrapper

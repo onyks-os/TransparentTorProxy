@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import stat
 import sys
 import tempfile
@@ -266,3 +267,18 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if _shim_dir is not None:
         shutil.rmtree(_shim_dir, ignore_errors=True)
         _shim_dir = None
+
+
+@pytest.fixture(autouse=True)
+def restore_signal_handlers():
+    """Undo what ``ttp start`` does to SIGINT/SIGTERM in the test process.
+
+    ``register_signal_handlers`` installs TTP's handler and an interrupted
+    start ignores both signals while it undoes itself. Left in place, the
+    first would turn a Ctrl-C of the test run into ``StartInterrupted`` and the
+    second would make the run ignore Ctrl-C altogether.
+    """
+    saved = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)}
+    yield
+    for signum, handler in saved.items():
+        signal.signal(signum, handler)

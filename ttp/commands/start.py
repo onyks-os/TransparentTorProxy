@@ -48,7 +48,7 @@ from ttp.commands._tor_setup import (
     _resolve_external_tor_uid,
     setup_managed_tor,
 )
-from ttp.commands.lifecycle import register_signal_handlers
+from ttp.commands.lifecycle import interruptible_start, register_signal_handlers
 from ttp.evidence import Diagnostic, ExitCode, Result, VerificationState
 from ttp.exceptions import DNSError, FirewallError, StateError
 from ttp.runtime_records import session_store
@@ -71,6 +71,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
+@interruptible_start
 def start_command(
     interface: Optional[str] = typer.Option(
         None,
