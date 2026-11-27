@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- The VPN guide shows how to import a provider's WireGuard file into
+  NetworkManager, and what to check first. It must have one peer, a numeric
+  endpoint (with how to replace a hostname) and a full-tunnel `AllowedIPs`. The
+  guide also shows the explicit firewall mark TTP requires and how to handle
+  the private key the file contains.
+
 ### Tests
 
 - The lifecycle VM's capture reader (`scripts/vm/lifecycle/egress.py`) no longer
